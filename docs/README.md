@@ -19,4 +19,7 @@ Start here. Plans live in [plans/MAIN.md](./plans/MAIN.md).
 - **File-locked**: a folder that Windows refuses to delete because some process holds a handle in it (an open file, or a shell's current directory).
 - **Unlock flow**: the elevated step (`sudo worktree-sweep unlock`) that lists file-locking processes with `handle.exe` and stops them or closes their handles. It runs at most once per run, for every file-locked pick together.
 - **Locker**: a process that holds at least one handle (`File` or `Section`) on a path inside a file-locked pick; the unlock flow offers one prompt per locker.
+- **Holder**: a process found without elevation to hold a folder, through its current directory or an open disk handle inside it; the agent path's counterpart of a locker. A holder whose handle can't be named, or that can't be opened, is reported as "may hold".
+- **Lock kind**: how a process holds a folder (its current directory, an open file, a folder handle, a running exe or loaded DLL). Some kinds block a recycle and others only a permanent delete; the table is in `plans/agent-path.md`.
+- **Released**: a worktree an agent asked to remove but couldn't, marked so the next interactive sweep lists it first and pre-picks it.
 - **Caller**: the shell that started worktree-sweep; it is flagged as a locker, never stopped by default.
