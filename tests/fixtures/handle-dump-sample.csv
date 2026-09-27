@@ -1,0 +1,6 @@
+Process,PID,User,Handle,Type,Share Flags,Name 
+GameInputRedistService.exe,7036,EXAMPLE-PC\user,0x00000058,File,,C:\Windows\System32 
+pwsh.exe,9620,EXAMPLE-PC\user,0x00000444,Section,,\Sessions\1\BaseNamedObjects\windows_shell_global_counters 
+pwsh.exe,35952,EXAMPLE-PC\user,0x00000058,File,,D:\example\repo.wt\feature 
+pwsh.exe,35952,EXAMPLE-PC\user,0x000001A0,File,,D:\example\repo.wt\feature\notes, draft.txt 
+winlogon.exe,1720,NT AUTHORITY\SYSTEM,0x00000054,File,RW-,C:\Windows\System32 

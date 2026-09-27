@@ -2,13 +2,14 @@
 
 use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
+use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use tracing_subscriber::filter::{LevelFilter, Targets};
 use tracing_subscriber::prelude::*;
-use worktree_sweep::{pick, recycle, remove, report};
+use worktree_sweep::{pick, recycle, remove, report, unlock};
 
 /// Find stale git worktrees and orphan worktree folders under ROOT.
 #[derive(Debug, Parser)]
@@ -37,14 +38,29 @@ enum Command {
         /// Folders whose locks to clear.
         #[arg(required = true)]
         paths: Vec<PathBuf>,
+
+        /// The process that started the unelevated run; it is marked, and stopping it is not the default.
+        #[arg(long, hide = true)]
+        caller_pid: Option<u32>,
+
+        /// The unelevated worktree-sweep; it and its children are never offered.
+        #[arg(long, hide = true)]
+        sweep_pid: Option<u32>,
     },
 }
 
-fn main() -> Result<()> {
+fn main() -> Result<ExitCode> {
     init_tracing();
     let cli = Cli::parse();
-    if let Some(Command::Unlock { .. }) = cli.command {
-        bail!("`unlock` is not implemented in this build");
+    if let Some(Command::Unlock {
+        paths,
+        caller_pid,
+        sweep_pid,
+    }) = cli.command
+    {
+        return Ok(ExitCode::from(unlock::run_elevated(
+            &paths, caller_pid, sweep_pid,
+        )?));
     }
     let root = match cli.root {
         Some(root) => root,
@@ -67,7 +83,7 @@ fn main() -> Result<()> {
     if interactive && !report.candidates.is_empty() {
         sweep_interactively(&report, now, &mut out)?;
     }
-    Ok(())
+    Ok(ExitCode::SUCCESS)
 }
 
 /// The default mode after the table: pick, confirm, remove, and print one summary line per pick.

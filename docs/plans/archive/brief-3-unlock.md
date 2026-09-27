@@ -4,6 +4,8 @@ Worktree root: `D:\worktree-sweep`, branch `feat/unlock` (briefs 1 and 2 merged 
 
 ## Measured facts (2026-09-27, handle.exe v5.0, this machine)
 
+Corrected during implementation: the unfiltered dump uses a 7-column layout, and an elevated dump takes 1.4 s. See `v1-design.md` § Tooling.
+
 - **Unelevated runs see nothing.** They print `No matching handles found.` even for a folder the caller's own shell has open. Elevation is required.
 - **Output of an elevated `handle -nobanner -accepteula -v 'D:\worktree-sweep\.tmp\lockprobe'`**, with a pwsh whose cwd was that folder and which held `held.txt` open. It is saved verbatim at `tests/fixtures/handle-sample.csv` (committed):
   ```

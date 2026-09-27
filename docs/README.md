@@ -16,4 +16,6 @@ Start here. Plans live in [plans/MAIN.md](./plans/MAIN.md).
 - **Content-contained** (merge state): merging the branch into the default branch would change nothing (`git merge-tree` result equals the default branch's tree), as after a squash merge.
 - **Git-locked**: a worktree marked with `git worktree lock`; git refuses to prune or remove it until unlocked.
 - **File-locked**: a folder that Windows refuses to delete because some process holds a handle in it (an open file, or a shell's current directory).
-- **Unlock flow**: the elevated step (`sudo worktree-sweep unlock`) that lists file-locking processes with `handle.exe` and stops them or closes their handles.
+- **Unlock flow**: the elevated step (`sudo worktree-sweep unlock`) that lists file-locking processes with `handle.exe` and stops them or closes their handles. It runs at most once per run, for every file-locked pick together.
+- **Locker**: a process that holds at least one handle (`File` or `Section`) on a path inside a file-locked pick; the unlock flow offers one prompt per locker.
+- **Caller**: the shell that started worktree-sweep; it is flagged as a locker, never stopped by default.
