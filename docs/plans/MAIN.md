@@ -18,10 +18,13 @@ Design: [v1-design.md](./v1-design.md). Execution ledger (untracked): `.tmp/plan
 
 - [x] Verify against real D:\ (`--list`, `--json`): both run clean (2026-09-27, 10 candidates, `--list` 9.7 s)
 - [ ] Manual lock test from the design (elevated, the user runs it)
-- [ ] Recycling a locked folder never reaches the unlock flow. Manual lock test (2026-09-27): the Shell showed its own "Folder In Use" dialog, and after Cancel, removal failed with `cannot move … to the Recycle Bin: 0x80270000` instead of `RemoveError::Locked`. `src/recycle.rs` / `src/remove.rs`; being reproduced and measured first.
+- [x] Recycling a locked folder never reaches the unlock flow. Manual lock test (2026-09-27): the Shell showed its own "Folder In Use" dialog, and after Cancel, removal failed with `cannot move … to the Recycle Bin: 0x80270000` instead of `RemoveError::Locked`. Fixed: no Shell error UI, COPYENGINE lock codes map to `Locked`, and a lock is retried at 250/500/1000 ms (user, 2026-09-27) before it counts as locked.
 - [x] A branch with no commits of its own reads as `merged`: on D:\ (2026-09-27), four live worktrees of other sessions, 0 commits ahead of `main` and active minutes ago, showed as merged. Ruling (user, 2026-09-27): a new merge state `NoCommits` ("no commits"). It applies when the branch is an ancestor of the default branch and its reflog has no `commit` entries. The picker asks a second confirmation for it, as for unmerged work.
 - [ ] README usage and safety section; CHANGELOG entry
 
 ## Backlog
 
-(empty)
+- [ ] Agent path for locked worktrees (user, 2026-09-27): Claude Code agents report that they can't trash their own worktrees when they're done, because something holds them. The tool could give an agent a non-interactive way in (no picker, no UAC): remove one named worktree, or report what holds it, as JSON. Rulings (user, 2026-09-27):
+  - **Remove, else release.** `worktree-sweep remove <PATH> --json` recycles one worktree, prunes it, and deletes its branch when that is merged or has no commits. On a lock it prints JSON naming the lock and marks the worktree "released by an agent" (a small file in the repo's `.git`). The next interactive sweep lists released worktrees first and pre-picks them, behind the usual confirmations and its one elevation.
+  - **Allowlisted stops only.** A flag lets the agent stop known build servers (MSBuild nodes, VBCSCompiler, rust-analyzer, cargo) running as the user, and only when their current folder or open files are inside that worktree. Nothing else is ever stopped unelevated.
+  - Needs a measurement before a brief: how to see, unelevated and fast, which of the user's processes hold a folder (Restart Manager, or the process's cwd through the PEB). Unelevated `handle.exe` takes about 141 s.

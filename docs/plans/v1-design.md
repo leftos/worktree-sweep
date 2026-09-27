@@ -69,7 +69,13 @@ worktree-sweep unlock <PATH>...  # internal: runs elevated via sudo
   - A git-locked pick also names the lock reason.
 - **`remove.rs`:** removes one pick.
   1. Check the size against the volume's Recycle Bin capacity (the next bullet). If it doesn't fit, or `NukeOnDelete=1` is set, ask for a permanent delete; a no skips the item.
-  2. Recycle through `IFileOperation`, with the flags set so the Shell never silently turns it into a permanent delete (`FOFX_RECYCLEONDELETE | FOF_WANTNUKEWARNING`, no `FOF_NOCONFIRMATION`). A permanent delete uses `std::fs::remove_dir_all` after clearing read-only attributes, which git object files carry.
+  2. Recycle through `IFileOperation`, with the flags set so the Shell never silently turns it into a permanent delete (`FOFX_RECYCLEONDELETE | FOF_WANTNUKEWARNING`, no `FOF_NOCONFIRMATION`).
+     - `FOF_NOERRORUI | FOFX_EARLYFAILURE` keep the Shell's "Folder In Use" dialog away, and make `PerformOperations` return the failure itself.
+     - The Shell's failures are `COPYENGINE_E_*` codes (`0x8027xxxx`), never Win32 codes. `SHARING_VIOLATION_SRC` (`0x80270027`, a process's cwd is the folder), `SHARING_VIOLATION_DEST` (`0x80270028`, a file held open or a cwd in a subfolder) and `ACCESS_DENIED_SRC` (`0x80270021`) all mean `Locked`.
+     - `0x80270000` is the user's Cancel or No; the only prompt left is the permanent-delete warning, which still shows with these flags.
+     - A lock is retried after 250, 500 and 1000 ms before it counts, because on a non-Dev-Drive volume a scanner holds freshly written trees for a second or two.
+     - The Shell moves the folder in one step or not at all; it was never seen to recycle part of a locked tree.
+     - Measured 2026-09-27. A permanent delete uses `std::fs::remove_dir_all` after clearing read-only attributes, which git object files carry.
   3. On a sharing violation or access denied (Win32 32/5), hand off to the unlock flow and retry once.
   4. For a registered worktree: `git worktree unlock` if it was git-locked, then `git worktree prune`. If the branch is `Ancestor`, `NoCommits`, `PatchesApplied` or `ContentContained`, offer `git branch -d`. For the last two, git may refuse `-d`, so offer `-D` with the reason shown.
 - **Recycle Bin capacity** (inside `remove.rs` unless it grows): `GetVolumeNameForVolumeMountPointW` gives the volume GUID, and `HKCU\...\BitBucket\Volume\{GUID}` holds `MaxCapacity` in MB and `NukeOnDelete`.
