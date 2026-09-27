@@ -3,6 +3,7 @@
 pub mod discover;
 pub mod git;
 pub mod handle_csv;
+pub mod holders;
 pub mod pick;
 pub mod recycle;
 pub mod remove;

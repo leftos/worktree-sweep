@@ -402,7 +402,8 @@ fn parent_chain<S: BuildHasher>(
 }
 
 /// Whether a handle's object `name` is one of `paths` or lies under one. Paths compare case-insensitively with `\`
-/// separators, without a `\\?\` prefix or a trailing `\`; `D:\a\x` does not cover `D:\a\xy`.
+/// separators, without a `\\?\` or `\??\` prefix (`\\?\UNC\` reads as `\\`) or a trailing `\`; `D:\a\x` does not
+/// cover `D:\a\xy`.
 #[must_use]
 pub fn matches_locked_path(name: &Path, paths: &[PathBuf]) -> bool {
     let name = comparable(name);
@@ -417,7 +418,19 @@ pub fn matches_locked_path(name: &Path, paths: &[PathBuf]) -> bool {
 
 fn comparable(path: &Path) -> String {
     let text = path.to_string_lossy().replace('/', "\\");
-    let text = text.strip_prefix(r"\\?\").unwrap_or(&text);
+    let text = [r"\\?\UNC\", r"\??\UNC\"]
+        .iter()
+        .find_map(|prefix| text.strip_prefix(prefix))
+        .map_or_else(
+            || {
+                [r"\\?\", r"\??\"]
+                    .iter()
+                    .find_map(|prefix| text.strip_prefix(prefix))
+                    .unwrap_or(&text)
+                    .to_owned()
+            },
+            |rest| format!(r"\\{rest}"),
+        );
     text.trim_end_matches('\\').to_lowercase()
 }
 
@@ -846,6 +859,45 @@ mod tests {
         ensure!(!matches(r"D:\a.wt"));
         ensure!(!matches(r"E:\a.wt\x"));
         ensure!(!matches(r"D:\otherwise"));
+        Ok(())
+    }
+
+    #[test]
+    fn nt_prefix_is_stripped() -> Result<()> {
+        ensure!(matches_locked_path(
+            Path::new(r"\??\D:\a\b"),
+            &[PathBuf::from(r"D:\a")]
+        ));
+        ensure!(matches_locked_path(
+            Path::new(r"D:\a\b"),
+            &[PathBuf::from(r"\??\D:\a")]
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn verbatim_unc_prefix_reads_as_unc() -> Result<()> {
+        ensure!(matches_locked_path(
+            Path::new(r"\\?\UNC\srv\share\x"),
+            &[PathBuf::from(r"\\srv\share")]
+        ));
+        ensure!(!matches_locked_path(
+            Path::new(r"\\?\UNC\srv\share\x"),
+            &[PathBuf::from(r"\\srv\sh")]
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn sibling_with_longer_name_does_not_match() -> Result<()> {
+        ensure!(!matches_locked_path(
+            Path::new(r"D:\ab"),
+            &[PathBuf::from(r"D:\a")]
+        ));
+        ensure!(!matches_locked_path(
+            Path::new(r"\??\D:\ab"),
+            &[PathBuf::from(r"D:\a")]
+        ));
         Ok(())
     }
 

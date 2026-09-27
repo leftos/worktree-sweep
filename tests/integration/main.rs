@@ -3,6 +3,7 @@
 mod discovery;
 mod fixture;
 mod git_env;
+mod holders;
 mod merge_state;
 mod removal;
 mod size;
