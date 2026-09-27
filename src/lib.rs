@@ -2,8 +2,12 @@
 
 pub mod discover;
 pub mod git;
+pub mod pick;
+pub mod recycle;
+pub mod remove;
 pub mod report;
 pub mod signals;
+pub mod unlock;
 
 use std::path::Path;
 
