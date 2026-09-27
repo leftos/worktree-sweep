@@ -19,6 +19,9 @@ use crate::git;
 pub enum MergeState {
     /// The branch tip is reachable from the default branch.
     Ancestor,
+    /// The branch tip is reachable from the default branch and the branch's reflog records no commit made on it:
+    /// new or empty work, not merged work.
+    NoCommits,
     /// Every commit on the branch has a patch-equivalent commit on the default branch.
     PatchesApplied,
     /// Merging the branch into the default branch would change nothing.
@@ -39,7 +42,7 @@ impl MergeState {
     /// Lower is better; used to keep the best result over the local and origin default.
     fn rank(self) -> (u8, u32) {
         match self {
-            Self::Ancestor | Self::Detached { contained: true } => (0, 0),
+            Self::Ancestor | Self::NoCommits | Self::Detached { contained: true } => (0, 0),
             Self::PatchesApplied => (1, 0),
             Self::ContentContained => (2, 0),
             Self::Unmerged { commits } => (3, commits),
@@ -236,7 +239,45 @@ pub fn merge_state(
             break;
         }
     }
+    if let Some((state, _)) = &mut best
+        && *state == MergeState::Ancestor
+        && branch_has_no_own_commits(dir, &branch_ref)?
+    {
+        *state = MergeState::NoCommits;
+    }
     Ok(best)
+}
+
+/// Whether the branch's reflog proves no commit was ever made on it; see [`has_no_own_commits`].
+fn branch_has_no_own_commits(dir: &Path, branch_ref: &str) -> Result<bool> {
+    let reflog = git::run(dir, &["reflog", "show", "--format=%gs", branch_ref])?;
+    Ok(has_no_own_commits(&reflog))
+}
+
+/// Whether a branch's reflog subjects (`git reflog show --format=%gs`, newest first) prove no commit was made on
+/// the branch: the oldest entry is its creation, so the history is complete, and every later entry is a reset, a
+/// rename, a finished rebase or a fast-forward merge or pull. Anything else, an empty reflog included, is `false`.
+fn has_no_own_commits(reflog: &str) -> bool {
+    let entries: Vec<&str> = reflog.lines().collect();
+    let Some((oldest, later)) = entries.split_last() else {
+        return false;
+    };
+    oldest.starts_with("branch: Created from")
+        && later.iter().all(|entry| is_no_commit_entry(entry))
+}
+
+fn is_no_commit_entry(entry: &str) -> bool {
+    let fast_forward = (entry.starts_with("merge ") || entry.starts_with("pull"))
+        && entry.ends_with(": Fast-forward");
+    fast_forward
+        || [
+            "reset: moving to ",
+            "branch: Renamed ",
+            "rebase (finish): ",
+            "rebase -i (finish): ",
+        ]
+        .iter()
+        .any(|prefix| entry.starts_with(prefix))
 }
 
 fn state_against(dir: &Path, branch: &str, default: &str) -> Result<MergeState> {
@@ -521,4 +562,51 @@ fn keep<T>(errors: &mut Vec<String>, result: Result<T>) -> Option<T> {
 fn unix_seconds(time: SystemTime) -> Option<i64> {
     let seconds = time.duration_since(UNIX_EPOCH).ok()?.as_secs();
     i64::try_from(seconds).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use anyhow::{Result, ensure};
+
+    use super::*;
+
+    #[test]
+    fn has_no_own_commits_reads_reflog_subjects() -> Result<()> {
+        let cases = [
+            (
+                "rebase (finish): refs/heads/m2d-budget onto d97e8fa722f106740394948ecd72ef6a6fe490c1\n\
+                 branch: Created from main",
+                true,
+            ),
+            ("branch: Created from HEAD", true),
+            ("merge main: Fast-forward\nbranch: Created from main", true),
+            ("reset: moving to main\nbranch: Created from main", true),
+            (
+                "pull -q origin main: Fast-forward\nbranch: Created from main",
+                true,
+            ),
+            ("", false),
+            ("commit: b\nbranch: Created from main", false),
+            (
+                "merge side: Merge made by the 'ort' strategy.\nbranch: Created from main",
+                false,
+            ),
+            ("am: x\nbranch: Created from main", false),
+            (
+                "pull: Merge made by the 'ort' strategy.\nbranch: Created from main",
+                false,
+            ),
+            ("cherry-pick: x\nbranch: Created from main", false),
+            ("reset: moving to main", false),
+            ("merge main: Fast-forward", false),
+        ];
+        for (reflog, expected) in cases {
+            let got = has_no_own_commits(reflog);
+            ensure!(
+                got == expected,
+                "{reflog:?}: got {got:?}, expected {expected:?}"
+            );
+        }
+        Ok(())
+    }
 }

@@ -87,7 +87,8 @@ impl Prompter for TermPrompter {
 }
 
 /// The confirmation question for a pick, naming what removing it loses; `None` when nothing is lost. Asked for
-/// uncommitted files, commits not on the default branch, a detached HEAD not on it, unpushed commits, a git lock,
+/// uncommitted files, commits not on the default branch, a branch with no commits of its own, a detached HEAD not
+/// on it, unpushed commits, a git lock,
 /// an orphan another repo still registers, and a link (whose target is kept).
 #[must_use]
 pub fn loss_sentence(candidate: &Candidate, root: &Path) -> Option<String> {
@@ -114,6 +115,11 @@ fn registered_loss(registered: &RegisteredCandidate) -> Option<String> {
     match signals.merge_state {
         Some(MergeState::Unmerged { commits }) => {
             lost.push(format!("{} not on {against}", counted(commits, "commit")));
+        }
+        Some(MergeState::NoCommits) => {
+            lost.push(
+                "a branch with no commits of its own (it may be new work in progress)".to_owned(),
+            );
         }
         Some(MergeState::Detached { contained: false }) => {
             let head = registered.head.as_deref().unwrap_or("HEAD");
@@ -291,6 +297,16 @@ mod tests {
         let mut contained = candidate(signals(MergeState::Detached { contained: true }));
         contained.branch = None;
         assert_eq!(sentence(contained), None);
+    }
+
+    #[test]
+    fn loss_sentence_no_commits() {
+        assert_eq!(
+            sentence(candidate(signals(MergeState::NoCommits))).as_deref(),
+            Some(
+                r"yaat.wt\eram-co\yaat: a branch with no commits of its own (it may be new work in progress) will be lost. Remove anyway?"
+            )
+        );
     }
 
     #[test]

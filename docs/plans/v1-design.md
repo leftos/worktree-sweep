@@ -54,6 +54,7 @@ worktree-sweep unlock <PATH>...  # internal: runs elevated via sudo
   - **Default branch:** `refs/remotes/origin/HEAD`, else local `main`/`master`. Each check below runs against both local and origin default, and the better result wins.
   - **Merge state, as an enum `MergeState`:**
     - `Ancestor`: `merge-base --is-ancestor`.
+    - `NoCommits`: an `Ancestor` branch whose reflog (`git reflog show --format=%gs refs/heads/<b>`) is complete (its oldest entry is `branch: Created from …`) and holds only entries that make no commit: `reset: moving to`, `branch: Renamed`, `rebase (finish)`, and fast-forward merges or pulls. Any other entry, or a reflog that is empty or partly expired, leaves the state as `Ancestor`. The user ruled this in on 2026-09-27, after branches just created by live sessions on D:\ showed as merged.
     - `PatchesApplied`: `git cherry <default> <branch>` has no `+` lines, meaning every commit has a patch-equivalent on the default branch (cherry-picks).
     - `ContentContained`: `git merge-tree --write-tree <default> <branch>` gives a tree equal to `<default>^{tree}`, meaning squash-merged or otherwise already in.
     - `Unmerged { commits }`.
@@ -64,13 +65,13 @@ worktree-sweep unlock <PATH>...  # internal: runs elevated via sudo
   - **Size:** a directory walk. It is shared with orphans, which get size, last-write time and a file count.
 - **`report.rs`:** the table and the `--json` output (serde).
 - **`pick.rs`:** `dialoguer::MultiSelect`, with nothing selected by default.
-  - A pick that is dirty, `Unmerged`, unpushed, or git-locked gets a second `Confirm` that spells out what would be lost.
+  - A pick that is dirty, `Unmerged`, `NoCommits`, unpushed, or git-locked gets a second `Confirm` that spells out what would be lost.
   - A git-locked pick also names the lock reason.
 - **`remove.rs`:** removes one pick.
   1. Check the size against the volume's Recycle Bin capacity (the next bullet). If it doesn't fit, or `NukeOnDelete=1` is set, ask for a permanent delete; a no skips the item.
   2. Recycle through `IFileOperation`, with the flags set so the Shell never silently turns it into a permanent delete (`FOFX_RECYCLEONDELETE | FOF_WANTNUKEWARNING`, no `FOF_NOCONFIRMATION`). A permanent delete uses `std::fs::remove_dir_all` after clearing read-only attributes, which git object files carry.
   3. On a sharing violation or access denied (Win32 32/5), hand off to the unlock flow and retry once.
-  4. For a registered worktree: `git worktree unlock` if it was git-locked, then `git worktree prune`. If the branch is `Ancestor`, `PatchesApplied` or `ContentContained`, offer `git branch -d`. For the last two, git may refuse `-d`, so offer `-D` with the reason shown.
+  4. For a registered worktree: `git worktree unlock` if it was git-locked, then `git worktree prune`. If the branch is `Ancestor`, `NoCommits`, `PatchesApplied` or `ContentContained`, offer `git branch -d`. For the last two, git may refuse `-d`, so offer `-D` with the reason shown.
 - **Recycle Bin capacity** (inside `remove.rs` unless it grows): `GetVolumeNameForVolumeMountPointW` gives the volume GUID, and `HKCU\...\BitBucket\Volume\{GUID}` holds `MaxCapacity` in MB and `NukeOnDelete`.
 - **`unlock.rs`:** the lock flow.
   - **One elevation per run.** Removal is two passes. Every pick that hits a lock is collected, and `unlock::offer(&[paths])` is called once for all of them. On `Unlocked` or `PartlyUnlocked`, each locked pick is retried once.

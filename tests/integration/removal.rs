@@ -174,8 +174,11 @@ fn removing_registered_worktree_prunes_registration() -> Result<()> {
     let Candidate::Registered(registered) = candidate else {
         anyhow::bail!("not registered: {candidate:?}");
     };
-    let offer = branch_offer(registered).context("no branch offer for a merged branch")?;
-    ensure!(!offer.force, "a merged branch needs only -d: {offer:?}");
+    let offer = branch_offer(registered).context("no branch offer for a branch with no commits")?;
+    ensure!(
+        !offer.force,
+        "a branch with no commits needs only -d: {offer:?}"
+    );
 
     remove_candidate(candidate, Action::Delete(Method::Permanent))?;
     let mut answers = Answers {

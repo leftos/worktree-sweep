@@ -12,6 +12,7 @@ Start here. Plans live in [plans/MAIN.md](./plans/MAIN.md).
 - **Junction orphan**: an orphan that is a junction or symlink to a folder elsewhere (e.g. `D:\yaat-server.wt\yaat` → `X:\dev\yaat`). Removing it deletes the link only; the target is never entered, sized or deleted.
 - **Prunable**: a registration whose folder no longer exists; `git worktree prune` drops it.
 - **Ancestor** (merge state): the branch tip is reachable from the default branch.
+- **No commits** (merge state): the branch tip is reachable from the default branch, but the branch's complete reflog records nothing except its creation and operations that make no commit (fast-forwards, resets, rebases), as for a branch just created for work not yet started. The picker asks twice before removing it, because another session may be about to use it.
 - **Patches applied** (merge state): every commit on the branch has a patch-equivalent commit on the default branch (`git cherry` reports no `+`), as after cherry-picks or a rebase-merge.
 - **Content-contained** (merge state): merging the branch into the default branch would change nothing (`git merge-tree` result equals the default branch's tree), as after a squash merge.
 - **Git-locked**: a worktree marked with `git worktree lock`; git refuses to prune or remove it until unlocked.

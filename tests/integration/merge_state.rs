@@ -19,6 +19,37 @@ fn merged_branch_is_ancestor() -> Result<()> {
 }
 
 #[test]
+fn fresh_branch_is_no_commits() -> Result<()> {
+    let fx = Fixture::new()?;
+    let repo = fx.repo("repo")?;
+    let wt = fx.path("repo.wt/feat");
+    add_worktree(&repo, &wt, "feat")?;
+
+    let report = fx.scan()?;
+    let state = registered(&report, &wt)?.signals.merge_state;
+    ensure!(state == Some(MergeState::NoCommits), "got {state:?}");
+    Ok(())
+}
+
+#[test]
+fn branch_with_merge_commit_is_not_no_commits() -> Result<()> {
+    let fx = Fixture::new()?;
+    let repo = fx.repo("repo")?;
+    let wt = fx.path("repo.wt/feat");
+    add_worktree(&repo, &wt, "feat")?;
+    git(&wt, &["checkout", "-q", "-b", "side"])?;
+    commit_file(&wt, "b.txt", "b\n", "b")?;
+    git(&wt, &["checkout", "-q", "feat"])?;
+    git(&wt, &["merge", "-q", "--no-ff", "-m", "merge side", "side"])?;
+    git(&repo, &["merge", "-q", "--ff-only", "feat"])?;
+
+    let report = fx.scan()?;
+    let state = registered(&report, &wt)?.signals.merge_state;
+    ensure!(state == Some(MergeState::Ancestor), "got {state:?}");
+    Ok(())
+}
+
+#[test]
 fn cherry_picked_branch_is_patches_applied() -> Result<()> {
     let fx = Fixture::new()?;
     let repo = fx.repo("repo")?;

@@ -436,7 +436,8 @@ pub struct BranchOffer {
     pub prompt: String,
 }
 
-/// The branch deletion offered for a registered worktree: merged branches with `-d`, cherry-picked and
+/// The branch deletion offered for a registered worktree: merged branches and branches with no commits of their
+/// own with `-d`, cherry-picked and
 /// content-contained ones with `-D`; `None` for an unmerged or detached worktree.
 #[must_use]
 pub fn branch_offer(registered: &RegisteredCandidate) -> Option<BranchOffer> {
@@ -450,6 +451,10 @@ pub fn branch_offer(registered: &RegisteredCandidate) -> Option<BranchOffer> {
         MergeState::Ancestor => (
             false,
             format!("Delete branch {branch}? It is merged into {against}."),
+        ),
+        MergeState::NoCommits => (
+            false,
+            format!("Delete branch {branch}? It has no commits of its own."),
         ),
         MergeState::PatchesApplied => (
             true,
