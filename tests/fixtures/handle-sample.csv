@@ -1,0 +1,3 @@
+Process,PID,Type,Handle,Name
+pwsh.exe,64336,File,0x00000054,D:\worktree-sweep\.tmp\lockprobe 
+pwsh.exe,64336,File,0x00000748,D:\worktree-sweep\.tmp\lockprobe\held.txt 

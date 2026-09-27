@@ -4,6 +4,7 @@ Start here. Plans live in [plans/MAIN.md](./plans/MAIN.md).
 
 ## Glossary
 
+- **Brief**: a written, self-contained implementation step (files, change, proving commands) handed to an implementer agent; open briefs live in `docs/plans/`.
 - **Candidate**: a folder the tool offers to remove, either a registered worktree or an orphan.
 - **Registered worktree**: a linked worktree that `git worktree list` in some repo under the root reports. The repo's main worktree is never a candidate.
 - **Container dir**: a folder that holds worktrees: a depth-1 folder of the root named `*.wt`, `*-wt` or `*worktrees`, or a repo's `.claude/worktrees`.
