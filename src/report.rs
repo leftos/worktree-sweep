@@ -324,6 +324,7 @@ impl Row {
 fn merge_word(state: MergeState) -> String {
     match state {
         MergeState::Ancestor => "merged".to_owned(),
+        MergeState::NoCommits => "no commits".to_owned(),
         MergeState::PatchesApplied => "cherry-picked".to_owned(),
         MergeState::ContentContained => "squashed".to_owned(),
         MergeState::Unmerged { commits } => format!("unmerged {commits}"),
@@ -578,6 +579,33 @@ mod tests {
             "4  yaat.wt\\eram-qx       orphan                                              1y      0 B  stale .git\n",
         );
         assert_eq!(render_table(&report, NOW), expected);
+    }
+
+    #[test]
+    fn no_commits_branch_shows_in_table_and_json() -> Result<()> {
+        let signals = WorktreeSignals {
+            merge_state: Some(MergeState::NoCommits),
+            merge_state_against: Some("main".to_owned()),
+            dirty: Some(Dirty::default()),
+            upstream: None,
+            last_activity_unix: Some(NOW - 3 * DAY),
+            size: Some(size(1536, NOW)),
+            errors: Vec::new(),
+        };
+        let report = report(vec![registered(
+            r"yaat.wt\eram-co\yaat",
+            Some("eram-co"),
+            signals,
+        )]);
+
+        let table = render_table(&report, NOW);
+        let row = table.lines().nth(1).unwrap_or_default();
+        anyhow::ensure!(row.contains("eram-co  no commits"), "row: {row}");
+        let mut json = Vec::new();
+        write_json(&report, &mut json)?;
+        let json = String::from_utf8(json)?;
+        anyhow::ensure!(json.contains(r#""state": "no_commits""#), "json: {json}");
+        Ok(())
     }
 
     #[test]

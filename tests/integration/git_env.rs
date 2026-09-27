@@ -40,7 +40,7 @@ fn git_runner_ignores_inherited_repo_env() -> Result<()> {
         .context("candidate has no path")?;
     ensure!(same_path(path.as_ref(), &wt), "candidate: {candidate:#}");
     ensure!(
-        candidate["merge_state"]["state"] == "ancestor",
+        candidate["merge_state"]["state"] == "no_commits",
         "candidate: {candidate:#}"
     );
     ensure!(

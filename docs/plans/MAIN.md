@@ -16,7 +16,10 @@ Design: [v1-design.md](./v1-design.md). Execution ledger (untracked): `.tmp/plan
 
 ### Wave 2: release readiness — `README.md`, `CHANGELOG.md` — gate: human check
 
-- [ ] Verify against real D:\ (`--list`, `--json`) and the manual lock test from the design
+- [x] Verify against real D:\ (`--list`, `--json`): both run clean (2026-09-27, 10 candidates, `--list` 9.7 s)
+- [ ] Manual lock test from the design (elevated, the user runs it)
+- [ ] Recycling a locked folder never reaches the unlock flow. Manual lock test (2026-09-27): the Shell showed its own "Folder In Use" dialog, and after Cancel, removal failed with `cannot move … to the Recycle Bin: 0x80270000` instead of `RemoveError::Locked`. `src/recycle.rs` / `src/remove.rs`; being reproduced and measured first.
+- [x] A branch with no commits of its own reads as `merged`: on D:\ (2026-09-27), four live worktrees of other sessions, 0 commits ahead of `main` and active minutes ago, showed as merged. Ruling (user, 2026-09-27): a new merge state `NoCommits` ("no commits"). It applies when the branch is an ancestor of the default branch and its reflog has no `commit` entries. The picker asks a second confirmation for it, as for unmerged work.
 - [ ] README usage and safety section; CHANGELOG entry
 
 ## Backlog
