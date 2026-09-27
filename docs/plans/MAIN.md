@@ -25,11 +25,12 @@ Design: [v1-design.md](./v1-design.md). Execution ledger (untracked): `.tmp/plan
 
 ## Backlog
 
-- [ ] Full-screen picker with `ratatui` + `crossterm` (user, 2026-09-27). It replaces the table-then-`MultiSelect` flow: the candidate table is the picker (scroll, tick rows in place), a detail pane shows the selected row's full path, what removing it loses and the link target, and confirmations are in-screen dialogs, so nothing wraps or redraws. Needs a design pass before a brief:
-  - leaving and re-entering the alternate screen around the `sudo` unlock step, which prompts in the same console;
-  - keeping picking and confirmation logic in pure functions so they stay testable without a terminal;
-  - whether `--list` keeps the plain table (it should, for pipes and agents);
-  - justifying the two new dependencies with `cargo deny`.
+- [ ] Full-screen picker with `ratatui` + `crossterm` (user, 2026-09-27). It replaces the table-then-`MultiSelect` flow: the candidate table is the picker (scroll, tick rows in place), a detail pane shows the selected row's full path, what removing it loses and the link target, and confirmations are in-screen dialogs, so nothing wraps or redraws. Rulings (user, 2026-09-27):
+  - **Unlock step:** leave the alternate screen and restore the terminal, run `unlock::offer` as it runs today (plain prompts, UAC), then re-enter and show the retry results in-screen; a guard restores the terminal on any exit or panic.
+  - **`--list` and `--json` keep the plain output**; the TUI starts only in interactive mode on a real terminal, and interactive mode refuses to start when stdout is not a TTY.
+  - **`dialoguer` is removed entirely**: the TUI is the only interactive picker, with no `--plain` fallback.
+  - Picking and confirmation logic stay in pure functions, testable without a terminal; the two new dependencies pass `cargo deny`.
+  - Next: after the agent path lands, an explorer drafts `docs/plans/tui-picker.md` (layout, key bindings, dialog states, the pure-function split), and the user reviews it before a brief.
 
 - [ ] Agent path for locked worktrees (user, 2026-09-27): Claude Code agents report that they can't trash their own worktrees when they're done, because something holds them. The tool could give an agent a non-interactive way in (no picker, no UAC): remove one named worktree, or report what holds it, as JSON. Rulings (user, 2026-09-27):
   - **Remove, else release.** `worktree-sweep remove <PATH> --json` recycles one worktree, prunes it, and deletes its branch when that is merged or has no commits. On a lock it prints JSON naming the lock and marks the worktree "released by an agent" (a small file in the repo's `.git`). The next interactive sweep lists released worktrees first and pre-picks them, behind the usual confirmations and its one elevation.
