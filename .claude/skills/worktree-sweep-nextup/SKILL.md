@@ -45,6 +45,9 @@ The generic loop is the user-level `nextup` skill; this file supplies only what 
 - **D:\ changes under you.** Other sessions add and remove worktrees there all the time; a brief never hard-codes counts from D:\, only paths that must or must not appear.
 - **Cargo's `did not finalize incremental compilation session directory … Access is denied`** is environmental and harmless.
 - **`dialoguer` needs a terminal**: interactive code sits at the edge; logic is tested through pure functions with explicit choices.
+- **A Shell call can put a dialog on the user's desktop.** A test or probe that reaches `IFileOperation` runs it on a thread with a timeout, so a dialog fails the test rather than hanging it. Never run such a test red on purpose while the user is at the machine.
+- **D: is a Dev Drive (ReFS); C: and `%TEMP%` are not.** On C:, a freshly written, unlocked tree can fail a rename or recycle for 1–3 s while a scanner holds it. A test there that expects success can flake; a test that expects `Locked` cannot.
+- **Unelevated `handle.exe` is slow (about 141 s for a dump) and sees only some of the caller's own processes.** Elevated, it takes 1.4 s. Never judge the unlock flow's speed from an unelevated run.
 
 ## Concurrency
 

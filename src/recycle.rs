@@ -4,6 +4,7 @@ use std::ffi::OsStr;
 use std::marker::PhantomData;
 use std::os::windows::ffi::OsStrExt;
 use std::path::Path;
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
@@ -13,13 +14,23 @@ use windows::Win32::System::Com::{
 };
 use windows::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW};
 use windows::Win32::UI::Shell::{
-    FILEOPERATION_FLAGS, FOF_ALLOWUNDO, FOF_NOCONFIRMMKDIR, FOF_SILENT, FOF_WANTNUKEWARNING,
-    FOFX_RECYCLEONDELETE, FileOperation, IFileOperation, IShellItem, SHCreateItemFromParsingName,
+    COPYENGINE_E_ACCESS_DENIED_SRC, COPYENGINE_E_SHARING_VIOLATION_DEST,
+    COPYENGINE_E_SHARING_VIOLATION_SRC, FILEOPERATION_FLAGS, FOF_ALLOWUNDO, FOF_NOCONFIRMMKDIR,
+    FOF_NOERRORUI, FOF_SILENT, FOF_WANTNUKEWARNING, FOFX_EARLYFAILURE, FOFX_RECYCLEONDELETE,
+    FileOperation, IFileOperation, IShellItem, SHCreateItemFromParsingName,
 };
 use windows::core::{HRESULT, PCWSTR};
 
 use crate::remove::RemoveError;
 use crate::report::human_bytes;
+
+/// Delays before retrying a Shell recycle that failed with a lock: a tree written a moment earlier can fail
+/// briefly on a volume that is not a Dev Drive.
+const RECYCLE_LOCK_RETRIES: [Duration; 3] = [
+    Duration::from_millis(250),
+    Duration::from_millis(500),
+    Duration::from_millis(1000),
+];
 
 const BIT_BUCKET_VOLUMES: &str =
     r"Software\Microsoft\Windows\CurrentVersion\Explorer\BitBucket\Volume";
@@ -173,17 +184,20 @@ impl Drop for ComApartment {
     }
 }
 
-/// Moves `path` to the Recycle Bin with the Shell's `IFileOperation`. The flags never allow a silent permanent
-/// delete: when the Shell decides the item cannot be recycled, it shows its own warning. COM must be initialised
-/// on the calling thread ([`ComApartment`]).
+/// Moves `path` to the Recycle Bin with the Shell's `IFileOperation`. The Shell shows no error dialog and stops at
+/// the first failure, which leaves the tree whole. The only prompt left is the Shell's permanent-delete warning:
+/// the flags never allow a silent permanent delete when the Shell decides the item cannot be recycled. COM must be
+/// initialised on the calling thread ([`ComApartment`]). A lock is retried three times over about 1.75 s, since a
+/// tree written a moment earlier can fail briefly, and only the last attempt decides [`RemoveError::Locked`].
 ///
 /// # Errors
 ///
-/// [`RemoveError::Locked`] when a file is in use (sharing violation or access denied); otherwise a generic error,
-/// including when the user cancels the Shell's dialog or the folder is still there afterwards.
+/// [`RemoveError::Locked`] when a file or folder is in use: a Win32 sharing violation or access denied, or a Shell
+/// copy-engine sharing violation or access denied on the source. Otherwise a generic error, including when the user
+/// answers No to the permanent-delete warning, cancels, or the folder is still there afterwards.
 pub fn recycle(path: &Path) -> Result<(), RemoveError> {
     let path_wide = wide(path.as_os_str());
-    match shell_delete(&path_wide) {
+    match retry_while_locked(|| shell_delete(&path_wide), std::thread::sleep) {
         Ok(false) => {}
         Ok(true) => {
             return Err(anyhow!(
@@ -214,6 +228,25 @@ pub fn recycle(path: &Path) -> Result<(), RemoveError> {
     Ok(())
 }
 
+/// Runs `attempt`, and again after each delay in [`RECYCLE_LOCK_RETRIES`] while it fails with a lock; any other
+/// result ends the loop at once. The last attempt's result is returned.
+fn retry_while_locked(
+    mut attempt: impl FnMut() -> windows::core::Result<bool>,
+    mut sleep: impl FnMut(Duration),
+) -> windows::core::Result<bool> {
+    let mut result = attempt();
+    for delay in RECYCLE_LOCK_RETRIES {
+        match &result {
+            Err(error) if is_locked_hresult(error.code()) => {
+                sleep(delay);
+                result = attempt();
+            }
+            _ => break,
+        }
+    }
+    result
+}
+
 /// Runs one Shell delete with undo; returns whether any operation was aborted.
 fn shell_delete(path_wide: &[u16]) -> windows::core::Result<bool> {
     let flags = FILEOPERATION_FLAGS(
@@ -221,7 +254,9 @@ fn shell_delete(path_wide: &[u16]) -> windows::core::Result<bool> {
             | FOFX_RECYCLEONDELETE.0
             | FOF_WANTNUKEWARNING.0
             | FOF_NOCONFIRMMKDIR.0
-            | FOF_SILENT.0,
+            | FOF_SILENT.0
+            | FOF_NOERRORUI.0
+            | FOFX_EARLYFAILURE.0,
     );
     // SAFETY: COM is initialised on this thread by the caller; `path_wide` is NUL-terminated and outlives the
     // calls; every interface is released when it drops.
@@ -235,8 +270,17 @@ fn shell_delete(path_wide: &[u16]) -> windows::core::Result<bool> {
     }
 }
 
+/// Whether a Shell delete failed because something holds the tree: a Win32 sharing violation (32) or access denied
+/// (5), or the copy engine's sharing violation or access denied on the source. Despite its name, the copy engine
+/// reports `SHARING_VIOLATION_DEST` for a file held open, or a working folder, inside the tree being recycled.
+/// `ACCESS_DENIED_SRC` is what a file held with delete sharing gives. A folder whose ACL denies delete looks the
+/// same; the unlock flow then finds nothing holding it, and the retry fails with the same error.
 fn is_locked_hresult(code: HRESULT) -> bool {
-    code == HRESULT::from_win32(32) || code == HRESULT::from_win32(5)
+    code == HRESULT::from_win32(32)
+        || code == HRESULT::from_win32(5)
+        || code == COPYENGINE_E_SHARING_VIOLATION_SRC
+        || code == COPYENGINE_E_SHARING_VIOLATION_DEST
+        || code == COPYENGINE_E_ACCESS_DENIED_SRC
 }
 
 fn wide(text: &OsStr) -> Vec<u16> {
@@ -306,6 +350,91 @@ mod tests {
             matches!(&decision, Decision::AskPermanent(reason) if reason.contains("NukeOnDelete")),
             "{decision:?}"
         );
+    }
+
+    #[test]
+    fn copyengine_lock_codes_are_locked() -> Result<()> {
+        for code in [
+            COPYENGINE_E_SHARING_VIOLATION_SRC,
+            COPYENGINE_E_SHARING_VIOLATION_DEST,
+            COPYENGINE_E_ACCESS_DENIED_SRC,
+            HRESULT::from_win32(32),
+            HRESULT::from_win32(5),
+        ] {
+            anyhow::ensure!(is_locked_hresult(code), "{code:?} should be locked");
+        }
+        for code in [
+            windows::Win32::UI::Shell::COPYENGINE_E_USER_CANCELLED,
+            windows::Win32::Foundation::E_FAIL,
+        ] {
+            anyhow::ensure!(!is_locked_hresult(code), "{code:?} should not be locked");
+        }
+        Ok(())
+    }
+
+    /// Runs `retry_while_locked` over `results` in order, returning the result, the attempt count and the sleeps.
+    fn run_retries(
+        results: Vec<windows::core::Result<bool>>,
+    ) -> (windows::core::Result<bool>, usize, Vec<Duration>) {
+        let mut remaining = results.into_iter();
+        let mut attempts = 0;
+        let mut sleeps = Vec::new();
+        let result = retry_while_locked(
+            || {
+                attempts += 1;
+                remaining.next().unwrap_or(Ok(false))
+            },
+            |delay| sleeps.push(delay),
+        );
+        (result, attempts, sleeps)
+    }
+
+    fn locked() -> windows::core::Result<bool> {
+        Err(COPYENGINE_E_ACCESS_DENIED_SRC.into())
+    }
+
+    #[test]
+    fn locked_recycle_is_retried_with_backoff() -> Result<()> {
+        let (result, attempts, sleeps) = run_retries(vec![locked(), locked(), locked(), locked()]);
+        anyhow::ensure!(attempts == 4, "attempts: {attempts}");
+        anyhow::ensure!(
+            sleeps
+                == [
+                    Duration::from_millis(250),
+                    Duration::from_millis(500),
+                    Duration::from_millis(1000)
+                ],
+            "sleeps: {sleeps:?}"
+        );
+        anyhow::ensure!(
+            matches!(&result, Err(error) if error.code() == COPYENGINE_E_ACCESS_DENIED_SRC),
+            "result: {result:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn transient_lock_clears_on_retry() -> Result<()> {
+        let (result, attempts, sleeps) = run_retries(vec![locked(), Ok(false)]);
+        anyhow::ensure!(attempts == 2, "attempts: {attempts}");
+        anyhow::ensure!(sleeps == [Duration::from_millis(250)], "sleeps: {sleeps:?}");
+        anyhow::ensure!(matches!(result, Ok(false)), "result: {result:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn non_lock_error_is_not_retried() -> Result<()> {
+        let (result, attempts, sleeps) = run_retries(vec![
+            Err(windows::Win32::Foundation::E_FAIL.into()),
+            locked(),
+        ]);
+        anyhow::ensure!(attempts == 1, "attempts: {attempts}");
+        anyhow::ensure!(sleeps.is_empty(), "sleeps: {sleeps:?}");
+        anyhow::ensure!(
+            matches!(&result, Err(error) if error.code() == windows::Win32::Foundation::E_FAIL),
+            "result: {result:?}"
+        );
+        Ok(())
     }
 
     #[test]

@@ -3,6 +3,8 @@ use std::io::Write;
 use std::os::windows::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::mpsc;
+use std::time::Duration;
 
 use anyhow::{Context, Result, ensure};
 use worktree_sweep::discover::OrphanKind;
@@ -213,5 +215,45 @@ fn recycle_moves_folder_to_recycle_bin() -> Result<()> {
     let _com = worktree_sweep::recycle::ComApartment::init()?;
     worktree_sweep::recycle::recycle(&scratch)?;
     ensure!(!scratch.exists(), "{} still exists", scratch.display());
+    Ok(())
+}
+
+/// A folder with a file held open with no sharing is reported as `Locked` by `recycle`, without the Shell's
+/// "Folder In Use" dialog and without recycling any part of it. `recycle` runs on its own thread so that a dialog
+/// fails the test on the timeout instead of hanging it.
+#[test]
+fn recycling_locked_folder_is_classified_as_locked() -> Result<()> {
+    let fx = Fixture::new()?;
+    let tree = fx.path("tree");
+    fs::create_dir_all(tree.join("sub"))?;
+    let held = tree.join("sub").join("held.txt");
+    fs::write(&held, "held")?;
+    let loose = tree.join("loose.txt");
+    fs::write(&loose, "loose")?;
+    let _handle = OpenOptions::new().read(true).share_mode(0).open(&held)?;
+
+    let (sender, receiver) = mpsc::channel();
+    let target = tree.clone();
+    std::thread::spawn(move || {
+        let result = worktree_sweep::recycle::ComApartment::init()
+            .map_err(RemoveError::from)
+            .and_then(|_com| worktree_sweep::recycle::recycle(&target));
+        let _ = sender.send(result);
+    });
+    let result = receiver
+        .recv_timeout(Duration::from_secs(10))
+        .context("recycle did not return within 10 s: the Shell is showing a dialog")?;
+
+    match result {
+        Err(RemoveError::Locked { path, .. }) => {
+            ensure!(same_path(&path, &tree), "locked path: {}", path.display());
+        }
+        other => anyhow::bail!("expected Locked, got {other:?}"),
+    }
+    ensure!(
+        held.exists() && loose.exists(),
+        "part of {} was recycled",
+        tree.display()
+    );
     Ok(())
 }
