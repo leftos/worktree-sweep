@@ -28,7 +28,7 @@ Decisions from the interview:
 ## Tooling (measured)
 
 - **Rust / git:** rustc 1.98.1; git 2.55 (`merge-tree --write-tree` is available).
-- **handle.exe:** Sysinternals v5.0 on PATH (winget). Flags: `-nobanner -v` gives CSV output, and `-c <handle> -p <pid> -y` closes one handle.
+- **handle.exe:** Sysinternals v5.0 on PATH (winget). Flags: `-nobanner -v` gives CSV output, and `-c <handle> -p <pid> -y` closes one handle. With a name argument the CSV has 5 columns (`Process,PID,Type,Handle,Name`). With none, it dumps every handle on the system in 7 columns (`Process,PID,User,Handle,Type,Share Flags,Name`), both `File` and `Section` rows. Names carry a trailing space and are unquoted. Measured on this machine: an elevated unfiltered dump takes 1.4 s (about 19,500 rows). Unelevated, it takes about 141 s and sees only the caller's own processes.
 - **sudo:** Windows `sudo.exe` in **Inline** mode, so an elevated child shares the console and can prompt the user directly.
 
 ## Design
@@ -73,14 +73,21 @@ worktree-sweep unlock <PATH>...  # internal: runs elevated via sudo
   4. For a registered worktree: `git worktree unlock` if it was git-locked, then `git worktree prune`. If the branch is `Ancestor`, `PatchesApplied` or `ContentContained`, offer `git branch -d`. For the last two, git may refuse `-d`, so offer `-D` with the reason shown.
 - **Recycle Bin capacity** (inside `remove.rs` unless it grows): `GetVolumeNameForVolumeMountPointW` gives the volume GUID, and `HKCU\...\BitBucket\Volume\{GUID}` holds `MaxCapacity` in MB and `NukeOnDelete`.
 - **`unlock.rs`:** the lock flow.
-  - **Parent side:** explains what will happen, asks, then runs `sudo <self> unlock <paths>` and waits. If sudo is missing or disabled, it prints the elevated command to run by hand.
-  - **Elevated side:** runs `handle.exe -nobanner -v <path>` and parses the CSV.
-    - Ignore its own PID and its sudo parent.
-    - Group results by process: name, PID, handle count, a sample path.
-    - Flag the process that launched the tool (for example the pwsh you are typing in), because stopping it would close your own shell.
-    - Prompt per process: **stop process** (`TerminateProcess`), **close handles** (warned: may crash the app; runs `handle -c <h> -p <pid> -y` for each handle), or **skip**.
-    - Exit code: 0 when every lock is cleared.
-- **`handle_csv.rs`:** a pure parser for handle.exe output, unit tested. The exact column order is measured from a real run during implementation (test with a folder the implementer holds open) and recorded as a fixture.
+  - **One elevation per run.** Removal is two passes. Every pick that hits a lock is collected, and `unlock::offer(&[paths])` is called once for all of them. On `Unlocked` or `PartlyUnlocked`, each locked pick is retried once.
+  - **Parent side:** lists the locked folders, asks, then runs `sudo <self> unlock --caller-pid <shell> --sweep-pid <self> <paths>` and waits. If sudo is missing, disabled or not in Inline mode, it prints the elevated command to run by hand and returns `Skipped`.
+  - **Elevated side:** makes one unfiltered `handle.exe -nobanner -accepteula -v` dump per round. It keeps the rows whose Name is a locked path or lies under one, compared case-insensitively on backslash paths.
+    - It never lists its own process chain up to `sudo.exe`, the unelevated worktree-sweep, or that process's children.
+    - Results are grouped by process: name, PID, and the handles with their type.
+    - The process that launched the tool (for example the pwsh you are typing in) is flagged, because stopping it would close your own shell. Skip is its default.
+    - Prompt per process:
+      - **stop process** (`TerminateProcess`);
+      - **close its handles** (warned that the app may crash; runs `handle -c <h> -p <pid> -y` for each handle);
+      - **skip**;
+      - **done**.
+    - Before acting, it checks that the pid still belongs to the same image.
+    - It re-dumps and re-offers until nothing is left, the user picks Done, or a round acts on nothing.
+    - Exit code: 0 when all clear, 3 when locks remain after acting, 4 when nothing was acted on, 1 on error. The parent maps these to `Unlocked`, `PartlyUnlocked` and `StillLocked`.
+- **`handle_csv.rs`:** a pure parser for handle.exe output, unit tested against both recorded layouts (`tests/fixtures/handle-sample.csv`, `tests/fixtures/handle-dump-sample.csv`). Column positions come from the header line, and the Name is everything after the last fixed column, so a comma in a path survives.
 
 ### Repo scaffolding
 - **`Cargo.toml`:** edition 2024; the full `[lints.clippy]` block from the language-conventions skill.
