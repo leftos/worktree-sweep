@@ -15,6 +15,7 @@ use std::process::{Command, Output};
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
+use dialoguer::console::Term;
 use dialoguer::{Confirm, Select};
 use tracing::warn;
 use windows::Win32::Foundation::{HANDLE, WAIT_OBJECT_0};
@@ -570,11 +571,14 @@ fn choose_action(label: &str, is_caller: bool) -> Result<LockerAction> {
     Ok(ACTIONS.get(chosen).copied().unwrap_or(LockerAction::Skip))
 }
 
-/// Closes the locker's handles after a warning (default no); returns the summary line and whether any closed.
+/// Writes a warning line, then asks (default no) whether to close the locker's handles and closes them; returns the
+/// summary line and whether any closed.
 fn close_handles(locker: &Locker, label: &str) -> Result<(String, bool)> {
+    Term::stderr()
+        .write_line("Closing handles behind a program's back can make it crash or lose data.")?;
     let proceed = Confirm::new()
         .with_prompt(format!(
-            "Closing handles behind a program's back can make it crash or lose data. Close {} handle(s) of {label}?",
+            "Close {} handle(s) of {label}?",
             locker.handles.len()
         ))
         .default(false)
