@@ -65,6 +65,9 @@ pub struct Orphan {
     pub link_target: Option<PathBuf>,
     /// Whether its `.git` is a file whose `gitdir:` target no longer exists.
     pub stale_gitdir: bool,
+    /// The git dir its `.git` file points to when that git dir still exists: a repo outside the root still
+    /// registers the folder as a worktree. `None` for a link, a folder without a `.git` file, or a stale one.
+    pub live_gitdir: Option<PathBuf>,
     /// Whether its `.git` is a directory.
     pub has_git_dir: bool,
 }
@@ -319,6 +322,7 @@ fn link_orphan(container: &Path, path: PathBuf) -> Orphan {
         orphan_kind: OrphanKind::Link,
         link_target,
         stale_gitdir: false,
+        live_gitdir: None,
         has_git_dir: false,
     }
 }
@@ -327,20 +331,32 @@ fn folder_orphan(container: &Path, path: PathBuf) -> Orphan {
     let dot_git = path.join(".git");
     let git_meta = metadata_or_skip(&dot_git);
     let has_git_dir = git_meta.as_ref().is_some_and(Metadata::is_dir);
-    let stale_gitdir = git_meta.as_ref().is_some_and(Metadata::is_file)
-        && read_gitdir_file(&path).is_some_and(|gitdir| match gitdir.try_exists() {
-            Ok(exists) => !exists,
+    let gitdir = if git_meta.as_ref().is_some_and(Metadata::is_file) {
+        read_gitdir_file(&path)
+    } else {
+        None
+    };
+    let (stale_gitdir, live_gitdir) = match gitdir {
+        None => (false, None),
+        Some(gitdir) => match gitdir.try_exists() {
+            Ok(false) => (true, None),
+            Ok(true) => (false, Some(gitdir)),
             Err(error) => {
-                debug!("cannot check gitdir {}: {error}", gitdir.display());
-                false
+                debug!(
+                    "cannot check gitdir {}: {error}; treating it as still registered",
+                    gitdir.display()
+                );
+                (false, Some(gitdir))
             }
-        });
+        },
+    };
     Orphan {
         path,
         container: container.to_path_buf(),
         orphan_kind: OrphanKind::Folder,
         link_target: None,
         stale_gitdir,
+        live_gitdir,
         has_git_dir,
     }
 }

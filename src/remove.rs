@@ -1,0 +1,777 @@
+//! Removing picks: a link, a folder (to the Recycle Bin or permanently), a registered worktree's registration and
+//! its branch. Prompts go through [`Prompter`], so every action can run from a test with fixed answers.
+
+use std::fmt;
+use std::fs::{self, Metadata};
+use std::io;
+use std::path::{Path, PathBuf};
+
+use anyhow::{Result, anyhow};
+use tracing::warn;
+
+use crate::discover::{self, OrphanKind};
+use crate::git;
+use crate::pick::Pick;
+use crate::recycle::{self, Decision};
+use crate::report::{self, Candidate, RegisteredCandidate, human_bytes};
+use crate::signals::MergeState;
+use crate::unlock::{self, UnlockOutcome};
+
+/// Asks the user a yes/no question.
+pub trait Prompter {
+    /// Asks `prompt`; `default` is the answer Enter gives.
+    ///
+    /// # Errors
+    ///
+    /// When the question cannot be asked or answered.
+    fn confirm(&mut self, prompt: &str, default: bool) -> Result<bool>;
+}
+
+/// Why a removal failed.
+#[derive(Debug)]
+pub enum RemoveError {
+    /// Another process holds a file open (sharing violation or access denied, Win32 32 or 5).
+    Locked {
+        /// The pick being removed.
+        path: PathBuf,
+        /// The first file found locked, when known.
+        first_locked_file: Option<PathBuf>,
+    },
+    /// Any other failure, with its context.
+    Other(anyhow::Error),
+}
+
+impl fmt::Display for RemoveError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Locked {
+                path,
+                first_locked_file: Some(file),
+            } => write!(
+                f,
+                "{} is locked by another process ({})",
+                path.display(),
+                file.display()
+            ),
+            Self::Locked { path, .. } => {
+                write!(f, "{} is locked by another process", path.display())
+            }
+            Self::Other(error) => write!(f, "{error:#}"),
+        }
+    }
+}
+
+impl std::error::Error for RemoveError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Locked { .. } => None,
+            Self::Other(error) => Some(error.as_ref()),
+        }
+    }
+}
+
+impl From<anyhow::Error> for RemoveError {
+    fn from(error: anyhow::Error) -> Self {
+        Self::Other(error)
+    }
+}
+
+/// How a folder is deleted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Method {
+    /// Moved to the Recycle Bin.
+    Recycle,
+    /// Deleted for good.
+    Permanent,
+}
+
+/// What removing a pick does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Action {
+    /// Delete the junction or symbolic link only; its target is not touched.
+    RemoveLink,
+    /// The folder is already gone: `git worktree prune` in its repo.
+    PruneRegistration,
+    /// Delete the folder.
+    Delete(Method),
+}
+
+/// A pick's action, or why it is skipped.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Plan {
+    /// Remove it this way.
+    Run(Action),
+    /// Leave it, for this reason.
+    Skip(String),
+}
+
+/// What happened to one pick.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Outcome {
+    /// Moved to the Recycle Bin.
+    Recycled {
+        /// Its size.
+        bytes: u64,
+    },
+    /// Deleted for good.
+    Permanent {
+        /// Its size.
+        bytes: u64,
+    },
+    /// The link was deleted; its target was not touched.
+    LinkRemoved,
+    /// Its registration was pruned (the folder was already gone).
+    Pruned,
+    /// Left in place.
+    Skipped(String),
+    /// Removing it failed.
+    Failed(String),
+}
+
+/// One pick and what happened to it.
+#[derive(Debug, Clone)]
+pub struct Swept<'a> {
+    /// The pick.
+    pub candidate: &'a Candidate,
+    /// What happened.
+    pub outcome: Outcome,
+    /// What the follow-ups (prune, branch) did.
+    pub notes: Vec<String>,
+}
+
+/// Removes items one index at a time; the unit [`sweep`] drives.
+pub trait Sweeper {
+    /// Removes item `index`.
+    ///
+    /// # Errors
+    ///
+    /// [`RemoveError::Locked`] when a file is in use, else [`RemoveError::Other`].
+    fn remove(&mut self, index: usize) -> Result<(), RemoveError>;
+    /// Runs item `index`'s follow-ups once it is gone.
+    fn finish(&mut self, index: usize);
+    /// Offers, once, to clear the locks on `paths`.
+    ///
+    /// # Errors
+    ///
+    /// When the unlock flow fails.
+    fn offer_unlock(&mut self, paths: &[PathBuf]) -> Result<UnlockOutcome>;
+}
+
+/// Removes items `0..count` in two passes. Pass 1 removes each and collects the locked ones; then, when any are
+/// locked, the unlock flow is offered once for all of them, and on [`UnlockOutcome::Unlocked`] or
+/// [`UnlockOutcome::PartlyUnlocked`] each locked item is retried once. An item's follow-ups run right after it is
+/// removed, in whichever pass that happens.
+pub fn sweep(count: usize, sweeper: &mut impl Sweeper) -> Vec<Result<(), RemoveError>> {
+    let mut results: Vec<Result<(), RemoveError>> =
+        (0..count).map(|index| attempt(sweeper, index)).collect();
+    let locked: Vec<(usize, PathBuf)> = results
+        .iter()
+        .enumerate()
+        .filter_map(|(index, result)| match result {
+            Err(RemoveError::Locked { path, .. }) => Some((index, path.clone())),
+            _ => None,
+        })
+        .collect();
+    if locked.is_empty() {
+        return results;
+    }
+    let paths: Vec<PathBuf> = locked.iter().map(|(_, path)| path.clone()).collect();
+    let outcome = sweeper.offer_unlock(&paths).unwrap_or_else(|error| {
+        warn!("the unlock flow failed: {error:#}");
+        UnlockOutcome::Skipped
+    });
+    if matches!(
+        outcome,
+        UnlockOutcome::Unlocked | UnlockOutcome::PartlyUnlocked
+    ) {
+        for (index, _) in locked {
+            results[index] = attempt(sweeper, index);
+        }
+    }
+    results
+}
+
+fn attempt(sweeper: &mut impl Sweeper, index: usize) -> Result<(), RemoveError> {
+    let result = sweeper.remove(index);
+    if result.is_ok() {
+        sweeper.finish(index);
+    }
+    result
+}
+
+/// Plans, removes and follows up every pick: all questions about permanent deletes come first, then the two-pass
+/// [`sweep`], with branch questions as each worktree goes. COM must be initialised on this thread
+/// ([`recycle::ComApartment`]).
+///
+/// # Errors
+///
+/// When a question cannot be asked.
+pub fn remove_picks<'a>(
+    picks: &[Pick<'a>],
+    root: &Path,
+    prompter: &mut dyn Prompter,
+) -> Result<Vec<Swept<'a>>> {
+    let mut swept = Vec::with_capacity(picks.len());
+    let mut runnable = Vec::new();
+    for pick in picks {
+        let plan = if pick.confirmed {
+            plan(pick.candidate, root, prompter)?
+        } else {
+            Plan::Skip("not confirmed".to_owned())
+        };
+        let outcome = match plan {
+            Plan::Run(action) => {
+                runnable.push((swept.len(), action));
+                Outcome::Failed("not attempted".to_owned())
+            }
+            Plan::Skip(reason) => Outcome::Skipped(reason),
+        };
+        swept.push(Swept {
+            candidate: pick.candidate,
+            outcome,
+            notes: Vec::new(),
+        });
+    }
+
+    let mut sweeper = LiveSweeper {
+        items: runnable
+            .iter()
+            .map(|&(index, action)| (swept[index].candidate, action))
+            .collect(),
+        git_unlocked: vec![false; runnable.len()],
+        notes: vec![Vec::new(); runnable.len()],
+        prompter,
+    };
+    let results = sweep(runnable.len(), &mut sweeper);
+    for (item, ((index, action), result)) in runnable.into_iter().zip(results).enumerate() {
+        let entry = &mut swept[index];
+        entry.outcome = match result {
+            Ok(()) => done(action, entry.candidate),
+            Err(RemoveError::Locked {
+                path,
+                first_locked_file,
+            }) => Outcome::Failed(format!(
+                "locked ({})",
+                first_locked_file.unwrap_or(path).display()
+            )),
+            Err(RemoveError::Other(error)) => Outcome::Failed(format!("{error:#}")),
+        };
+        entry.notes = std::mem::take(&mut sweeper.notes[item]);
+    }
+    Ok(swept)
+}
+
+fn done(action: Action, candidate: &Candidate) -> Outcome {
+    let bytes = candidate.size_bytes().unwrap_or_default();
+    match action {
+        Action::RemoveLink => Outcome::LinkRemoved,
+        Action::PruneRegistration => Outcome::Pruned,
+        Action::Delete(Method::Recycle) => Outcome::Recycled { bytes },
+        Action::Delete(Method::Permanent) => Outcome::Permanent { bytes },
+    }
+}
+
+struct LiveSweeper<'a, 'p> {
+    items: Vec<(&'a Candidate, Action)>,
+    git_unlocked: Vec<bool>,
+    notes: Vec<Vec<String>>,
+    prompter: &'p mut dyn Prompter,
+}
+
+impl Sweeper for LiveSweeper<'_, '_> {
+    fn remove(&mut self, index: usize) -> Result<(), RemoveError> {
+        let (candidate, action) = self.items[index];
+        if let Candidate::Registered(registered) = candidate
+            && !self.git_unlocked[index]
+        {
+            git_unlock(registered)?;
+            self.git_unlocked[index] = true;
+        }
+        remove_candidate(candidate, action)
+    }
+
+    fn finish(&mut self, index: usize) {
+        let (candidate, _) = self.items[index];
+        self.notes[index] = after_removed(candidate, self.prompter);
+    }
+
+    fn offer_unlock(&mut self, paths: &[PathBuf]) -> Result<UnlockOutcome> {
+        unlock::offer(paths)
+    }
+}
+
+/// Decides how to remove a pick. A folder goes to the Recycle Bin when it fits (see
+/// [`recycle::recycle_decision`]); otherwise the user is asked (default no) whether to delete it permanently.
+///
+/// # Errors
+///
+/// When the question cannot be asked.
+pub fn plan(candidate: &Candidate, root: &Path, prompter: &mut dyn Prompter) -> Result<Plan> {
+    match candidate {
+        Candidate::Orphan(orphan) if orphan.orphan.orphan_kind == OrphanKind::Link => {
+            return Ok(Plan::Run(Action::RemoveLink));
+        }
+        Candidate::Registered(registered) if registered.prunable.is_some() => {
+            return Ok(Plan::Run(Action::PruneRegistration));
+        }
+        _ => {}
+    }
+    let path = candidate.path();
+    let capacity = recycle::bin_capacity(path).unwrap_or_else(|error| {
+        warn!(
+            "cannot read the Recycle Bin size for {}: {error:#}",
+            path.display()
+        );
+        None
+    });
+    let size = candidate.size_bytes().unwrap_or(u64::MAX);
+    match recycle::recycle_decision(size, capacity) {
+        Decision::Recycle => Ok(Plan::Run(Action::Delete(Method::Recycle))),
+        Decision::AskPermanent(reason) => {
+            let name = report::relative_path(path, root);
+            let prompt = format!(
+                "{name} cannot go to the Recycle Bin: {reason}. Delete it permanently? This cannot be undone."
+            );
+            Ok(if prompter.confirm(&prompt, false)? {
+                Plan::Run(Action::Delete(Method::Permanent))
+            } else {
+                Plan::Skip(format!("permanent delete declined; {reason}"))
+            })
+        }
+    }
+}
+
+/// Carries out `action` on a pick's folder or link. A registered worktree's git lock must already be lifted
+/// ([`git_unlock`]).
+///
+/// # Errors
+///
+/// [`RemoveError::Locked`] when a file is in use; otherwise a generic error with context.
+pub fn remove_candidate(candidate: &Candidate, action: Action) -> Result<(), RemoveError> {
+    let path = candidate.path();
+    match action {
+        Action::RemoveLink => remove_link(path),
+        Action::PruneRegistration => match candidate {
+            Candidate::Registered(registered) => Ok(prune(&registered.repo)?),
+            Candidate::Orphan(_) => Err(anyhow!(
+                "{} is not a registered worktree; there is nothing to prune",
+                path.display()
+            )
+            .into()),
+        },
+        Action::Delete(Method::Recycle) => {
+            reject_link(path)?;
+            recycle::recycle(path)
+        }
+        Action::Delete(Method::Permanent) => permanent_delete(path),
+    }
+}
+
+/// Lifts a registered worktree's git lock with `git worktree unlock`; does nothing when it is not git-locked.
+///
+/// # Errors
+///
+/// When git fails.
+pub fn git_unlock(registered: &RegisteredCandidate) -> Result<()> {
+    if registered.git_lock.is_some() {
+        let path = registered.path.to_string_lossy();
+        git::run(&registered.repo, &["worktree", "unlock", &path])?;
+    }
+    Ok(())
+}
+
+/// Runs `git worktree prune` in `repo`.
+///
+/// # Errors
+///
+/// When git fails.
+pub fn prune(repo: &Path) -> Result<()> {
+    git::run(repo, &["worktree", "prune"])?;
+    Ok(())
+}
+
+/// The follow-ups once a pick is gone, returned as notes for the summary: a registered worktree's registration is
+/// pruned and its branch offered for deletion; an orphan still registered elsewhere gets a reminder. A failure is
+/// a note, never fatal.
+pub fn after_removed(candidate: &Candidate, prompter: &mut dyn Prompter) -> Vec<String> {
+    let mut notes = Vec::new();
+    match candidate {
+        Candidate::Registered(registered) => {
+            if let Err(error) = prune(&registered.repo) {
+                notes.push(format!("prune failed: {error:#}"));
+            }
+            if let Some(offer) = branch_offer(registered) {
+                match prompter.confirm(&offer.prompt, true) {
+                    Ok(true) => notes.push(
+                        match delete_branch(&registered.repo, &offer.branch, offer.force) {
+                            Ok(()) => format!("branch {} deleted", offer.branch),
+                            Err(error) => format!("branch {} kept: {error:#}", offer.branch),
+                        },
+                    ),
+                    Ok(false) => notes.push(format!("branch {} kept", offer.branch)),
+                    Err(error) => notes.push(format!("branch {} kept: {error:#}", offer.branch)),
+                }
+            }
+        }
+        Candidate::Orphan(orphan) => {
+            if let Some(gitdir) = &orphan.orphan.live_gitdir {
+                notes.push(format!(
+                    "still registered at {}; `git worktree prune` in that repo clears it",
+                    gitdir.display()
+                ));
+            }
+        }
+    }
+    notes
+}
+
+/// An offer to delete a removed worktree's branch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BranchOffer {
+    /// The branch.
+    pub branch: String,
+    /// Whether it needs `git branch -D` (git's `-d` refuses cherry-picked and squash-merged branches).
+    pub force: bool,
+    /// The question, naming the reason.
+    pub prompt: String,
+}
+
+/// The branch deletion offered for a registered worktree: merged branches with `-d`, cherry-picked and
+/// content-contained ones with `-D`; `None` for an unmerged or detached worktree.
+#[must_use]
+pub fn branch_offer(registered: &RegisteredCandidate) -> Option<BranchOffer> {
+    let branch = registered.branch.clone()?;
+    let against = registered
+        .signals
+        .merge_state_against
+        .as_deref()
+        .unwrap_or("the default branch");
+    let (force, prompt) = match registered.signals.merge_state? {
+        MergeState::Ancestor => (
+            false,
+            format!("Delete branch {branch}? It is merged into {against}."),
+        ),
+        MergeState::PatchesApplied => (
+            true,
+            format!(
+                "Delete branch {branch}? Every commit on it is cherry-picked onto {against}; git branch -d refuses it, so \
+                 this uses git branch -D."
+            ),
+        ),
+        MergeState::ContentContained => (
+            true,
+            format!(
+                "Delete branch {branch}? Its changes are already in {against} (squash-merged); git branch -d refuses it, \
+                 so this uses git branch -D."
+            ),
+        ),
+        MergeState::Unmerged { .. } | MergeState::Detached { .. } => return None,
+    };
+    Some(BranchOffer {
+        branch,
+        force,
+        prompt,
+    })
+}
+
+/// Deletes `branch` in `repo` with `git branch -d`, or `-D` when `force`.
+///
+/// # Errors
+///
+/// When git refuses (for example, the branch is checked out in another worktree); the error carries git's message.
+pub fn delete_branch(repo: &Path, branch: &str, force: bool) -> Result<()> {
+    let flag = if force { "-D" } else { "-d" };
+    git::run(repo, &["branch", flag, branch])?;
+    Ok(())
+}
+
+/// Deletes a folder for good. The walk never enters a junction or symbolic link: each is deleted as a link. Files
+/// marked read-only (git's object files are) are cleared first.
+///
+/// # Errors
+///
+/// [`RemoveError::Locked`] naming the first file in use; otherwise a generic error with context.
+pub fn permanent_delete(path: &Path) -> Result<(), RemoveError> {
+    let meta =
+        fs::symlink_metadata(path).map_err(|error| io_error(path, path, error, "cannot read"))?;
+    if discover::is_link(&meta) {
+        return unlink(path, path, &meta);
+    }
+    if meta.is_dir() {
+        delete_tree(path, path, &meta)
+    } else {
+        delete_file(path, path, &meta)
+    }
+}
+
+/// Deletes a junction or symbolic link, never its target, after checking it still is one.
+///
+/// # Errors
+///
+/// When `path` is no longer a link, or deleting it fails.
+pub fn remove_link(path: &Path) -> Result<(), RemoveError> {
+    let meta =
+        fs::symlink_metadata(path).map_err(|error| io_error(path, path, error, "cannot read"))?;
+    if !discover::is_link(&meta) {
+        return Err(anyhow!("{} is no longer a link; left in place", path.display()).into());
+    }
+    unlink(path, path, &meta)
+}
+
+fn reject_link(path: &Path) -> Result<(), RemoveError> {
+    let meta =
+        fs::symlink_metadata(path).map_err(|error| io_error(path, path, error, "cannot read"))?;
+    if discover::is_link(&meta) {
+        return Err(anyhow!(
+            "{} became a link since the scan; left in place",
+            path.display()
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn delete_tree(root: &Path, dir: &Path, meta: &Metadata) -> Result<(), RemoveError> {
+    let entries = fs::read_dir(dir).map_err(|error| io_error(root, dir, error, "cannot list"))?;
+    for entry in entries {
+        let path = entry
+            .map_err(|error| io_error(root, dir, error, "cannot list"))?
+            .path();
+        let child = fs::symlink_metadata(&path)
+            .map_err(|error| io_error(root, &path, error, "cannot read"))?;
+        if discover::is_link(&child) {
+            unlink(root, &path, &child)?;
+        } else if child.is_dir() {
+            delete_tree(root, &path, &child)?;
+        } else {
+            delete_file(root, &path, &child)?;
+        }
+    }
+    clear_readonly(root, dir, meta)?;
+    fs::remove_dir(dir).map_err(|error| io_error(root, dir, error, "cannot delete folder"))
+}
+
+fn delete_file(root: &Path, path: &Path, meta: &Metadata) -> Result<(), RemoveError> {
+    clear_readonly(root, path, meta)?;
+    fs::remove_file(path).map_err(|error| io_error(root, path, error, "cannot delete"))
+}
+
+/// Deletes a link itself: `RemoveDirectoryW` for a directory junction or link (it deletes the reparse point, not
+/// the target), `DeleteFileW` for a file link.
+fn unlink(root: &Path, path: &Path, meta: &Metadata) -> Result<(), RemoveError> {
+    let result = if is_directory_entry(meta) {
+        fs::remove_dir(path)
+    } else {
+        fs::remove_file(path)
+    };
+    result.map_err(|error| io_error(root, path, error, "cannot delete link"))
+}
+
+#[cfg(windows)]
+fn is_directory_entry(meta: &Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+    meta.file_attributes() & FILE_ATTRIBUTE_DIRECTORY != 0
+}
+
+#[cfg(not(windows))]
+fn is_directory_entry(meta: &Metadata) -> bool {
+    meta.is_dir()
+}
+
+#[expect(
+    clippy::permissions_set_readonly_false,
+    reason = "on Windows this clears FILE_ATTRIBUTE_READONLY, which git sets on object files and which blocks deleting them"
+)]
+fn clear_readonly(root: &Path, path: &Path, meta: &Metadata) -> Result<(), RemoveError> {
+    let mut permissions = meta.permissions();
+    if !permissions.readonly() {
+        return Ok(());
+    }
+    permissions.set_readonly(false);
+    fs::set_permissions(path, permissions)
+        .map_err(|error| io_error(root, path, error, "cannot clear read-only on"))
+}
+
+/// Maps an I/O error on `path` while removing `root`: a sharing violation (32) or access denied (5) is `Locked`.
+fn io_error(root: &Path, path: &Path, error: io::Error, what: &str) -> RemoveError {
+    match error.raw_os_error() {
+        Some(32 | 5) => RemoveError::Locked {
+            path: root.to_path_buf(),
+            first_locked_file: Some(path.to_path_buf()),
+        },
+        _ => RemoveError::Other(
+            anyhow::Error::new(error).context(format!("{what} {}", path.display())),
+        ),
+    }
+}
+
+/// One line per pick (`<path>: removed (recycled)`, `removed (permanent)`, `removed (link only)`, `removed
+/// (registration pruned)`, `skipped (<why>)`, `failed: <why>`), its follow-up notes after `;`, then a total.
+#[must_use]
+pub fn summary(swept: &[Swept<'_>], root: &Path) -> Vec<String> {
+    let mut lines = Vec::with_capacity(swept.len() + 1);
+    let (mut removed, mut skipped, mut failed) = (0_usize, 0_usize, 0_usize);
+    let (mut freed, mut recycled) = (0_u64, 0_u64);
+    for entry in swept {
+        let what = match &entry.outcome {
+            Outcome::Recycled { bytes } => {
+                removed += 1;
+                freed += bytes;
+                recycled += bytes;
+                "removed (recycled)".to_owned()
+            }
+            Outcome::Permanent { bytes } => {
+                removed += 1;
+                freed += bytes;
+                "removed (permanent)".to_owned()
+            }
+            Outcome::LinkRemoved => {
+                removed += 1;
+                "removed (link only)".to_owned()
+            }
+            Outcome::Pruned => {
+                removed += 1;
+                "removed (registration pruned)".to_owned()
+            }
+            Outcome::Skipped(reason) => {
+                skipped += 1;
+                format!("skipped ({reason})")
+            }
+            Outcome::Failed(reason) => {
+                failed += 1;
+                format!("failed: {reason}")
+            }
+        };
+        let mut line = format!(
+            "{}: {what}",
+            report::relative_path(entry.candidate.path(), root)
+        );
+        for note in &entry.notes {
+            line.push_str("; ");
+            line.push_str(note);
+        }
+        lines.push(line);
+    }
+    let mut total = format!(
+        "{removed} removed, {skipped} skipped, {failed} failed; {} freed",
+        human_bytes(freed)
+    );
+    if recycled > 0 {
+        total = format!(
+            "{total} ({} of it in the Recycle Bin)",
+            human_bytes(recycled)
+        );
+    }
+    lines.push(total);
+    lines
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::*;
+
+    struct FakeSweeper {
+        locked_until_unlock: HashSet<usize>,
+        always_locked: HashSet<usize>,
+        failing: HashSet<usize>,
+        outcome: UnlockOutcome,
+        unlocked: bool,
+        removes: Vec<usize>,
+        finished: Vec<usize>,
+        offers: Vec<Vec<PathBuf>>,
+    }
+
+    impl FakeSweeper {
+        fn new(outcome: UnlockOutcome) -> Self {
+            Self {
+                locked_until_unlock: HashSet::from([1]),
+                always_locked: HashSet::from([2]),
+                failing: HashSet::from([3]),
+                outcome,
+                unlocked: false,
+                removes: Vec::new(),
+                finished: Vec::new(),
+                offers: Vec::new(),
+            }
+        }
+    }
+
+    impl Sweeper for FakeSweeper {
+        fn remove(&mut self, index: usize) -> Result<(), RemoveError> {
+            self.removes.push(index);
+            let locked = self.always_locked.contains(&index)
+                || (self.locked_until_unlock.contains(&index) && !self.unlocked);
+            if locked {
+                Err(RemoveError::Locked {
+                    path: PathBuf::from(format!("item{index}")),
+                    first_locked_file: None,
+                })
+            } else if self.failing.contains(&index) {
+                Err(anyhow!("broken").into())
+            } else {
+                Ok(())
+            }
+        }
+
+        fn finish(&mut self, index: usize) {
+            self.finished.push(index);
+        }
+
+        fn offer_unlock(&mut self, paths: &[PathBuf]) -> Result<UnlockOutcome> {
+            self.offers.push(paths.to_vec());
+            self.unlocked = matches!(
+                self.outcome,
+                UnlockOutcome::Unlocked | UnlockOutcome::PartlyUnlocked
+            );
+            Ok(self.outcome)
+        }
+    }
+
+    #[test]
+    fn locked_picks_trigger_one_offer_and_are_retried() {
+        let mut sweeper = FakeSweeper::new(UnlockOutcome::PartlyUnlocked);
+        let results = sweep(4, &mut sweeper);
+
+        assert_eq!(
+            sweeper.offers,
+            vec![vec![PathBuf::from("item1"), PathBuf::from("item2")]]
+        );
+        assert_eq!(sweeper.removes, vec![0, 1, 2, 3, 1, 2]);
+        assert_eq!(sweeper.finished, vec![0, 1]);
+        assert!(results[0].is_ok() && results[1].is_ok(), "{results:?}");
+        assert!(
+            matches!(results[2], Err(RemoveError::Locked { .. })),
+            "{results:?}"
+        );
+        assert!(
+            matches!(results[3], Err(RemoveError::Other(_))),
+            "{results:?}"
+        );
+    }
+
+    #[test]
+    fn skipped_unlock_does_not_retry() {
+        let mut sweeper = FakeSweeper::new(UnlockOutcome::Skipped);
+        let results = sweep(4, &mut sweeper);
+
+        assert_eq!(sweeper.offers.len(), 1);
+        assert_eq!(sweeper.removes, vec![0, 1, 2, 3]);
+        assert!(
+            matches!(results[1], Err(RemoveError::Locked { .. })),
+            "{results:?}"
+        );
+    }
+
+    #[test]
+    fn no_locks_means_no_offer() {
+        let mut sweeper = FakeSweeper::new(UnlockOutcome::Unlocked);
+        sweeper.locked_until_unlock.clear();
+        sweeper.always_locked.clear();
+        let _ = sweep(4, &mut sweeper);
+        assert!(sweeper.offers.is_empty());
+        assert_eq!(sweeper.finished, vec![0, 1, 2]);
+    }
+}

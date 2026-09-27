@@ -23,6 +23,8 @@ Decisions from the interview:
 
 **Measured constraint:** D:'s Recycle Bin `MaxCapacity` is 14844 MB (registry `HKCU\...\Explorer\BitBucket\Volume\{22bbaec6-…}`, D:'s volume GUID). Both big leftovers exceed it. The tool must detect this ahead of time: the Shell's recycle call with no UI can silently delete permanently when an item is too large.
 
+**Measured 2026-09-27:** recycling a folder that contains a junction (Shell `SendToRecycleBin` via `Microsoft.VisualBasic.FileIO.FileSystem.DeleteDirectory`) removed the folder and the link and left the junction's target and its files intact.
+
 ## Tooling (measured)
 
 - **Rust / git:** rustc 1.98.1; git 2.55 (`merge-tree --write-tree` is available).
