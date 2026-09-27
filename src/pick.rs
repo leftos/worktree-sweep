@@ -5,6 +5,7 @@ use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
+use dialoguer::console::Term;
 use dialoguer::{Confirm, MultiSelect};
 
 use crate::discover::{Orphan, OrphanKind};
@@ -38,8 +39,8 @@ pub fn ensure_interactive() -> Result<()> {
     }
 }
 
-/// Shows the candidates as a checkbox list with nothing ticked, then asks for a confirmation (default no) for
-/// every tick that [`loss_sentence`] has something to say about.
+/// Shows the candidates as a checkbox list with nothing ticked, writes a `Picked <path>` line for every tick, and
+/// asks for a confirmation (default no) for every tick that [`loss_sentence`] has something to say about.
 ///
 /// # Errors
 ///
@@ -54,15 +55,21 @@ pub fn pick<'a>(
     let chosen = MultiSelect::new()
         .with_prompt("Pick what to remove (space toggles, enter accepts, esc cancels)")
         .items(&items)
+        .report(false)
         .interact_opt()?
         .unwrap_or_default();
+    let term = Term::stderr();
     let mut picks = Vec::with_capacity(chosen.len());
     for index in chosen {
         let Some(candidate) = candidates.get(index).copied() else {
             continue;
         };
+        term.write_line(&format!(
+            "Picked {}",
+            report::relative_path(candidate.path(), &report.root)
+        ))?;
         let confirmed = match loss_sentence(candidate, &report.root) {
-            Some(prompt) => prompter.confirm(&prompt, false)?,
+            Some((context, question)) => prompter.confirm(&context, &question, false)?,
             None => true,
         };
         picks.push(Pick {
@@ -78,27 +85,31 @@ pub fn pick<'a>(
 pub struct TermPrompter;
 
 impl Prompter for TermPrompter {
-    fn confirm(&mut self, prompt: &str, default: bool) -> Result<bool> {
+    /// Writes `context` to standard error as its own line, once, then asks `question` with dialoguer, which
+    /// redraws only the short question after the answer.
+    fn confirm(&mut self, context: &str, question: &str, default: bool) -> Result<bool> {
+        if !context.is_empty() {
+            Term::stderr().write_line(context)?;
+        }
         Ok(Confirm::new()
-            .with_prompt(prompt)
+            .with_prompt(question)
             .default(default)
             .interact()?)
     }
 }
 
-/// The confirmation question for a pick, naming what removing it loses; `None` when nothing is lost. Asked for
-/// uncommitted files, commits not on the default branch, a branch with no commits of its own, a detached HEAD not
-/// on it, unpushed commits, a git lock,
-/// an orphan another repo still registers, and a link (whose target is kept).
+/// The confirmation for a pick as `(context, question)`: the context names the pick's path and what removing it
+/// loses, and the question is short and names no path. `None` when nothing is lost. Asked for uncommitted files,
+/// commits not on the default branch, a branch with no commits of its own, a detached HEAD not on it, unpushed
+/// commits, a git lock, an orphan another repo still registers, and a link (whose target is kept).
 #[must_use]
-pub fn loss_sentence(candidate: &Candidate, root: &Path) -> Option<String> {
+pub fn loss_sentence(candidate: &Candidate, root: &Path) -> Option<(String, String)> {
     let name = report::relative_path(candidate.path(), root);
     match candidate {
-        Candidate::Registered(registered) => {
-            registered_loss(registered).map(|loss| format!("{name}: {loss} Remove anyway?"))
-        }
+        Candidate::Registered(registered) => registered_loss(registered)
+            .map(|loss| (format!("{name}: {loss}"), "Remove anyway?".to_owned())),
         Candidate::Orphan(orphan) => orphan_notice(&orphan.orphan)
-            .map(|(notice, question)| format!("{name}: {notice} {question}")),
+            .map(|(notice, question)| (format!("{name}: {notice}"), question.to_owned())),
     }
 }
 
@@ -221,6 +232,7 @@ fn join_and(parts: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::report::OrphanCandidate;
     use crate::signals::{SizeInfo, WorktreeSignals};
 
     fn root() -> PathBuf {
@@ -251,8 +263,12 @@ mod tests {
         }
     }
 
-    fn sentence(registered: RegisteredCandidate) -> Option<String> {
+    fn sentence(registered: RegisteredCandidate) -> Option<(String, String)> {
         loss_sentence(&Candidate::Registered(registered), &root())
+    }
+
+    fn remove_anyway(context: &str) -> (String, String) {
+        (context.to_owned(), "Remove anyway?".to_owned())
     }
 
     #[test]
@@ -263,8 +279,10 @@ mod tests {
             untracked: 0,
         });
         assert_eq!(
-            sentence(candidate(signals)).as_deref(),
-            Some(r"yaat.wt\eram-co\yaat: 1 modified file will be lost. Remove anyway?")
+            sentence(candidate(signals)),
+            Some(remove_anyway(
+                r"yaat.wt\eram-co\yaat: 1 modified file will be lost."
+            ))
         );
     }
 
@@ -276,10 +294,10 @@ mod tests {
             untracked: 2,
         });
         assert_eq!(
-            sentence(candidate(signals)).as_deref(),
-            Some(
-                r"yaat.wt\eram-co\yaat: 3 modified, 2 untracked files and 4 commits not on main will be lost. Remove anyway?"
-            )
+            sentence(candidate(signals)),
+            Some(remove_anyway(
+                r"yaat.wt\eram-co\yaat: 3 modified, 2 untracked files and 4 commits not on main will be lost."
+            ))
         );
     }
 
@@ -289,10 +307,10 @@ mod tests {
         registered.branch = None;
         registered.signals.upstream = None;
         assert_eq!(
-            sentence(registered).as_deref(),
-            Some(
-                r"yaat.wt\eram-co\yaat: detached HEAD 0123456 and its commits not on main will be lost. Remove anyway?"
-            )
+            sentence(registered),
+            Some(remove_anyway(
+                r"yaat.wt\eram-co\yaat: detached HEAD 0123456 and its commits not on main will be lost."
+            ))
         );
         let mut contained = candidate(signals(MergeState::Detached { contained: true }));
         contained.branch = None;
@@ -302,10 +320,10 @@ mod tests {
     #[test]
     fn loss_sentence_no_commits() {
         assert_eq!(
-            sentence(candidate(signals(MergeState::NoCommits))).as_deref(),
-            Some(
-                r"yaat.wt\eram-co\yaat: a branch with no commits of its own (it may be new work in progress) will be lost. Remove anyway?"
-            )
+            sentence(candidate(signals(MergeState::NoCommits))),
+            Some(remove_anyway(
+                r"yaat.wt\eram-co\yaat: a branch with no commits of its own (it may be new work in progress) will be lost."
+            ))
         );
     }
 
@@ -314,9 +332,78 @@ mod tests {
         let mut signals = signals(MergeState::Ancestor);
         signals.upstream = Some(Upstream::Tracking { ahead: 1 });
         assert_eq!(
-            sentence(candidate(signals)).as_deref(),
-            Some(r"yaat.wt\eram-co\yaat: 1 commit not pushed will be lost. Remove anyway?")
+            sentence(candidate(signals)),
+            Some(remove_anyway(
+                r"yaat.wt\eram-co\yaat: 1 commit not pushed will be lost."
+            ))
         );
+    }
+
+    fn orphan(orphan_kind: OrphanKind, live_gitdir: Option<PathBuf>) -> Candidate {
+        Candidate::Orphan(OrphanCandidate {
+            orphan: Orphan {
+                path: root().join(LONG_PATH),
+                container: root().join(r"a-rather-long-repository-name.wt"),
+                orphan_kind,
+                link_target: (orphan_kind == OrphanKind::Link)
+                    .then(|| root().join(r"elsewhere\a-rather-long-target-folder")),
+                stale_gitdir: false,
+                live_gitdir,
+                has_git_dir: false,
+            },
+            size: SizeInfo::default(),
+        })
+    }
+
+    const LONG_PATH: &str =
+        r"a-rather-long-repository-name.wt\a-feature-branch-with-a-long-descriptive-name\nested";
+
+    #[test]
+    fn loss_question_is_short_and_pathless() -> anyhow::Result<()> {
+        let long = |mut registered: RegisteredCandidate| {
+            registered.path = root().join(LONG_PATH);
+            Candidate::Registered(registered)
+        };
+        let mut dirty = signals(MergeState::Ancestor);
+        dirty.dirty = Some(Dirty {
+            modified: 3,
+            untracked: 2,
+        });
+        let mut unpushed = signals(MergeState::Ancestor);
+        unpushed.upstream = Some(Upstream::Tracking { ahead: 5 });
+        let mut locked = candidate(signals(MergeState::Unmerged { commits: 9 }));
+        locked.git_lock = Some(r"on a USB drive mounted at E:\backups\worktrees".to_owned());
+        let mut detached = candidate(signals(MergeState::Detached { contained: false }));
+        detached.branch = None;
+        let registered_elsewhere = root().join(r"other\repo\.git\worktrees\nested");
+        let candidates = [
+            long(candidate(dirty)),
+            long(candidate(signals(MergeState::Unmerged { commits: 4 }))),
+            long(candidate(signals(MergeState::NoCommits))),
+            long(candidate(unpushed)),
+            long(locked),
+            long(detached),
+            orphan(OrphanKind::Link, None),
+            orphan(OrphanKind::Folder, Some(registered_elsewhere)),
+        ];
+        for candidate in &candidates {
+            let (context, question) = loss_sentence(candidate, &root())
+                .ok_or_else(|| anyhow::anyhow!("no confirmation for {candidate:?}"))?;
+            anyhow::ensure!(
+                !question.contains('\\') && !question.contains('/'),
+                "question names a path: {question}"
+            );
+            anyhow::ensure!(
+                question.chars().count() <= 40,
+                "question is {} chars: {question}",
+                question.chars().count()
+            );
+            anyhow::ensure!(
+                context.contains(LONG_PATH),
+                "context does not name the pick: {context}"
+            );
+        }
+        Ok(())
     }
 
     #[test]
@@ -324,8 +411,10 @@ mod tests {
         let mut registered = candidate(signals(MergeState::Ancestor));
         registered.git_lock = Some("on a USB drive".to_owned());
         assert_eq!(
-            sentence(registered).as_deref(),
-            Some(r"yaat.wt\eram-co\yaat: It is git-locked: on a USB drive. Remove anyway?")
+            sentence(registered),
+            Some(remove_anyway(
+                r"yaat.wt\eram-co\yaat: It is git-locked: on a USB drive."
+            ))
         );
     }
 }

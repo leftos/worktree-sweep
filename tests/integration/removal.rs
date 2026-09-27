@@ -23,8 +23,8 @@ struct Answers {
 }
 
 impl Prompter for Answers {
-    fn confirm(&mut self, prompt: &str, _default: bool) -> Result<bool> {
-        self.asked.push(prompt.to_owned());
+    fn confirm(&mut self, _context: &str, question: &str, _default: bool) -> Result<bool> {
+        self.asked.push(question.to_owned());
         Ok(self.answer)
     }
 }

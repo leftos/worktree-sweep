@@ -19,12 +19,13 @@ use crate::unlock::{self, UnlockOutcome};
 
 /// Asks the user a yes/no question.
 pub trait Prompter {
-    /// Asks `prompt`; `default` is the answer Enter gives.
+    /// Shows `context` once (paths, what would be lost, warnings; nothing when empty), then asks `question`, a
+    /// short question with no path in it; `default` is the answer Enter gives.
     ///
     /// # Errors
     ///
     /// When the question cannot be asked or answered.
-    fn confirm(&mut self, prompt: &str, default: bool) -> Result<bool>;
+    fn confirm(&mut self, context: &str, question: &str, default: bool) -> Result<bool>;
 }
 
 /// Why a removal failed.
@@ -329,14 +330,16 @@ pub fn plan(candidate: &Candidate, root: &Path, prompter: &mut dyn Prompter) -> 
         Decision::Recycle => Ok(Plan::Run(Action::Delete(Method::Recycle))),
         Decision::AskPermanent(reason) => {
             let name = report::relative_path(path, root);
-            let prompt = format!(
-                "{name} cannot go to the Recycle Bin: {reason}. Delete it permanently? This cannot be undone."
+            let context = format!(
+                "{name} cannot go to the Recycle Bin: {reason}; deleting it permanently cannot be undone."
             );
-            Ok(if prompter.confirm(&prompt, false)? {
-                Plan::Run(Action::Delete(Method::Permanent))
-            } else {
-                Plan::Skip(format!("permanent delete declined; {reason}"))
-            })
+            Ok(
+                if prompter.confirm(&context, "Delete it permanently?", false)? {
+                    Plan::Run(Action::Delete(Method::Permanent))
+                } else {
+                    Plan::Skip(format!("permanent delete declined; {reason}"))
+                },
+            )
         }
     }
 }
@@ -401,7 +404,7 @@ pub fn after_removed(candidate: &Candidate, prompter: &mut dyn Prompter) -> Vec<
                 notes.push(format!("prune failed: {error:#}"));
             }
             if let Some(offer) = branch_offer(registered) {
-                match prompter.confirm(&offer.prompt, true) {
+                match prompter.confirm(&offer.context, &offer.question, true) {
                     Ok(true) => notes.push(
                         match delete_branch(&registered.repo, &offer.branch, offer.force) {
                             Ok(()) => format!("branch {} deleted", offer.branch),
@@ -432,8 +435,10 @@ pub struct BranchOffer {
     pub branch: String,
     /// Whether it needs `git branch -D` (git's `-d` refuses cherry-picked and squash-merged branches).
     pub force: bool,
-    /// The question, naming the reason.
-    pub prompt: String,
+    /// The branch and why it can go (`Branch <name>: <reason>`), shown before the question.
+    pub context: String,
+    /// The fixed question, which names no branch.
+    pub question: String,
 }
 
 /// The branch deletion offered for a registered worktree: merged branches and branches with no commits of their
@@ -447,35 +452,31 @@ pub fn branch_offer(registered: &RegisteredCandidate) -> Option<BranchOffer> {
         .merge_state_against
         .as_deref()
         .unwrap_or("the default branch");
-    let (force, prompt) = match registered.signals.merge_state? {
-        MergeState::Ancestor => (
-            false,
-            format!("Delete branch {branch}? It is merged into {against}."),
-        ),
-        MergeState::NoCommits => (
-            false,
-            format!("Delete branch {branch}? It has no commits of its own."),
-        ),
+    let (force, reason) = match registered.signals.merge_state? {
+        MergeState::Ancestor => (false, format!("it is merged into {against}.")),
+        MergeState::NoCommits => (false, "it has no commits of its own.".to_owned()),
         MergeState::PatchesApplied => (
             true,
             format!(
-                "Delete branch {branch}? Every commit on it is cherry-picked onto {against}; git branch -d refuses it, so \
-                 this uses git branch -D."
+                "every commit on it is cherry-picked onto {against}; git branch -d refuses it, so this uses git branch \
+                 -D."
             ),
         ),
         MergeState::ContentContained => (
             true,
             format!(
-                "Delete branch {branch}? Its changes are already in {against} (squash-merged); git branch -d refuses it, \
-                 so this uses git branch -D."
+                "its changes are already in {against} (squash-merged); git branch -d refuses it, so this uses git \
+                 branch -D."
             ),
         ),
         MergeState::Unmerged { .. } | MergeState::Detached { .. } => return None,
     };
+    let context = format!("Branch {branch}: {reason}");
     Some(BranchOffer {
         branch,
         force,
-        prompt,
+        context,
+        question: "Delete the branch?".to_owned(),
     })
 }
 
@@ -778,5 +779,57 @@ mod tests {
         let _ = sweep(4, &mut sweeper);
         assert!(sweeper.offers.is_empty());
         assert_eq!(sweeper.finished, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn branch_question_is_short_and_nameless() -> Result<()> {
+        use crate::signals::{Dirty, SizeInfo, Upstream, WorktreeSignals};
+
+        const BRANCH: &str =
+            "feature/JIRA-1234-rework-the-candidate-table-rendering-for-narrow-terminals";
+        let kinds = [
+            MergeState::Ancestor,
+            MergeState::NoCommits,
+            MergeState::PatchesApplied,
+            MergeState::ContentContained,
+        ];
+        for merge_state in kinds {
+            let registered = RegisteredCandidate {
+                path: PathBuf::from(r"D:\repo.wt\narrow"),
+                repo: PathBuf::from(r"D:\repo"),
+                branch: Some(BRANCH.to_owned()),
+                head: Some("0123456789abcdef".to_owned()),
+                prunable: None,
+                git_lock: None,
+                signals: WorktreeSignals {
+                    merge_state: Some(merge_state),
+                    merge_state_against: Some("main".to_owned()),
+                    dirty: Some(Dirty::default()),
+                    upstream: Some(Upstream::Tracking { ahead: 0 }),
+                    last_activity_unix: None,
+                    size: Some(SizeInfo::default()),
+                    errors: Vec::new(),
+                },
+            };
+            let offer = branch_offer(&registered)
+                .ok_or_else(|| anyhow!("no branch offer for {merge_state:?}"))?;
+            anyhow::ensure!(
+                !offer.question.contains("JIRA") && !offer.question.contains('/'),
+                "question names the branch: {}",
+                offer.question
+            );
+            anyhow::ensure!(
+                offer.question.chars().count() <= 40,
+                "question is {} chars: {}",
+                offer.question.chars().count(),
+                offer.question
+            );
+            anyhow::ensure!(
+                offer.context.contains(BRANCH),
+                "context does not name the branch: {}",
+                offer.context
+            );
+        }
+        Ok(())
     }
 }
