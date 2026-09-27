@@ -131,10 +131,10 @@ Integration tests build throwaway repos with real `git` in `tempfile` dirs.
    - the orphans listed in Context;
    - no main repos.
 3. `--json` output parses (`jq`).
-4. **Manual lock test:** make a scratch worktree of this repo under `D:\worktree-sweep.wt\lock-test`, open a pwsh with its cwd there, pick it in the tool, and confirm that:
+4. **Manual lock test:** make a scratch worktree of this repo under `D:\worktree-sweep.wt\lock-test`, open a `cmd /k "cd /d <path>"` there, pick it in the tool, and confirm that:
    - the delete fails as locked;
    - sudo prompts once;
-   - the pwsh is listed by name and PID;
+   - the cmd is listed by name and PID;
    - "stop process" clears it;
    - the retry sends the folder to the Recycle Bin and prunes the registration.
 5. **Over-capacity path:** run it on a scratch folder only. Real deletion on D:\ happens with you at the keyboard.
