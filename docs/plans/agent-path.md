@@ -63,6 +63,23 @@ Answered (user, 2026-09-27):
 5. **Lost work:** a dirty, unmerged or unpushed worktree is refused with `would_lose` and the picker's loss sentence, unless `--force`; the branch is deleted only when merged or with no commits, `--force` or not.
 6. **Too big for the Recycle Bin:** `remove` deletes nothing, reports `too_big_for_recycle_bin`, and marks the worktree released, so the interactive sweep asks about the permanent delete.
 
+Answered in the decision round (user, 2026-09-27):
+
+7. **Exit codes:** 0 removed, 1 error, 2 usage, 5 released (locked, too big, or an unseen holder), 6 refused (`would_lose`, `caller_holds`, not a removable worktree). The JSON `status` carries the detail.
+8. **`would_lose`:** dirty, unmerged, unpushed, a detached HEAD not contained in the default branch, a git-locked worktree, or a signal that could not be read. `NoCommits` is not a loss. `--force` overrides it and runs `git worktree unlock` first. The text is the picker's loss sentence.
+9. **Branch:** deleted with `git branch -d` only when the merge state is `Ancestor` or `NoCommits`. A squash-merged branch (`PatchesApplied`, `ContentContained`) is kept, and the JSON notes it, even with `--force`.
+10. **Marker:** `<repo>/.git/worktrees/<id>/worktree-sweep-released.json` holds `{released_at, reason, holders}`. `git worktree prune` removes it with the admin dir. The scan only reads it.
+
+Settled from the code and the rulings (orchestrator, 2026-09-27):
+
+- **Command:** `worktree-sweep remove <PATH> --json [--force] [--stop-build-servers]`. `--json` is required, and the output is always one pretty-printed JSON object, in the style of `report::write_json`, with a snake_case `status` tag: `removed`, `released`, `refused`.
+- **What is refused:** the path must be the root of a registered linked worktree. A main worktree, a bare repo, a subfolder, an orphan folder, a link and a non-worktree are refused with a `reason`. A prunable record, whose folder is already gone, is pruned and reported `removed`.
+- **Allowlist matching:** by image name (`rust-analyzer*.exe`, `rust-analyzer-proc-macro-srv.exe`, `cargo.exe`, `MSBuild.exe`, `VBCSCompiler.exe`), and for `dotnet.exe` by command line (`MSBuild.dll` with `/nodemode`, or `VBCSCompiler.dll`), read from the PEB next to the cwd.
+- **`caller_holds`:** a full ancestor walk from `remove`'s own PID. A parent counts only if it was created before its child, so a reused PID ends the chain. worktree-sweep sets its own cwd to the main worktree before anything else, and excludes only its own PID from holders.
+- **Path forms:** the target is canonicalized (which expands 8.3 names). A PEB cwd goes through `GetLongPathNameW`. The shared path comparison also strips `\??\`.
+- **Order:** resolve → refusals → `would_lose` → `caller_holds` → capacity (too big → release, with no holder scan) → recycle on a thread with a timeout (timeout → release) → on `Locked`: find holders, stop allowlisted ones if the flag is set (re-checking start time and image first), retry once, else release → on success: prune and delete the branch.
+- **Split into three briefs, run in order:** 4a `src/holders.rs` (detection, allowlist, ancestors), 4b the `remove` command and the marker write, 4c the scan reads the marker, lists released worktrees first and pre-picks them. The ordering goes in `report::ordered`, and a pure `pick::default_picks` serves the current picker and the future full-screen one.
+
 Settled from the measurements:
 
 - **PID reuse:** holders are found and stopped in the same run, and each is re-checked against its start time and image before it is stopped.
