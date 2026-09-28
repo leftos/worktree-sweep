@@ -1,6 +1,6 @@
 # Brief 4b: `worktree-sweep remove <PATH> --json`
 
-Part of the agent path, see [agent-path.md](./agent-path.md): read every ruling there, numbered and "Settled from the code and the rulings". This brief adds the non-interactive command and writes the "released" marker. Brief 4c makes the interactive sweep read the marker; do not touch `report::ordered` or `pick` here.
+Part of the agent path, see [agent-path.md](../../agent-path.md): read every ruling there, numbered and "Settled from the code and the rulings". This brief adds the non-interactive command and writes the "released" marker. Brief 4c makes the interactive sweep read the marker; do not touch `report::ordered` or `pick` here.
 
 ## Tree and branch
 

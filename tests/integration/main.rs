@@ -6,6 +6,7 @@ mod fixture;
 mod git_env;
 mod holders;
 mod merge_state;
+mod released;
 mod removal;
 mod size;
 mod worktree_status;

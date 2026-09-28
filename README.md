@@ -39,11 +39,11 @@ For each candidate the table shows:
 | `UPSTREAM` | `+N` commits the upstream lacks, or `gone` when the upstream branch was deleted |
 | `ACTIVE` | time since the last commit or index write, whichever is later; for an orphan, its last file write |
 | `SIZE` | disk usage, without following links |
-| `FLAGS` | `git-locked`, `prunable` (its folder is gone), `stale .git` (an orphan whose `.git` file points nowhere), `registered elsewhere` |
+| `FLAGS` | `released` (an agent's `remove` couldn't finish it; listed first), `git-locked`, `prunable` (its folder is gone), `stale .git` (an orphan whose `.git` file points nowhere), `registered elsewhere` |
 
 Merge checks run against both the local and the `origin` default branch, and the better result counts.
 
-The interactive mode needs a terminal. Nothing is picked by default.
+The interactive mode needs a terminal. Nothing is picked by default, except worktrees an agent released, which are listed first and picked in advance; the usual confirmations still apply to them.
 
 ## Safety
 
@@ -132,6 +132,7 @@ An error exits 1 and a usage error exits 2.
       "head": "4518aff…",
       "prunable": null,
       "git_lock": null,
+      "released": null,
       "merge_state": { "state": "unmerged", "commits": 3 },
       "merge_state_against": "main",
       "dirty": { "modified": 6, "untracked": 2 },
@@ -157,6 +158,7 @@ An error exits 1 and a usage error exits 2.
 - `merge_state.state` is `ancestor`, `no_commits`, `patches_applied`, `content_contained`, `unmerged` (with `commits`) or `detached` (with `contained`).
 - `upstream.state` is `none`, `gone` or `tracking` (with `ahead`).
 - `orphan_kind` is `folder` or `link`. A `link` has its `link_target` set.
+- `released` is `null`, or `{ "released_at", "reason", "holders" }` from the marker an agent's `remove` left (see below).
 - A registered candidate whose signals could not all be read carries an `errors` array, and the affected fields are `null`.
 
 ## Development

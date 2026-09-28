@@ -11,7 +11,7 @@ use tempfile::TempDir;
 use windows::Win32::Storage::FileSystem::GetShortPathNameW;
 use windows::core::PCWSTR;
 use worktree_sweep::git::clear_repo_env;
-use worktree_sweep::holders::{Hold, Holder, HolderReport, find_holders, still_same};
+use worktree_sweep::holders::{Hold, Holder, HolderReport, MayHoldWhy, find_holders, still_same};
 use worktree_sweep::unlock::matches_locked_path;
 
 const READY_TIMEOUT: Duration = Duration::from_secs(30);
@@ -364,19 +364,29 @@ fn own_process_is_never_listed() -> Result<()> {
         &folders.ready("bystander"),
     )?;
     let report = find_holders(folders.scanned.path(), &[])?;
-    for (pid, who) in [
-        (std::process::id(), "own process"),
-        (bystander.pid(), "child outside the folder"),
-    ] {
-        ensure!(
-            holder(&report, pid).is_none(),
-            "{who} (pid {pid}) listed as a holder: {report:?}"
-        );
-        ensure!(
-            report.may_hold.iter().all(|may| may.pid != pid),
-            "{who} (pid {pid}) listed as may_hold: {report:?}"
-        );
-    }
+    let own = std::process::id();
+    ensure!(
+        holder(&report, own).is_none(),
+        "own process (pid {own}) listed as a holder: {report:?}"
+    );
+    ensure!(
+        report.may_hold.iter().all(|may| may.pid != own),
+        "own process (pid {own}) listed as may_hold: {report:?}"
+    );
+    // An unnamed-handle entry is not about the folder, so any process may show up with one; only a holder or a
+    // cannot-open entry would claim our own, always openable child uses the folder.
+    let child = bystander.pid();
+    ensure!(
+        holder(&report, child).is_none(),
+        "child outside the folder (pid {child}) listed as a holder: {report:?}"
+    );
+    ensure!(
+        !report
+            .may_hold
+            .iter()
+            .any(|may| may.pid == child && may.why == MayHoldWhy::CannotOpen),
+        "child outside the folder (pid {child}) listed as may_hold cannot_open: {report:?}"
+    );
     Ok(())
 }
 

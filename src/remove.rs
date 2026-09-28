@@ -801,6 +801,7 @@ mod tests {
                 head: Some("0123456789abcdef".to_owned()),
                 prunable: None,
                 git_lock: None,
+                released: None,
                 signals: WorktreeSignals {
                     merge_state: Some(merge_state),
                     merge_state_against: Some("main".to_owned()),

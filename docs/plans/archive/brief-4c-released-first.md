@@ -1,11 +1,12 @@
 # Brief 4c: the sweep lists released worktrees first and pre-picks them
 
-Part of the agent path, see [agent-path.md](./agent-path.md) (ruling 10, "Marker", and the "Remove, else release" line in MAIN.md). Brief 4b writes the marker; this brief makes the scan read it and the interactive sweep act on it. It runs after 4b has landed, because both edit `src/lib.rs`.
+Part of the agent path, see [agent-path.md](../../agent-path.md) (ruling 10, "Marker", and the "Remove, else release" line in MAIN.md). Brief 4b writes the marker; this brief makes the scan read it and the interactive sweep act on it. It runs after 4b has landed, because both edit `src/lib.rs`.
 
 ## Tree and branch
 
 - Root: `D:\worktree-sweep` (the main checkout). First: `git switch -c feat/released-first` from an up-to-date `main`.
-- Files: `src/report.rs` (field, ordering, FLAGS), `src/lib.rs` (the scan fills the field), `src/pick.rs` (defaults), a marker reader wherever 4b put its writer (reuse its type; see below), and the test constructors of `RegisteredCandidate` at report.rs:485, pick.rs:243 and remove.rs:797 (the line numbers are from before 4b; re-find them).
+- Files: `src/report.rs` (field, ordering, FLAGS), `src/lib.rs` (the scan fills the field), `src/pick.rs` (defaults), `src/agent.rs` (the marker type), and the `RegisteredCandidate` constructors in tests and helpers. As of `main` 001a4a4 they are at report.rs:485, pick.rs:243, remove.rs:797, agent.rs:580, lib.rs:75 and lib.rs:310 (`build_candidate`).
+- After 4b (checked on 001a4a4): `agent::MARKER_FILE` (agent.rs:27) is pub. The writer is `write_marker` (agent.rs:520), which serializes a private borrowed `struct Marker<'a> { released_at: i64, reason, holders }` (agent.rs:513). Turn it into one owned `pub` type, `Released { released_at: i64, reason: Reason, holders: Vec<ProcessRef> }`, that derives `Serialize` and `Deserialize`. Use it for both the write and the read, so the format lives in one place. Wherever `Reason` and `ProcessRef` also need `Deserialize`, derive it.
 
 ## Measured facts (code on `main` before 4b; re-check after 4b lands)
 
