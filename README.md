@@ -20,6 +20,8 @@ Requirements:
 worktree-sweep [ROOT]           # scan, show the table, pick, confirm, remove
 worktree-sweep [ROOT] --list    # show the table and exit
 worktree-sweep [ROOT] --json    # print the report as JSON and exit
+worktree-sweep remove <PATH> --json [--force] [--stop-build-servers]
+                                # remove one worktree without prompts (for agents)
 ```
 
 `ROOT` defaults to the current folder. The tool looks at:
@@ -59,6 +61,59 @@ Windows refuses to move a folder while a process holds a file in it or has it as
 2. It asks once, then runs itself elevated through `sudo` for all of them together. That is one UAC prompt per run.
 3. The elevated step lists every process holding a handle inside a locked folder, by name and PID. For each one you choose: **stop process** (the default), **close its handles** (the app may crash), **skip**, or **done**. The shell you started the tool from is marked, and skip is its default.
 4. It repeats until nothing holds the folders or you pick done, then retries each locked pick once.
+
+## Removing one worktree from an agent
+
+An agent that is done with its own worktree runs `worktree-sweep remove <PATH> --json`. The command never prompts and never elevates. `PATH` must be the root folder of a linked worktree.
+
+1. **Refusals.** It refuses a main worktree, a bare repo, a subfolder, an orphan (including a worktree folder whose `.git` file is gone), a link, or a folder that is not a worktree. A worktree whose folder is already gone is pruned. Without `--force`, it also refuses a worktree that would lose work (dirty, unmerged, unpushed, a detached HEAD found nowhere else, git-locked, or a signal it could not read). A worktree with no commits is not a loss.
+2. **Your own shell.** If the shell that ran the command (or any of its parents) holds the folder, the command stops and names the folder to `cd` to first.
+3. **Remove.** It recycles the folder, prunes the registration, and deletes the branch with `git branch -d` when the branch is merged or has no commits. A squash-merged or cherry-picked branch is kept, and a note in the output gives the `git branch -D` to run.
+4. **Release.** If the folder is still locked, or too big for the Recycle Bin, nothing is deleted. The worktree is marked **released**, and the next interactive sweep lists it first and picks it in advance, behind the usual confirmations and its one elevation. The marker is `worktree-sweep-released.json` in the worktree's folder under `.git/worktrees`, and pruning the worktree removes it.
+
+The command finds holding processes without elevation: each process's current folder and its open files, for processes running as you. With `--stop-build-servers`, it stops rust-analyzer, cargo, MSBuild nodes and VBCSCompiler when they hold something inside the worktree, then tries once more. Nothing else is ever stopped.
+
+The output is one JSON object:
+
+```json
+{
+  "status": "released",
+  "reason": "locked",
+  "path": "D:\\app.wt\\feature",
+  "repo": "D:\\app",
+  "branch": "feature",
+  "branch_deleted": false,
+  "loss": null,
+  "cd_to": null,
+  "holders": [
+    {
+      "pid": 4242,
+      "exe": "pwsh.exe",
+      "image": "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+      "started": 134349620972565725,
+      "command_line": "\"C:\\Program Files\\PowerShell\\7\\pwsh.exe\"",
+      "holds": [{ "kind": "current_folder", "path": "D:\\app.wt\\feature\\src" }]
+    }
+  ],
+  "may_hold": [],
+  "stopped": [],
+  "released": true,
+  "notes": []
+}
+```
+
+| `status` | Exit code | `reason` |
+|---|---|---|
+| `removed` | 0 | `null` |
+| `released` | 5 | `locked`, `may_hold` (only processes whose handles could not be read may hold it), `too_big_for_recycle_bin`, `shell_timeout` |
+| `refused` | 6 | `would_lose` (with `loss`), `caller_holds` (with `cd_to`), `main_worktree`, `bare_repo`, `subfolder`, `orphan`, `link`, `not_a_worktree`, `not_found` |
+
+An error exits 1 and a usage error exits 2.
+
+- `holds[].kind` is `current_folder` or `open_handle`. `started` is the process's creation time as a Windows FILETIME.
+- `may_hold` lists processes that may hold the folder without it being certain: `why` is `unnamed_handle` (a handle whose name could not be read) or `cannot_open` (the process could not be inspected). Unrelated system processes often show up here.
+- `stopped` lists the build servers `--stop-build-servers` stopped; they stay in `holders` too.
+- `notes` explains anything kept or skipped, such as a branch that was not deleted.
 
 ## JSON report
 
