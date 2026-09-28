@@ -1,11 +1,11 @@
 use std::fs;
-use std::io::Write;
-use std::process::Command;
 
 use anyhow::{Context, Result, ensure};
 use worktree_sweep::discover::OrphanKind;
 
-use crate::fixture::{Fixture, add_worktree, candidate_paths, orphans, registered, same_path};
+use crate::fixture::{
+    Fixture, add_worktree, candidate_paths, make_junction, orphans, registered, same_path,
+};
 
 #[test]
 fn main_worktree_is_never_a_candidate() -> Result<()> {
@@ -173,32 +173,7 @@ fn junction_in_container_is_not_followed() -> Result<()> {
     fs::create_dir_all(&container)?;
     let link = container.join("link");
 
-    let made = Command::new("cmd")
-        .arg("/c")
-        .arg("mklink")
-        .arg("/J")
-        .arg(&link)
-        .arg(&target)
-        .output();
-    let made = match made {
-        Ok(output) if output.status.success() => true,
-        Ok(output) => {
-            writeln!(
-                std::io::stderr(),
-                "skipping: mklink /J failed: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            )?;
-            false
-        }
-        Err(error) => {
-            writeln!(
-                std::io::stderr(),
-                "skipping: cannot run cmd /c mklink /J: {error}"
-            )?;
-            false
-        }
-    };
-    if !made {
+    if !make_junction(&link, &target)? {
         return Ok(());
     }
 

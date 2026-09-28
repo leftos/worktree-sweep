@@ -16,7 +16,7 @@ use worktree_sweep::git::clear_repo_env;
 use worktree_sweep::signals::MergeState;
 use worktree_sweep::{RefusalReason, Resolved, resolve_one};
 
-use crate::fixture::{Fixture, add_worktree, commit_file, git, same_path};
+use crate::fixture::{Fixture, add_worktree, commit_file, git, make_junction, same_path};
 
 /// How long one `remove` run may take; its own Shell timeout is 30 s, so this only catches a hang.
 const RUN_TIMEOUT: Duration = Duration::from_secs(120);
@@ -46,26 +46,6 @@ fn resolved(path: &Path) -> Result<Resolved> {
         Ok(resolved) => Ok(resolved),
         Err(refusal) => bail!("{} refused: {refusal:?}", path.display()),
     }
-}
-
-/// Makes a directory junction; `false` (with a logged message) when `mklink /J` is unavailable.
-fn make_junction(link: &Path, target: &Path) -> Result<bool> {
-    let output = Command::new("cmd")
-        .arg("/c")
-        .arg("mklink")
-        .arg("/J")
-        .arg(link)
-        .arg(target)
-        .output()
-        .context("cannot start cmd")?;
-    if output.status.success() {
-        return Ok(true);
-    }
-    tracing::warn!(
-        "mklink /J failed: {}",
-        String::from_utf8_lossy(&output.stderr).trim()
-    );
-    Ok(false)
 }
 
 #[test]

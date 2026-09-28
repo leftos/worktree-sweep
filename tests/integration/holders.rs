@@ -14,6 +14,8 @@ use worktree_sweep::git::clear_repo_env;
 use worktree_sweep::holders::{Hold, Holder, HolderReport, MayHoldWhy, find_holders, still_same};
 use worktree_sweep::unlock::matches_locked_path;
 
+use crate::fixture::make_junction;
+
 const READY_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// A pwsh child that is killed and waited on when the guard drops.
@@ -209,35 +211,6 @@ fn short_name_folder_matches() -> Result<()> {
         short.display()
     );
     Ok(())
-}
-
-/// Makes a directory junction; `false` (with a logged message) when `mklink /J` is unavailable.
-fn make_junction(link: &Path, target: &Path) -> Result<bool> {
-    let output = Command::new("cmd")
-        .arg("/c")
-        .arg("mklink")
-        .arg("/J")
-        .arg(link)
-        .arg(target)
-        .output();
-    match output {
-        Ok(output) if output.status.success() => Ok(true),
-        Ok(output) => {
-            writeln!(
-                std::io::stderr(),
-                "skipping: mklink /J failed: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            )?;
-            Ok(false)
-        }
-        Err(error) => {
-            writeln!(
-                std::io::stderr(),
-                "skipping: cannot run cmd /c mklink /J: {error}"
-            )?;
-            Ok(false)
-        }
-    }
 }
 
 #[test]

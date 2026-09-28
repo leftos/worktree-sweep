@@ -35,7 +35,7 @@ Design: [v1-design.md](./v1-design.md). Execution ledger (untracked): `.tmp/plan
   - [ ] T2: the TUI core, not wired in (`src/tui/mod.rs` already exists from T1 and holds `pub mod review;`)
   - [ ] T3: wiring it in and removing `dialoguer`; `remove_picks` takes `on_progress` and `offer_unlock` callbacks ready for the worker thread
 
-- [ ] Test cleanup: `make_junction` is copied in three integration test files (`tests/integration/removal.rs:33`, `holders.rs:215`, `agent_remove.rs:52`), and `tests/integration/discovery.rs:176-199` inlines a fourth `mklink /J`; move one copy into `tests/integration/fixture.rs` and use it in all four
+- [x] Test cleanup: `make_junction` is copied in three integration test files (`tests/integration/removal.rs:33`, `holders.rs:215`, `agent_remove.rs:52`), and `tests/integration/discovery.rs:176-199` inlines a fourth `mklink /J`; move one copy into `tests/integration/fixture.rs` and use it in all four
 
 ### Done from the backlog
 

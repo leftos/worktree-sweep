@@ -2,6 +2,7 @@
 //! config.
 
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
@@ -155,6 +156,35 @@ pub fn candidate_paths(report: &Report) -> Vec<&Path> {
             Candidate::Orphan(orphan) => orphan.orphan.path.as_path(),
         })
         .collect()
+}
+
+/// Makes a directory junction; `false` (with a logged message) when `mklink /J` is unavailable.
+pub fn make_junction(link: &Path, target: &Path) -> Result<bool> {
+    let output = Command::new("cmd")
+        .arg("/c")
+        .arg("mklink")
+        .arg("/J")
+        .arg(link)
+        .arg(target)
+        .output();
+    match output {
+        Ok(output) if output.status.success() => Ok(true),
+        Ok(output) => {
+            writeln!(
+                std::io::stderr(),
+                "skipping: mklink /J failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            )?;
+            Ok(false)
+        }
+        Err(error) => {
+            writeln!(
+                std::io::stderr(),
+                "skipping: cannot run cmd /c mklink /J: {error}"
+            )?;
+            Ok(false)
+        }
+    }
 }
 
 pub fn same_path(a: &Path, b: &Path) -> bool {

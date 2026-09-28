@@ -1,8 +1,6 @@
 use std::fs::{self, OpenOptions};
-use std::io::Write;
 use std::os::windows::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -14,36 +12,7 @@ use worktree_sweep::remove::{
 };
 use worktree_sweep::report::Candidate;
 
-use crate::fixture::{Fixture, add_worktree, git, same_path};
-
-/// Makes a directory junction; `false` (with a logged message) when `mklink /J` is unavailable.
-fn make_junction(link: &Path, target: &Path) -> Result<bool> {
-    match Command::new("cmd")
-        .arg("/c")
-        .arg("mklink")
-        .arg("/J")
-        .arg(link)
-        .arg(target)
-        .output()
-    {
-        Ok(output) if output.status.success() => Ok(true),
-        Ok(output) => {
-            writeln!(
-                std::io::stderr(),
-                "skipping: mklink /J failed: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            )?;
-            Ok(false)
-        }
-        Err(error) => {
-            writeln!(
-                std::io::stderr(),
-                "skipping: cannot run cmd /c mklink /J: {error}"
-            )?;
-            Ok(false)
-        }
-    }
-}
+use crate::fixture::{Fixture, add_worktree, git, make_junction, same_path};
 
 fn make_readonly(path: &Path) -> Result<()> {
     let mut permissions = fs::metadata(path)?.permissions();
