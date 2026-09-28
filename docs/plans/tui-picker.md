@@ -1,8 +1,8 @@
 # Full-screen picker (ratatui + crossterm): design for review
 
-Design pass for the MAIN.md Backlog item "Full-screen picker with `ratatui` + `crossterm`" and its Rulings (user, 2026-09-27). Drafted 2026-09-27. The user answered its eight open questions the same day; the answers are under "Rulings from the review", and the sections above them already reflect those answers.
+Design pass for the MAIN.md Backlog item "Full-screen picker with `ratatui` + `crossterm`" and its Rulings. The user's answers to its eight open questions are under "Rulings from the review", and the sections above them already reflect those answers.
 
-## Rulings this design takes as fixed (MAIN.md, 2026-09-27)
+## Rulings this design takes as fixed (MAIN.md)
 
 - Unlock step: leave the alternate screen and restore the terminal, run `unlock::offer` as today (plain prompts, UAC), re-enter, show the retry results in-screen; a guard restores the terminal on any exit or panic.
 - `--list` and `--json` keep their plain output. The TUI runs only in interactive mode on a real terminal, and interactive mode refuses to start when stdout is not a TTY.
@@ -213,7 +213,7 @@ Looked up 2026-09-27 with `cargo search` and `cargo info` against crates.io, and
 
 Binary size, measured on minimal release builds in the scratchpad (default profile): a program using `dialoguer` 0.12.0 (`MultiSelect` + `Confirm`) is 194,048 bytes; one using `ratatui` 0.30.2 defaults (a `List`, a `Paragraph`, one `crossterm` event read) is 363,008 bytes. Roughly +165 KiB for the swap; the real binary's figure is unmeasured.
 
-## Rulings from the review (user, 2026-09-27)
+## Rulings from the review
 
 1. **Unlock prompts:** plain numbered line prompts on stdin, with a pure parser tested without a terminal (option a). `dialoguer` goes from both sides of the unlock step.
 2. **Question timing:** every question is asked up front in Review (option a). A branch answer takes effect only if its removal succeeds, and `Prompter` is removed.

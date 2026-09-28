@@ -20,7 +20,7 @@ The generic loop is the user-level `nextup` skill; this file supplies only what 
 ## Rulings every brief carries
 
 - **Read-only against the real D:\.** A run against D:\ uses `--list` or `--json` only. The interactive mode and any removal run only against `tempfile` fixtures or folders under `.tmp\`. Real cleanup of D:\ happens with the user at the keyboard.
-- **One elevation per run** (user, 2026-09-27): removal is two passes; locked picks go to a single `unlock::offer(&[paths])`, one `sudo` session, one unfiltered `handle.exe` dump filtered by every locked path, a loop until clear or Done, then one retry pass.
+- **One elevation per run**: removal is two passes; locked picks go to a single `unlock::offer(&[paths])`, one `sudo` session, one unfiltered `handle.exe` dump filtered by every locked path, a loop until clear or Done, then one retry pass.
 - **Junctions are links, never trees**: remove with `remove_dir` on the link after re-checking it is still a reparse point; never size, walk, recycle or recursively delete through one (`D:\yaat-server.wt\yaat` → `X:\dev\yaat` is real).
 - **The scan writes nothing**: every git call clears the repo-local env vars (`git::clear_repo_env`) and runs with `GIT_OPTIONAL_LOCKS=0`, `core.fsmonitor=false`; `merge-tree` writes to a scratch object dir.
 - **Recycle Bin capacity is checked before recycling** (D:'s cap measured at 14844 MB); an item over it asks for a permanent delete instead of letting the Shell nuke it silently.
@@ -67,6 +67,6 @@ The generic loop is the user-level `nextup` skill; this file supplies only what 
 
 ## Landing
 
-- A feature item (multi-file, from a brief): commit on `feat/<slug>` (the prek hook runs fmt, clippy and tests), `git push -u origin feat/<slug>`, `gh pr create` with the agent-authored marker line as the body's first line, then `gh pr merge --squash --delete-branch`, `git switch main`, `git pull --ff-only` (user, 2026-09-27: merge PRs yourself as you go).
+- A feature item (multi-file, from a brief): commit on `feat/<slug>` (the prek hook runs fmt, clippy and tests), `git push -u origin feat/<slug>`, `gh pr create` with the agent-authored marker line as the body's first line, then `gh pr merge --squash --delete-branch`, `git switch main`, `git pull --ff-only`. Merge PRs yourself as you go.
 - A small change (docs, plan, config, one-line fix): commit on `main` and `git push`.
 - Commit messages: ≤4-char type tag, imperative, ≤72-char subject, the session's attribution trailers.

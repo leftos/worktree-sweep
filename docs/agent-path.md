@@ -2,7 +2,7 @@
 
 Design record for the agent path, a finished item in [plans/MAIN.md](./plans/MAIN.md). Goal: `worktree-sweep remove <PATH> --json`, run unelevated and non-interactively by an agent, removes one worktree, or reports which processes hold it and marks it "released" for the next interactive sweep. Rulings so far are on the MAIN.md line.
 
-## Measurements (2026-09-27)
+## Measurements
 
 Measured by a probe run on build 26200, at Medium integrity (not admin), with 450–590 processes and about 180k handles. Each lock kind was a real process whose folder was a fixture. The probe's source is kept untracked at `.tmp/lockprobe/` (`lockprobe fixtures|teardown|scan|handles|hang-test|inspect|fpid|fs-test|delete-test`).
 
@@ -54,7 +54,7 @@ Sketch of `src/holders.rs`: `find_holders(folder, exclude) -> HolderReport { hol
 
 ## Open decisions
 
-Answered (user, 2026-09-27):
+Answered:
 
 1. **Allowlist:** `rust-analyzer*` and its proc-macro server, `cargo`, MSBuild nodes and `VBCSCompiler`, each stopped only when it actually holds something inside the worktree. Editors' other LSP and MCP servers are never stopped.
 2. **Detection:** cwd plus per-process disk handles, the recommended route above.
@@ -63,14 +63,14 @@ Answered (user, 2026-09-27):
 5. **Lost work:** a dirty, unmerged or unpushed worktree is refused with `would_lose` and the picker's loss sentence, unless `--force`; the branch is deleted only when merged or with no commits, `--force` or not.
 6. **Too big for the Recycle Bin:** `remove` deletes nothing, reports `too_big_for_recycle_bin`, and marks the worktree released, so the interactive sweep asks about the permanent delete.
 
-Answered in the decision round (user, 2026-09-27):
+Answered in the decision round:
 
 7. **Exit codes:** 0 removed, 1 error, 2 usage, 5 released (locked, too big, or an unseen holder), 6 refused (`would_lose`, `caller_holds`, not a removable worktree). The JSON `status` carries the detail.
 8. **`would_lose`:** dirty, unmerged, unpushed, a detached HEAD not contained in the default branch, a git-locked worktree, or a signal that could not be read. `NoCommits` is not a loss. `--force` overrides it and runs `git worktree unlock` first. The text is the picker's loss sentence.
 9. **Branch:** deleted with `git branch -d` only when the merge state is `Ancestor` or `NoCommits`. A squash-merged branch (`PatchesApplied`, `ContentContained`) is kept, and the JSON notes it, even with `--force`.
 10. **Marker:** `<repo>/.git/worktrees/<id>/worktree-sweep-released.json` holds `{released_at, reason, holders}`. `git worktree prune` removes it with the admin dir. The scan only reads it.
 
-Settled from the code and the rulings (orchestrator, 2026-09-27):
+Settled from the code and the rulings:
 
 - **Command:** `worktree-sweep remove <PATH> --json [--force] [--stop-build-servers]`. `--json` is required, and the output is always one pretty-printed JSON object, in the style of `report::write_json`, with a snake_case `status` tag: `removed`, `released`, `refused`.
 - **What is refused:** the path must be the root of a registered linked worktree. A main worktree, a bare repo, a subfolder, an orphan folder, a link and a non-worktree are refused with a `reason`. A prunable record, whose folder is already gone, is pruned and reported `removed`.
