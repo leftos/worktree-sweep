@@ -409,13 +409,7 @@ fn caller_scan(folder: &Path) -> Result<Option<HolderReport>> {
 
 /// Why the folder cannot go to the Recycle Bin; `None` when it fits.
 fn too_big(candidate: &RegisteredCandidate) -> Option<String> {
-    let capacity = recycle::bin_capacity(&candidate.path).unwrap_or_else(|error| {
-        warn!(
-            "cannot read the Recycle Bin size for {}: {error:#}",
-            candidate.path.display()
-        );
-        None
-    });
+    let capacity = remove::read_capacity(&candidate.path);
     let size = candidate.signals.size.map_or(u64::MAX, |size| size.bytes);
     match recycle::recycle_decision(size, capacity) {
         Decision::Recycle => None,
