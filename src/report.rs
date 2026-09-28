@@ -7,6 +7,7 @@ use std::path::{Component, Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::Serialize;
 
+use crate::agent::Released;
 use crate::discover::{Orphan, OrphanKind, path_key};
 use crate::signals::{DefaultBranches, MergeState, SizeInfo, Upstream, WorktreeSignals};
 
@@ -75,6 +76,8 @@ pub struct RegisteredCandidate {
     pub prunable: Option<String>,
     /// The `git worktree lock` reason; `Some("")` when locked without one.
     pub git_lock: Option<String>,
+    /// The released marker `remove` left when it could not remove the worktree; `None` when there is none.
+    pub released: Option<Released>,
     /// Merge state, dirty counts, upstream, last activity and size.
     #[serde(flatten)]
     pub signals: WorktreeSignals,
@@ -108,15 +111,18 @@ const SEPARATOR: &str = "  ";
 const MIN_PATH_WIDTH: usize = 24;
 const MAX_BRANCH_WIDTH: usize = 28;
 
-/// The candidates in table order: registered worktrees grouped by repo, then orphans, each by path.
+/// The candidates in table order: released worktrees, then the other registered worktrees, each group by repo and
+/// path, then orphans by path.
 #[must_use]
 pub fn ordered(report: &Report) -> Vec<&Candidate> {
     let mut candidates: Vec<&Candidate> = report.candidates.iter().collect();
     candidates.sort_by_cached_key(|candidate| match candidate {
-        Candidate::Registered(registered) => {
-            (0, path_key(&registered.repo), path_key(&registered.path))
-        }
-        Candidate::Orphan(orphan) => (1, String::new(), path_key(&orphan.orphan.path)),
+        Candidate::Registered(registered) => (
+            u8::from(registered.released.is_none()),
+            path_key(&registered.repo),
+            path_key(&registered.path),
+        ),
+        Candidate::Orphan(orphan) => (2, String::new(), path_key(&orphan.orphan.path)),
     });
     candidates
 }
@@ -254,6 +260,9 @@ impl Row {
     fn registered(registered: &RegisteredCandidate, root: &Path, now_unix: i64) -> Self {
         let signals = &registered.signals;
         let mut flags = Vec::new();
+        if registered.released.is_some() {
+            flags.push("released");
+        }
         if registered.git_lock.is_some() {
             flags.push("git-locked");
         }
@@ -472,6 +481,7 @@ fn truncate_end(text: &str, width: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::Reason;
     use crate::signals::Dirty;
 
     const NOW: i64 = 1_790_000_000;
@@ -489,8 +499,76 @@ mod tests {
             head: Some("0123456789abcdef".to_owned()),
             prunable: None,
             git_lock: None,
+            released: None,
             signals,
         })
+    }
+
+    fn released(repo: &str, path: &str) -> Candidate {
+        let mut candidate = registered(path, Some("feat"), WorktreeSignals::default());
+        if let Candidate::Registered(registered) = &mut candidate {
+            registered.repo = root().join(repo);
+            registered.released = Some(Released {
+                released_at: NOW,
+                reason: Reason::Locked,
+                holders: Vec::new(),
+            });
+        }
+        candidate
+    }
+
+    #[test]
+    fn ordered_puts_released_first_then_registered_then_orphans() {
+        let mut plain_b = registered(r"b.wt\two", Some("two"), WorktreeSignals::default());
+        if let Candidate::Registered(registered) = &mut plain_b {
+            registered.repo = root().join("b");
+        }
+        let mut plain_a = registered(r"a.wt\one", Some("one"), WorktreeSignals::default());
+        if let Candidate::Registered(registered) = &mut plain_a {
+            registered.repo = root().join("a");
+        }
+        let report = report(vec![
+            orphan(r"a.wt\stray", OrphanKind::Folder, size(0, NOW)),
+            plain_b,
+            released("b", r"b.wt\held"),
+            plain_a,
+        ]);
+
+        let paths: Vec<PathBuf> = ordered(&report)
+            .iter()
+            .map(|candidate| candidate.path().to_path_buf())
+            .collect();
+        let expected: Vec<PathBuf> = [r"b.wt\held", r"a.wt\one", r"b.wt\two", r"a.wt\stray"]
+            .iter()
+            .map(|path| root().join(path))
+            .collect();
+        assert_eq!(paths, expected);
+    }
+
+    #[test]
+    fn released_git_locked_row_flags_released_first() {
+        let mut candidate = released("yaat", r"yaat.wt\held");
+        if let Candidate::Registered(registered) = &mut candidate {
+            registered.git_lock = Some(String::new());
+        }
+        let row = Row::new(&candidate, &root(), NOW);
+        assert_eq!(row.flags, "released, git-locked");
+    }
+
+    #[test]
+    fn write_json_carries_the_released_marker() -> Result<()> {
+        let mut json = Vec::new();
+        write_json(&report(vec![released("yaat", r"yaat.wt\held")]), &mut json)?;
+        let json = String::from_utf8(json)?;
+        anyhow::ensure!(json.contains(r#""released": {"#), "json: {json}");
+        anyhow::ensure!(json.contains(r#""reason""#), "json: {json}");
+
+        let plain = registered(r"yaat.wt\plain", None, WorktreeSignals::default());
+        let mut json = Vec::new();
+        write_json(&report(vec![plain]), &mut json)?;
+        let json = String::from_utf8(json)?;
+        anyhow::ensure!(json.contains(r#""released": null"#), "json: {json}");
+        Ok(())
     }
 
     fn size(bytes: u64, last_write_unix: i64) -> SizeInfo {

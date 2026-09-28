@@ -1,6 +1,6 @@
 # Agent path for locked worktrees
 
-Backlog item in [MAIN.md](./MAIN.md). Goal: `worktree-sweep remove <PATH> --json`, run unelevated and non-interactively by an agent, removes one worktree, or reports which processes hold it and marks it "released" for the next interactive sweep. Rulings so far are on the MAIN.md line.
+Design record for the agent path, a finished item in [plans/MAIN.md](./plans/MAIN.md). Goal: `worktree-sweep remove <PATH> --json`, run unelevated and non-interactively by an agent, removes one worktree, or reports which processes hold it and marks it "released" for the next interactive sweep. Rulings so far are on the MAIN.md line.
 
 ## Measurements (2026-09-27)
 

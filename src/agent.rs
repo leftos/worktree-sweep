@@ -13,7 +13,7 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
 use crate::holders::{self, Holder, HolderReport, MayHold};
@@ -43,7 +43,7 @@ pub enum Status {
 }
 
 /// Why the worktree was released or refused.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Reason {
     /// A process holds it (or one we cannot see does).
@@ -64,12 +64,42 @@ pub enum Reason {
 }
 
 /// A process, by pid and image name.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProcessRef {
     /// The process id.
     pub pid: u32,
     /// The image name.
     pub exe: String,
+}
+
+/// The [`MARKER_FILE`] a released worktree carries in its admin dir: written by `remove`, read by the scan.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Released {
+    /// When it was released, in Unix seconds.
+    pub released_at: i64,
+    /// Why it was released.
+    pub reason: Reason,
+    /// The processes that held it, or may have.
+    pub holders: Vec<ProcessRef>,
+}
+
+/// Reads the [`MARKER_FILE`] in a worktree's admin dir; `None` when there is none.
+///
+/// # Errors
+///
+/// When the file exists but cannot be read or does not parse as a marker.
+pub fn read_marker(admin: &Path) -> Result<Option<Released>> {
+    let path = admin.join(MARKER_FILE);
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error).with_context(|| format!("cannot read {}", path.display()));
+        }
+    };
+    let released = serde_json::from_str(&text)
+        .with_context(|| format!("{} is not a released marker", path.display()))?;
+    Ok(Some(released))
 }
 
 /// The flags of `remove`.
@@ -501,7 +531,7 @@ fn release(report: &mut RemoveReport, candidate: &RegisteredCandidate, reason: R
             exe: may.exe.clone(),
         }))
         .collect();
-    match write_marker(&candidate.path, reason, &processes) {
+    match write_marker(&candidate.path, reason, processes) {
         Ok(()) => report.released = true,
         Err(error) => report
             .notes
@@ -509,22 +539,15 @@ fn release(report: &mut RemoveReport, candidate: &RegisteredCandidate, reason: R
     }
 }
 
-#[derive(Serialize)]
-struct Marker<'a> {
-    released_at: i64,
-    reason: Reason,
-    holders: &'a [ProcessRef],
-}
-
 /// Writes [`MARKER_FILE`] into the worktree's admin dir, through a temporary file renamed over the old marker.
-fn write_marker(worktree: &Path, reason: Reason, processes: &[ProcessRef]) -> Result<()> {
+fn write_marker(worktree: &Path, reason: Reason, processes: Vec<ProcessRef>) -> Result<()> {
     let admin = discover::read_gitdir_file(worktree).with_context(|| {
         format!(
             "{} has no .git file naming its admin folder",
             worktree.display()
         )
     })?;
-    let marker = Marker {
+    let marker = Released {
         released_at: now_unix(),
         reason,
         holders: processes,
@@ -584,6 +607,7 @@ mod tests {
             head: Some("0123456789abcdef".to_owned()),
             prunable: None,
             git_lock: None,
+            released: None,
             signals: WorktreeSignals {
                 merge_state: Some(merge_state),
                 merge_state_against: Some("main".to_owned()),

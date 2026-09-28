@@ -22,6 +22,17 @@ pub struct Pick<'a> {
     pub confirmed: bool,
 }
 
+/// Which candidates the picker starts ticked: exactly the released worktrees.
+#[must_use]
+pub fn default_picks(candidates: &[&Candidate]) -> Vec<bool> {
+    candidates
+        .iter()
+        .map(|candidate| {
+            matches!(candidate, Candidate::Registered(registered) if registered.released.is_some())
+        })
+        .collect()
+}
+
 /// Fails unless standard input and standard error are both terminals, so the picker never runs without a person
 /// to answer it.
 ///
@@ -39,8 +50,9 @@ pub fn ensure_interactive() -> Result<()> {
     }
 }
 
-/// Shows the candidates as a checkbox list with nothing ticked, writes a `Picked <path>` line for every tick, and
-/// asks for a confirmation (default no) for every tick that [`loss_sentence`] has something to say about.
+/// Shows the candidates as a checkbox list with the released worktrees pre-ticked ([`default_picks`]), writes a
+/// `Picked <path>` line for every tick, and asks for a confirmation (default no) for every tick that
+/// [`loss_sentence`] has something to say about, pre-ticked or not.
 ///
 /// # Errors
 ///
@@ -52,9 +64,11 @@ pub fn pick<'a>(
 ) -> Result<Vec<Pick<'a>>> {
     let candidates = report::ordered(report);
     let items = report::picker_items(report, now_unix);
+    let defaults = default_picks(&candidates);
     let chosen = MultiSelect::new()
         .with_prompt("Pick what to remove (space toggles, enter accepts, esc cancels)")
         .items(&items)
+        .defaults(&defaults)
         .report(false)
         .interact_opt()?
         .unwrap_or_default();
@@ -247,8 +261,37 @@ mod tests {
             head: Some("0123456789abcdef".to_owned()),
             prunable: None,
             git_lock: None,
+            released: None,
             signals,
         }
+    }
+
+    #[test]
+    fn default_picks_ticks_only_released_worktrees() {
+        let mut released = candidate(signals(MergeState::Ancestor));
+        released.released = Some(crate::agent::Released {
+            released_at: 0,
+            reason: crate::agent::Reason::Locked,
+            holders: Vec::new(),
+        });
+        let released = Candidate::Registered(released);
+        let plain = Candidate::Registered(candidate(signals(MergeState::Ancestor)));
+        let orphan = Candidate::Orphan(OrphanCandidate {
+            orphan: Orphan {
+                path: root().join(r"yaat.wt\stray"),
+                container: root().join("yaat.wt"),
+                orphan_kind: OrphanKind::Folder,
+                link_target: None,
+                stale_gitdir: false,
+                live_gitdir: None,
+                has_git_dir: false,
+            },
+            size: SizeInfo::default(),
+        });
+        assert_eq!(
+            default_picks(&[&released, &plain, &orphan]),
+            [true, false, false]
+        );
     }
 
     fn signals(merge_state: MergeState) -> WorktreeSignals {

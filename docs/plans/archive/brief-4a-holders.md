@@ -1,6 +1,6 @@
 # Brief 4a: `src/holders.rs`, unelevated lock-holder detection
 
-Part of the agent path, see [agent-path.md](./agent-path.md) (read all of it: the measurements, the rulings and "Settled from the code and the rulings"). This brief builds only the detection module and its tests. The `remove` command that uses it is brief 4b; do not add the subcommand here.
+Part of the agent path, see [agent-path.md](../../agent-path.md) (read all of it: the measurements, the rulings and "Settled from the code and the rulings"). This brief builds only the detection module and its tests. The `remove` command that uses it is brief 4b; do not add the subcommand here.
 
 ## Tree and branch
 

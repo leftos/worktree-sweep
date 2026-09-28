@@ -14,19 +14,21 @@ pub mod unlock;
 
 use std::fs;
 use std::io;
-use std::path::{MAIN_SEPARATOR, Path, PathBuf};
+use std::path::{Component, MAIN_SEPARATOR, Path, PathBuf};
 
 use anyhow::{Context, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tracing::warn;
 
-use crate::discover::{Orphan, WorktreeRecord};
+use crate::agent::Released;
+use crate::discover::{Orphan, WorktreeRecord, path_key};
 use crate::report::{Candidate, OrphanCandidate, RegisteredCandidate, RepoReport, Report};
 use crate::signals::DefaultBranches;
 
 enum Job<'a> {
     Registered {
         repo: &'a Path,
+        common: Option<&'a Path>,
         defaults: &'a DefaultBranches,
         record: &'a WorktreeRecord,
     },
@@ -54,12 +56,26 @@ pub fn scan(root: &Path) -> Result<Report> {
             })
         })
         .collect();
+    let commons: Vec<Option<PathBuf>> = discovery
+        .repos
+        .iter()
+        .map(|repo| {
+            common_dir(&repo.path).unwrap_or_else(|error| {
+                warn!(
+                    "cannot find the git dir of {}: {error:#}",
+                    repo.path.display()
+                );
+                None
+            })
+        })
+        .collect();
 
     let mut jobs = Vec::new();
-    for (repo, repo_defaults) in discovery.repos.iter().zip(&defaults) {
+    for ((repo, repo_defaults), common) in discovery.repos.iter().zip(&defaults).zip(&commons) {
         for record in repo.worktrees.iter().skip(1) {
             jobs.push(Job::Registered {
                 repo: &repo.path,
+                common: common.as_deref(),
                 defaults: repo_defaults,
                 record,
             });
@@ -70,6 +86,7 @@ pub fn scan(root: &Path) -> Result<Report> {
     let candidates = signals::parallel_map(&jobs, |job| match job {
         Job::Registered {
             repo,
+            common,
             defaults,
             record,
         } => Candidate::Registered(RegisteredCandidate {
@@ -79,6 +96,7 @@ pub fn scan(root: &Path) -> Result<Report> {
             head: record.head.clone(),
             prunable: record.prunable.clone(),
             git_lock: record.locked.clone(),
+            released: released_marker(*common, record),
             signals: signals::worktree_signals(defaults, record),
         }),
         Job::Orphan(orphan) => Candidate::Orphan(OrphanCandidate {
@@ -104,7 +122,7 @@ pub fn scan(root: &Path) -> Result<Report> {
 }
 
 /// Why a path given to [`resolve_one`] is not a removable worktree.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RefusalReason {
     /// Nothing is there, and no repo registers a worktree there.
@@ -192,7 +210,7 @@ pub fn resolve_one(path: &Path) -> Result<Result<Resolved, Refusal>> {
             // backs the folder, so removing it is not a prune.
             return Ok(Err(refusal(RefusalReason::Orphan, Some(main_worktree))));
         }
-        return Ok(resolve_record(&records, index));
+        return Ok(resolve_record(&records, index, &common));
     }
     let under_record = records
         .iter()
@@ -245,7 +263,7 @@ fn resolve_missing(absolute: &Path) -> Result<Result<Resolved, Refusal>> {
             }
         };
         if let Some(index) = records.iter().position(|record| record_key(record) == key) {
-            return Ok(resolve_record(&records, index));
+            return Ok(resolve_record(&records, index, &common));
         }
     }
     Ok(Err(refusal(RefusalReason::NotFound, None)))
@@ -272,8 +290,13 @@ fn child_repos(dir: &Path) -> Vec<PathBuf> {
     repos
 }
 
-/// The record at `index`, refused when it is the main worktree or bare, else built into a candidate.
-fn resolve_record(records: &[WorktreeRecord], index: usize) -> Result<Resolved, Refusal> {
+/// The record at `index` of the repo whose common git dir is `common`, refused when it is the main worktree or
+/// bare, else built into a candidate.
+fn resolve_record(
+    records: &[WorktreeRecord],
+    index: usize,
+    common: &Path,
+) -> Result<Resolved, Refusal> {
     let main_worktree = records[0].path.clone();
     let record = &records[index];
     if record.bare {
@@ -283,12 +306,12 @@ fn resolve_record(records: &[WorktreeRecord], index: usize) -> Result<Resolved, 
         return Err(refusal(RefusalReason::MainWorktree, Some(main_worktree)));
     }
     Ok(Resolved {
-        candidate: build_candidate(&main_worktree, record),
+        candidate: build_candidate(&main_worktree, common, record),
         main_worktree,
     })
 }
 
-fn build_candidate(repo: &Path, record: &WorktreeRecord) -> RegisteredCandidate {
+fn build_candidate(repo: &Path, common: &Path, record: &WorktreeRecord) -> RegisteredCandidate {
     let defaults = signals::default_branches(repo).unwrap_or_else(|error| {
         warn!(
             "cannot find the default branches of {}: {error:#}",
@@ -314,8 +337,58 @@ fn build_candidate(repo: &Path, record: &WorktreeRecord) -> RegisteredCandidate 
         head: record.head.clone(),
         prunable: record.prunable.clone(),
         git_lock: record.locked.clone(),
+        released: released_marker(Some(common), record),
         signals: worktree_signals,
     }
+}
+
+/// The released marker in a worktree's admin dir, `common` being its repo's common git dir. A missing admin dir
+/// or marker is `None`; so is a marker that cannot be read or parsed, with a warning.
+fn released_marker(common: Option<&Path>, record: &WorktreeRecord) -> Option<Released> {
+    let admin = admin_dir(common, &record.path)?;
+    agent::read_marker(&admin).unwrap_or_else(|error| {
+        warn!("ignoring the released marker: {error:#}");
+        None
+    })
+}
+
+/// A worktree's admin dir: from its `.git` file, or, when the folder or that file is gone (a prunable
+/// registration), the entry under `<common>/worktrees` whose `gitdir` file points at `<worktree>/.git`. A
+/// relative `gitdir` (`worktree.useRelativePaths`) is resolved against the entry.
+fn admin_dir(common: Option<&Path>, worktree: &Path) -> Option<PathBuf> {
+    if let Some(admin) = discover::read_gitdir_file(worktree) {
+        return Some(admin);
+    }
+    let wanted = path_key(worktree);
+    let entries = fs::read_dir(common?.join("worktrees")).ok()?;
+    entries.flatten().map(|entry| entry.path()).find(|admin| {
+        fs::read_to_string(admin.join("gitdir")).is_ok_and(|text| {
+            let target = discover::from_git_path(text.trim());
+            let target = lexical_normalize(&if target.is_absolute() {
+                target
+            } else {
+                admin.join(target)
+            });
+            target
+                .parent()
+                .is_some_and(|dot_git_parent| path_key(dot_git_parent) == wanted)
+        })
+    })
+}
+
+/// `path` with `.` dropped and each `..` taking off the component before it, without touching the disk.
+fn lexical_normalize(path: &Path) -> PathBuf {
+    let mut normal = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normal.pop();
+            }
+            other => normal.push(other),
+        }
+    }
+    normal
 }
 
 /// The repo's common git dir as seen from `dir`; `None` when git finds no repo there.
