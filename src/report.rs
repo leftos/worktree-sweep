@@ -237,20 +237,20 @@ pub fn age(then_unix: i64, now_unix: i64) -> String {
 }
 
 /// The table cells of one candidate.
-struct Row {
-    path: String,
-    kind: &'static str,
-    branch: String,
-    merge: String,
-    dirty: String,
-    upstream: String,
-    active: String,
-    size: String,
-    flags: String,
+pub(crate) struct Row {
+    pub(crate) path: String,
+    pub(crate) kind: &'static str,
+    pub(crate) branch: String,
+    pub(crate) merge: String,
+    pub(crate) dirty: String,
+    pub(crate) upstream: String,
+    pub(crate) active: String,
+    pub(crate) size: String,
+    pub(crate) flags: String,
 }
 
 impl Row {
-    fn new(candidate: &Candidate, root: &Path, now_unix: i64) -> Self {
+    pub(crate) fn new(candidate: &Candidate, root: &Path, now_unix: i64) -> Self {
         match candidate {
             Candidate::Registered(registered) => Self::registered(registered, root, now_unix),
             Candidate::Orphan(orphan) => Self::orphan(orphan, root, now_unix),
@@ -459,7 +459,7 @@ fn char_len(text: &str) -> usize {
 }
 
 /// Keeps the last `width - 1` characters behind a `…` when `text` is wider than `width`.
-fn truncate_start(text: &str, width: usize) -> String {
+pub(crate) fn truncate_start(text: &str, width: usize) -> String {
     let len = char_len(text);
     if len <= width {
         return text.to_owned();
@@ -470,7 +470,7 @@ fn truncate_start(text: &str, width: usize) -> String {
 }
 
 /// Keeps the first `width - 1` characters before a `…` when `text` is wider than `width`.
-fn truncate_end(text: &str, width: usize) -> String {
+pub(crate) fn truncate_end(text: &str, width: usize) -> String {
     if char_len(text) <= width {
         return text.to_owned();
     }

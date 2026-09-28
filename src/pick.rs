@@ -208,7 +208,7 @@ fn orphan_notice(orphan: &Orphan) -> Option<(String, &'static str)> {
 
 /// The repo a worktree's git dir (`<repo>/.git/worktrees/<id>`) belongs to; the common dir itself for a bare
 /// repo, and the git dir unchanged when it has no such shape.
-fn repo_of_gitdir(gitdir: &Path) -> PathBuf {
+pub(crate) fn repo_of_gitdir(gitdir: &Path) -> PathBuf {
     let common = gitdir
         .parent()
         .filter(|parent| parent.file_name().is_some_and(|name| name == "worktrees"))

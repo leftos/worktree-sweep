@@ -32,7 +32,7 @@ Design: [v1-design.md](./v1-design.md). Execution ledger (untracked): `.tmp/plan
   - Picking and confirmation logic stay in pure functions, testable without a terminal; the two new dependencies pass `cargo deny`.
   - Design: [tui-picker.md](./tui-picker.md), drafted and reviewed 2026-09-27, with its eight open questions answered (unlock line prompts, every question up front, essentials-only keys, risk tints with `NO_COLOR`, Ctrl+C stops after the current item, the scan inside the TUI with a spinner, nothing printed after exit, a final confirmation). The "Proposed brief split" in the design lists each brief's files. Three briefs, in order:
   - [x] T1 — [archive/brief-t1-decisions.md](./archive/brief-t1-decisions.md): every question asked up front through a pure `Review` (`src/tui/review.rs`), a final confirmation, `Prompter` removed; `main.rs` drives Review with `dialoguer` until T3
-  - [ ] T2: the TUI core, not wired in (`src/tui/mod.rs` already exists from T1 and holds `pub mod review;`)
+  - [x] T2 — [archive/brief-t2-tui-core.md](./archive/brief-t2-tui-core.md): `Loading` and `App` state machines (`src/tui/app.rs`), the renderer (`view.rs`), local dates (`when.rs`), ratatui added; not reachable from the binary yet
   - [ ] T3: wiring it in and removing `dialoguer`; `remove_picks` takes `on_progress` and `offer_unlock` callbacks ready for the worker thread
 
 - [x] Test cleanup: `make_junction` is copied in three integration test files (`tests/integration/removal.rs:33`, `holders.rs:215`, `agent_remove.rs:52`), and `tests/integration/discovery.rs:176-199` inlines a fourth `mklink /J`; move one copy into `tests/integration/fixture.rs` and use it in all four
