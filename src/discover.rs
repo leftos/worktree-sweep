@@ -362,7 +362,8 @@ fn folder_orphan(container: &Path, path: PathBuf) -> Orphan {
 }
 
 /// Removes the `\\?\` or `\??\` prefix Windows puts on some link targets.
-fn strip_verbatim(path: PathBuf) -> PathBuf {
+#[must_use]
+pub fn strip_verbatim(path: PathBuf) -> PathBuf {
     let text = path.to_string_lossy();
     match text
         .strip_prefix(r"\\?\")
@@ -373,7 +374,12 @@ fn strip_verbatim(path: PathBuf) -> PathBuf {
     }
 }
 
-fn list_worktrees(repo: &Path) -> Result<Vec<WorktreeRecord>> {
+/// Lists the worktrees git registers for the repo at `repo` (any folder git resolves to it), main worktree first.
+///
+/// # Errors
+///
+/// When git fails.
+pub fn list_worktrees(repo: &Path) -> Result<Vec<WorktreeRecord>> {
     let text = git::run(repo, &["worktree", "list", "--porcelain"])?;
     Ok(parse_worktree_porcelain(&text))
 }
