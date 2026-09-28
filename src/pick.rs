@@ -1,26 +1,16 @@
-//! The interactive picker: a checkbox list of the candidates, then a confirmation for every pick that would lose
-//! work.
+//! The interactive picker: a checkbox list of the candidates, and the text saying what removing a pick would lose
+//! ([`loss_text`], [`loss_sentence`]).
 
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
+use dialoguer::MultiSelect;
 use dialoguer::console::Term;
-use dialoguer::{Confirm, MultiSelect};
 
 use crate::discover::{Orphan, OrphanKind};
-use crate::remove::Prompter;
 use crate::report::{self, Candidate, RegisteredCandidate, Report};
 use crate::signals::{Dirty, MergeState, Upstream};
-
-/// A candidate the user ticked, and whether they confirmed it when it needed confirming.
-#[derive(Debug, Clone, Copy)]
-pub struct Pick<'a> {
-    /// The candidate.
-    pub candidate: &'a Candidate,
-    /// `false` when the user declined the confirmation; the pick is then skipped.
-    pub confirmed: bool,
-}
 
 /// Which candidates the picker starts ticked: exactly the released worktrees.
 #[must_use]
@@ -51,17 +41,12 @@ pub fn ensure_interactive() -> Result<()> {
 }
 
 /// Shows the candidates as a checkbox list with the released worktrees pre-ticked ([`default_picks`]), writes a
-/// `Picked <path>` line for every tick, and asks for a confirmation (default no) for every tick that
-/// [`loss_sentence`] has something to say about, pre-ticked or not.
+/// `Picked <path>` line for every tick, and returns the ticked candidates in list order (none on Esc).
 ///
 /// # Errors
 ///
 /// When the terminal cannot be read or written.
-pub fn pick<'a>(
-    report: &'a Report,
-    now_unix: i64,
-    prompter: &mut dyn Prompter,
-) -> Result<Vec<Pick<'a>>> {
+pub fn pick(report: &Report, now_unix: i64) -> Result<Vec<&Candidate>> {
     let candidates = report::ordered(report);
     let items = report::picker_items(report, now_unix);
     let defaults = default_picks(&candidates);
@@ -82,34 +67,9 @@ pub fn pick<'a>(
             "Picked {}",
             report::relative_path(candidate.path(), &report.root)
         ))?;
-        let confirmed = match loss_sentence(candidate, &report.root) {
-            Some((context, question)) => prompter.confirm(&context, &question, false)?,
-            None => true,
-        };
-        picks.push(Pick {
-            candidate,
-            confirmed,
-        });
+        picks.push(candidate);
     }
     Ok(picks)
-}
-
-/// Answers the removal's questions on the terminal.
-#[derive(Debug, Default)]
-pub struct TermPrompter;
-
-impl Prompter for TermPrompter {
-    /// Writes `context` to standard error as its own line, once, then asks `question` with dialoguer, which
-    /// redraws only the short question after the answer.
-    fn confirm(&mut self, context: &str, question: &str, default: bool) -> Result<bool> {
-        if !context.is_empty() {
-            Term::stderr().write_line(context)?;
-        }
-        Ok(Confirm::new()
-            .with_prompt(question)
-            .default(default)
-            .interact()?)
-    }
 }
 
 /// The confirmation for a pick as `(context, question)`: the context names the pick's path and what removing it
@@ -119,12 +79,61 @@ impl Prompter for TermPrompter {
 #[must_use]
 pub fn loss_sentence(candidate: &Candidate, root: &Path) -> Option<(String, String)> {
     let name = report::relative_path(candidate.path(), root);
+    raw_loss(candidate).map(|(_, text, question)| (format!("{name}: {text}"), question.to_owned()))
+}
+
+/// Which confirmation a pick needs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LossKind {
+    /// Removing it loses work, or leaves a registration behind.
+    Loss,
+    /// It is a link; only the link goes.
+    Link,
+}
+
+/// What removing a pick loses, without its path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Loss {
+    /// Which confirmation it is.
+    pub kind: LossKind,
+    /// The loss as a sentence with a capital first letter and no path of the pick
+    /// (`Remove the link only; X:\dev\yaat is not touched.`).
+    pub text: String,
+    /// The short question, naming no path.
+    pub question: &'static str,
+}
+
+/// The loss [`loss_sentence`] describes, without the pick's path; `None` when nothing is lost.
+#[must_use]
+pub fn loss_text(candidate: &Candidate) -> Option<Loss> {
+    raw_loss(candidate).map(|(kind, text, question)| Loss {
+        kind,
+        text: capitalise(&text),
+        question,
+    })
+}
+
+fn raw_loss(candidate: &Candidate) -> Option<(LossKind, String, &'static str)> {
     match candidate {
-        Candidate::Registered(registered) => registered_loss(registered)
-            .map(|loss| (format!("{name}: {loss}"), "Remove anyway?".to_owned())),
-        Candidate::Orphan(orphan) => orphan_notice(&orphan.orphan)
-            .map(|(notice, question)| (format!("{name}: {notice}"), question.to_owned())),
+        Candidate::Registered(registered) => {
+            registered_loss(registered).map(|loss| (LossKind::Loss, loss, "Remove anyway?"))
+        }
+        Candidate::Orphan(orphan) => orphan_notice(&orphan.orphan).map(|(notice, question)| {
+            let kind = if orphan.orphan.orphan_kind == OrphanKind::Link {
+                LossKind::Link
+            } else {
+                LossKind::Loss
+            };
+            (kind, notice, question)
+        }),
     }
+}
+
+fn capitalise(text: &str) -> String {
+    let mut chars = text.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(chars).collect()
+    })
 }
 
 fn registered_loss(registered: &RegisteredCandidate) -> Option<String> {
@@ -430,8 +439,9 @@ mod tests {
             orphan(OrphanKind::Folder, Some(registered_elsewhere)),
         ];
         for candidate in &candidates {
-            let (context, question) = loss_sentence(candidate, &root())
+            let loss = loss_text(candidate)
                 .ok_or_else(|| anyhow::anyhow!("no confirmation for {candidate:?}"))?;
+            let question = loss.question;
             anyhow::ensure!(
                 !question.contains('\\') && !question.contains('/'),
                 "question names a path: {question}"
@@ -442,11 +452,49 @@ mod tests {
                 question.chars().count()
             );
             anyhow::ensure!(
-                context.contains(LONG_PATH),
-                "context does not name the pick: {context}"
+                !loss.text.contains(LONG_PATH),
+                "text names the pick: {}",
+                loss.text
             );
         }
         Ok(())
+    }
+
+    #[test]
+    fn loss_text_link_is_capitalised_and_pathless() -> anyhow::Result<()> {
+        let link = orphan(OrphanKind::Link, None);
+        let loss = loss_text(&link).ok_or_else(|| anyhow::anyhow!("no loss for a link"))?;
+        let target = root().join(r"elsewhere\a-rather-long-target-folder");
+        anyhow::ensure!(
+            loss.text == format!("Remove the link only; {} is not touched.", target.display()),
+            "text: {}",
+            loss.text
+        );
+        anyhow::ensure!(loss.kind == LossKind::Link, "kind: {:?}", loss.kind);
+        anyhow::ensure!(
+            loss.question == "Remove the link?",
+            "question: {}",
+            loss.question
+        );
+        anyhow::ensure!(!loss.text.contains(LONG_PATH), "text: {}", loss.text);
+
+        let no_commits = Candidate::Registered(candidate(signals(MergeState::NoCommits)));
+        let loss = loss_text(&no_commits).ok_or_else(|| anyhow::anyhow!("no loss"))?;
+        anyhow::ensure!(
+            loss.text
+                == "A branch with no commits of its own (it may be new work in progress) will be lost.",
+            "text: {}",
+            loss.text
+        );
+        anyhow::ensure!(loss.kind == LossKind::Loss, "kind: {:?}", loss.kind);
+        Ok(())
+    }
+
+    #[test]
+    fn loss_text_none_when_nothing_lost() {
+        let merged = Candidate::Registered(candidate(signals(MergeState::Ancestor)));
+        assert_eq!(loss_text(&merged), None);
+        assert_eq!(loss_text(&orphan(OrphanKind::Folder, None)), None);
     }
 
     #[test]

@@ -48,10 +48,11 @@ The interactive mode needs a terminal. Nothing is picked by default, except work
 ## Safety
 
 - **The scan writes nothing.** Git runs with optional locks and fsmonitor off, and the squash-merge check writes its objects to a scratch folder.
+- **Every question comes before anything is removed.** For each pick in turn: what it would lose, a permanent delete if it cannot be recycled, and its branch. A last confirmation then sums up what will be removed; its default is no.
 - **Second confirmation for anything that would lose work.** A pick that is dirty, unmerged, unpushed, has no commits yet (another session may be about to use it), or is locked with `git worktree lock` asks again and names what would be lost.
 - **Recycle Bin first.** Before recycling, the tool checks the item against the volume's Recycle Bin size limit. An item that is too big, or a volume set to delete immediately, asks for a permanent delete instead; saying no skips it. The Shell is never left to delete permanently on its own.
 - **Links are removed as links.** A junction or symbolic link orphan is deleted as a link; its target is never entered, sized or deleted.
-- **Branches are deleted only when merged.** After removing a registered worktree, the tool prunes its registration and offers `git branch -d` when the branch is merged, cherry-picked, squashed or has no commits.
+- **Branches are deleted only when merged.** The tool offers `git branch -d` up front and, only once the worktree is removed and its registration pruned, deletes the branch when the branch is merged, cherry-picked, squashed or has no commits.
 
 ### Locked folders
 

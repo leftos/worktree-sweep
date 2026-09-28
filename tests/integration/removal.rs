@@ -9,25 +9,12 @@ use std::time::Duration;
 use anyhow::{Context, Result, ensure};
 use worktree_sweep::discover::OrphanKind;
 use worktree_sweep::remove::{
-    Action, Method, Prompter, RemoveError, after_removed, branch_offer, permanent_delete,
-    remove_candidate,
+    Action, BranchChoice, Decision, Method, Outcome, Plan, Progress, RemoveError, after_removed,
+    branch_offer, permanent_delete, remove_candidate, remove_picks,
 };
 use worktree_sweep::report::Candidate;
 
 use crate::fixture::{Fixture, add_worktree, git, same_path};
-
-/// Answers every question with `answer` and records the prompts.
-struct Answers {
-    answer: bool,
-    asked: Vec<String>,
-}
-
-impl Prompter for Answers {
-    fn confirm(&mut self, _context: &str, question: &str, _default: bool) -> Result<bool> {
-        self.asked.push(question.to_owned());
-        Ok(self.answer)
-    }
-}
 
 /// Makes a directory junction; `false` (with a logged message) when `mklink /J` is unavailable.
 fn make_junction(link: &Path, target: &Path) -> Result<bool> {
@@ -183,22 +170,88 @@ fn removing_registered_worktree_prunes_registration() -> Result<()> {
     );
 
     remove_candidate(candidate, Action::Delete(Method::Permanent))?;
-    let mut answers = Answers {
-        answer: true,
-        asked: Vec::new(),
-    };
-    let notes = after_removed(candidate, &mut answers);
+    let notes = after_removed(candidate, &BranchChoice::Delete(offer));
 
     ensure!(!wt.exists(), "{} still exists", wt.display());
     let list = git(&repo, &["worktree", "list", "--porcelain"])?;
     ensure!(!list.contains("repo.wt/feat"), "still listed:\n{list}");
-    ensure!(answers.asked.len() == 1, "asked: {:?}", answers.asked);
     let branches = git(&repo, &["branch", "--list", "feat"])?;
     ensure!(
         branches.is_empty(),
         "branch feat survives: {branches}; notes: {notes:?}"
     );
     ensure!(notes == ["branch feat deleted"], "notes: {notes:?}");
+    Ok(())
+}
+
+#[test]
+fn declined_branch_is_kept_with_a_note() -> Result<()> {
+    let fx = Fixture::new()?;
+    let repo = fx.repo("repo")?;
+    let wt = fx.path("repo.wt/feat");
+    add_worktree(&repo, &wt, "feat")?;
+
+    let report = fx.scan()?;
+    let candidate = report
+        .candidates
+        .iter()
+        .find(|candidate| same_path(candidate.path(), &wt))
+        .context("the worktree is not a candidate")?;
+    let Candidate::Registered(registered) = candidate else {
+        anyhow::bail!("not registered: {candidate:?}");
+    };
+    let offer = branch_offer(registered).context("no branch offer for a branch with no commits")?;
+
+    remove_candidate(candidate, Action::Delete(Method::Permanent))?;
+    let notes = after_removed(candidate, &BranchChoice::Keep(offer));
+
+    ensure!(notes == ["branch feat kept"], "notes: {notes:?}");
+    let branches = git(&repo, &["branch", "--list", "feat"])?;
+    ensure!(
+        branches.contains("feat"),
+        "branch feat is gone: {branches:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn skipped_decision_never_touches_the_disk() -> Result<()> {
+    let fx = Fixture::new()?;
+    let folder = fx.path("x.wt").join("stray");
+    fs::create_dir_all(&folder)?;
+    fs::write(folder.join("file.txt"), "keep")?;
+
+    let report = fx.scan()?;
+    let candidate = report
+        .candidates
+        .iter()
+        .find(|candidate| same_path(candidate.path(), &folder))
+        .context("the stray folder is not a candidate")?;
+    let decisions = [Decision {
+        candidate,
+        plan: Plan::Skip("not confirmed".to_owned()),
+        branch: BranchChoice::NotOffered,
+    }];
+    let mut progress: Vec<Progress> = Vec::new();
+    let mut offers = 0_usize;
+    let swept = remove_picks(&decisions, &mut |step| progress.push(step), &mut |_| {
+        offers += 1;
+        Ok(worktree_sweep::unlock::UnlockOutcome::Skipped)
+    });
+
+    ensure!(
+        folder.join("file.txt").exists(),
+        "{} was touched",
+        folder.display()
+    );
+    ensure!(swept.len() == 1, "swept: {swept:?}");
+    ensure!(
+        swept[0].outcome == Outcome::Skipped("not confirmed".to_owned()),
+        "outcome: {:?}",
+        swept[0].outcome
+    );
+    ensure!(offers == 0, "offer_unlock was called {offers} times");
+    ensure!(progress.is_empty(), "progress: {progress:?}");
     Ok(())
 }
 
