@@ -35,11 +35,12 @@ similar_names = "allow"
 anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive"] }
 dialoguer = "0.12.0"
+ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 tracing = "0.1.44"
 tracing-subscriber = "0.3.23"
-windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_System_Threading", "Win32_System_Registry", "Win32_System_Com", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_Security", "Wdk_System_Threading", "Wdk_Storage_FileSystem"] }
+windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_System_Threading", "Win32_System_Time", "Win32_System_Registry", "Win32_System_Com", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_Security", "Wdk_System_Threading", "Wdk_Storage_FileSystem"] }
 
 [dev-dependencies]
 tempfile = "3.27.0"
