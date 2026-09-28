@@ -47,7 +47,7 @@ One `Screen` enum; the renderer draws exactly one of these (dialogs draw over th
 | **Scanning** | A spinner, the root, and the elapsed seconds while the scan runs on its worker thread. | Automatic: to List, Empty or Scan failed. `q`/Esc/Ctrl+C quits; the scan thread is abandoned (the scan writes nothing). |
 | **Empty** | `No worktrees or orphan folders found under <root>.` | Any key: exit 0. |
 | **Scan failed** | The error and its causes, as `anyhow`'s `{:#}` prints them. | Any key: exit 1. |
-| **Too small** | `Terminal too small: need 80×16, have W×H.` in place of any screen. Proposed minimum 80×16. | A resize to at least the minimum; the state underneath is untouched. |
+| **Too small** | `Terminal too small: need 80×20, have W×H.` in place of any screen. Minimum 80×20 (ruling 10). | A resize to at least the minimum; the state underneath is untouched. |
 
 A candidate's own signal errors (`signals.errors`) are shown in its detail pane.
 
@@ -223,6 +223,9 @@ Binary size, measured on minimal release builds in the scratchpad (default profi
 6. **Scan:** inside the TUI, with a spinner (option b). This adds the Scanning, Empty and Scan failed screens, a scan worker thread, and tracing captured from the first frame.
 7. **After exit:** nothing is printed, and Results is the only record (option b).
 8. **Final confirmation:** a final "Remove N items?" is kept, with Cancel as the default (option a).
+
+9. **Dates in the detail pane** (T2 round): local date and age, `2026-09-25 14:02 (2d ago)`, through the Windows time-zone API the crate already links; no new dependency.
+10. **Minimum size** (T2 round): 80×20, about 8 table rows beside the 7-line detail pane; below it the Too small notice (`Terminal too small: need 80×20, have W×H.`).
 
 Settled by the orchestrator: `"Zlib"` is added to `deny.toml`'s allowed licenses, which `v1-design.md` already lists.
 
