@@ -1,5 +1,5 @@
 //! Removing picks: a link, a folder (to the Recycle Bin or permanently), a registered worktree's registration and
-//! its branch. Prompts go through [`Prompter`], so every action can run from a test with fixed answers.
+//! its branch. Nothing here asks a question: each pick arrives as a [`Decision`] already answered.
 
 use std::fmt;
 use std::fs::{self, Metadata};
@@ -11,22 +11,10 @@ use tracing::warn;
 
 use crate::discover::{self, OrphanKind};
 use crate::git;
-use crate::pick::Pick;
-use crate::recycle::{self, Decision};
+use crate::recycle::{self, BinCapacity};
 use crate::report::{self, Candidate, RegisteredCandidate, human_bytes};
 use crate::signals::MergeState;
-use crate::unlock::{self, UnlockOutcome};
-
-/// Asks the user a yes/no question.
-pub trait Prompter {
-    /// Shows `context` once (paths, what would be lost, warnings; nothing when empty), then asks `question`, a
-    /// short question with no path in it; `default` is the answer Enter gives.
-    ///
-    /// # Errors
-    ///
-    /// When the question cannot be asked or answered.
-    fn confirm(&mut self, context: &str, question: &str, default: bool) -> Result<bool>;
-}
+use crate::unlock::UnlockOutcome;
 
 /// Why a removal failed.
 #[derive(Debug)]
@@ -104,6 +92,46 @@ pub enum Plan {
     Run(Action),
     /// Leave it, for this reason.
     Skip(String),
+}
+
+/// What happens to a removed worktree's branch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BranchChoice {
+    /// No branch deletion applies.
+    NotOffered,
+    /// Delete it once the worktree is gone.
+    Delete(BranchOffer),
+    /// The user kept it.
+    Keep(BranchOffer),
+}
+
+/// One pick with every answer about it: how to remove it (or why not) and what to do with its branch.
+#[derive(Debug, Clone)]
+pub struct Decision<'a> {
+    /// The pick.
+    pub candidate: &'a Candidate,
+    /// Its action, or why it is skipped.
+    pub plan: Plan,
+    /// Its branch, applied only when the removal succeeds.
+    pub branch: BranchChoice,
+}
+
+/// How a pick can be removed before any question is asked.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlanNeed {
+    /// Remove it this way.
+    Run(Action),
+    /// It cannot go to the Recycle Bin, for the reason given; a permanent delete needs the user's yes.
+    AskPermanent(String),
+}
+
+/// Where [`remove_picks`] is, by index into its decisions. A retried pick reports both again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Progress {
+    /// Removing decision `i` started.
+    Started(usize),
+    /// Decision `i` is finished, removed or failed.
+    Done(usize),
 }
 
 /// What happened to one pick.
@@ -200,35 +228,27 @@ fn attempt(sweeper: &mut impl Sweeper, index: usize) -> Result<(), RemoveError> 
     result
 }
 
-/// Plans, removes and follows up every pick: all questions about permanent deletes come first, then the two-pass
-/// [`sweep`], with branch questions as each worktree goes. COM must be initialised on this thread
-/// ([`recycle::ComApartment`]).
-///
-/// # Errors
-///
-/// When a question cannot be asked.
+/// Removes and follows up every decided pick with the two-pass [`sweep`]; a [`Plan::Skip`] decision becomes
+/// [`Outcome::Skipped`] without touching the disk and reports no [`Progress`]. `on_progress` hears each runnable
+/// pick start and finish; `offer_unlock` is called at most once, for the locked ones. COM must be initialised on
+/// this thread ([`recycle::ComApartment`]). A pick that fails to go is its [`Outcome::Failed`].
 pub fn remove_picks<'a>(
-    picks: &[Pick<'a>],
-    root: &Path,
-    prompter: &mut dyn Prompter,
-) -> Result<Vec<Swept<'a>>> {
-    let mut swept = Vec::with_capacity(picks.len());
+    decisions: &[Decision<'a>],
+    on_progress: &mut dyn FnMut(Progress),
+    offer_unlock: &mut dyn FnMut(&[PathBuf]) -> Result<UnlockOutcome>,
+) -> Vec<Swept<'a>> {
+    let mut swept = Vec::with_capacity(decisions.len());
     let mut runnable = Vec::new();
-    for pick in picks {
-        let plan = if pick.confirmed {
-            plan(pick.candidate, root, prompter)?
-        } else {
-            Plan::Skip("not confirmed".to_owned())
-        };
-        let outcome = match plan {
+    for decision in decisions {
+        let outcome = match &decision.plan {
             Plan::Run(action) => {
-                runnable.push((swept.len(), action));
+                runnable.push((swept.len(), *action));
                 Outcome::Failed("not attempted".to_owned())
             }
-            Plan::Skip(reason) => Outcome::Skipped(reason),
+            Plan::Skip(reason) => Outcome::Skipped(reason.clone()),
         };
         swept.push(Swept {
-            candidate: pick.candidate,
+            candidate: decision.candidate,
             outcome,
             notes: Vec::new(),
         });
@@ -237,11 +257,16 @@ pub fn remove_picks<'a>(
     let mut sweeper = LiveSweeper {
         items: runnable
             .iter()
-            .map(|&(index, action)| (swept[index].candidate, action))
+            .map(|&(index, action)| (index, decisions[index].candidate, action))
+            .collect(),
+        branches: runnable
+            .iter()
+            .map(|&(index, _)| decisions[index].branch.clone())
             .collect(),
         git_unlocked: vec![false; runnable.len()],
         notes: vec![Vec::new(); runnable.len()],
-        prompter,
+        on_progress,
+        offer_unlock,
     };
     let results = sweep(runnable.len(), &mut sweeper);
     for (item, ((index, action), result)) in runnable.into_iter().zip(results).enumerate() {
@@ -259,7 +284,7 @@ pub fn remove_picks<'a>(
         };
         entry.notes = std::mem::take(&mut sweeper.notes[item]);
     }
-    Ok(swept)
+    swept
 }
 
 fn done(action: Action, candidate: &Candidate) -> Outcome {
@@ -272,16 +297,19 @@ fn done(action: Action, candidate: &Candidate) -> Outcome {
     }
 }
 
+/// Removal state per runnable item: `(decision index, candidate, action)` and that item's branch choice.
 struct LiveSweeper<'a, 'p> {
-    items: Vec<(&'a Candidate, Action)>,
+    items: Vec<(usize, &'a Candidate, Action)>,
+    branches: Vec<BranchChoice>,
     git_unlocked: Vec<bool>,
     notes: Vec<Vec<String>>,
-    prompter: &'p mut dyn Prompter,
+    on_progress: &'p mut dyn FnMut(Progress),
+    offer_unlock: &'p mut dyn FnMut(&[PathBuf]) -> Result<UnlockOutcome>,
 }
 
-impl Sweeper for LiveSweeper<'_, '_> {
-    fn remove(&mut self, index: usize) -> Result<(), RemoveError> {
-        let (candidate, action) = self.items[index];
+impl LiveSweeper<'_, '_> {
+    fn try_remove(&mut self, index: usize) -> Result<(), RemoveError> {
+        let (_, candidate, action) = self.items[index];
         if let Candidate::Registered(registered) = candidate
             && !self.git_unlocked[index]
         {
@@ -290,58 +318,71 @@ impl Sweeper for LiveSweeper<'_, '_> {
         }
         remove_candidate(candidate, action)
     }
+}
+
+impl Sweeper for LiveSweeper<'_, '_> {
+    fn remove(&mut self, index: usize) -> Result<(), RemoveError> {
+        let decision = self.items[index].0;
+        (self.on_progress)(Progress::Started(decision));
+        let result = self.try_remove(index);
+        if result.is_err() {
+            (self.on_progress)(Progress::Done(decision));
+        }
+        result
+    }
 
     fn finish(&mut self, index: usize) {
-        let (candidate, _) = self.items[index];
-        self.notes[index] = after_removed(candidate, self.prompter);
+        let (decision, candidate, _) = self.items[index];
+        self.notes[index] = after_removed(candidate, &self.branches[index]);
+        (self.on_progress)(Progress::Done(decision));
     }
 
     fn offer_unlock(&mut self, paths: &[PathBuf]) -> Result<UnlockOutcome> {
-        unlock::offer(paths)
+        (self.offer_unlock)(paths)
     }
 }
 
-/// Decides how to remove a pick. A folder goes to the Recycle Bin when it fits (see
-/// [`recycle::recycle_decision`]); otherwise the user is asked (default no) whether to delete it permanently.
-///
-/// # Errors
-///
-/// When the question cannot be asked.
-pub fn plan(candidate: &Candidate, root: &Path, prompter: &mut dyn Prompter) -> Result<Plan> {
+/// How a pick can be removed, given the Recycle Bin `capacity` of its volume (`None` when unknown): a link loses
+/// only the link, a prunable registration is pruned, and a folder goes to the Recycle Bin when it fits (see
+/// [`recycle::recycle_decision`]; an unknown size never fits), else needs the user's yes to delete permanently.
+#[must_use]
+pub fn plan_action(candidate: &Candidate, capacity: Option<BinCapacity>) -> PlanNeed {
     match candidate {
         Candidate::Orphan(orphan) if orphan.orphan.orphan_kind == OrphanKind::Link => {
-            return Ok(Plan::Run(Action::RemoveLink));
+            return PlanNeed::Run(Action::RemoveLink);
         }
         Candidate::Registered(registered) if registered.prunable.is_some() => {
-            return Ok(Plan::Run(Action::PruneRegistration));
+            return PlanNeed::Run(Action::PruneRegistration);
         }
         _ => {}
     }
-    let path = candidate.path();
-    let capacity = recycle::bin_capacity(path).unwrap_or_else(|error| {
+    let size = candidate.size_bytes().unwrap_or(u64::MAX);
+    match recycle::recycle_decision(size, capacity) {
+        recycle::Decision::Recycle => PlanNeed::Run(Action::Delete(Method::Recycle)),
+        recycle::Decision::AskPermanent(reason) => PlanNeed::AskPermanent(reason),
+    }
+}
+
+/// Whether [`plan_action`] reads the Recycle Bin capacity for this pick: `false` for a link and a prunable
+/// registration.
+#[must_use]
+pub fn needs_capacity(candidate: &Candidate) -> bool {
+    match candidate {
+        Candidate::Orphan(orphan) => orphan.orphan.orphan_kind != OrphanKind::Link,
+        Candidate::Registered(registered) => registered.prunable.is_none(),
+    }
+}
+
+/// The Recycle Bin settings of the volume `path` is on; `None`, with a warning, when they cannot be read.
+#[must_use]
+pub fn read_capacity(path: &Path) -> Option<BinCapacity> {
+    recycle::bin_capacity(path).unwrap_or_else(|error| {
         warn!(
             "cannot read the Recycle Bin size for {}: {error:#}",
             path.display()
         );
         None
-    });
-    let size = candidate.size_bytes().unwrap_or(u64::MAX);
-    match recycle::recycle_decision(size, capacity) {
-        Decision::Recycle => Ok(Plan::Run(Action::Delete(Method::Recycle))),
-        Decision::AskPermanent(reason) => {
-            let name = report::relative_path(path, root);
-            let context = format!(
-                "{name} cannot go to the Recycle Bin: {reason}; deleting it permanently cannot be undone."
-            );
-            Ok(
-                if prompter.confirm(&context, "Delete it permanently?", false)? {
-                    Plan::Run(Action::Delete(Method::Permanent))
-                } else {
-                    Plan::Skip(format!("permanent delete declined; {reason}"))
-                },
-            )
-        }
-    }
+    })
 }
 
 /// Carries out `action` on a pick's folder or link. A registered worktree's git lock must already be lifted
@@ -394,26 +435,25 @@ pub fn prune(repo: &Path) -> Result<()> {
 }
 
 /// The follow-ups once a pick is gone, returned as notes for the summary: a registered worktree's registration is
-/// pruned and its branch offered for deletion; an orphan still registered elsewhere gets a reminder. A failure is
-/// a note, never fatal.
-pub fn after_removed(candidate: &Candidate, prompter: &mut dyn Prompter) -> Vec<String> {
+/// pruned and `branch` carried out (deleted, or noted as kept); an orphan still registered elsewhere gets a
+/// reminder. A failure is a note, never fatal.
+#[must_use]
+pub fn after_removed(candidate: &Candidate, branch: &BranchChoice) -> Vec<String> {
     let mut notes = Vec::new();
     match candidate {
         Candidate::Registered(registered) => {
             if let Err(error) = prune(&registered.repo) {
                 notes.push(format!("prune failed: {error:#}"));
             }
-            if let Some(offer) = branch_offer(registered) {
-                match prompter.confirm(&offer.context, &offer.question, true) {
-                    Ok(true) => notes.push(
-                        match delete_branch(&registered.repo, &offer.branch, offer.force) {
-                            Ok(()) => format!("branch {} deleted", offer.branch),
-                            Err(error) => format!("branch {} kept: {error:#}", offer.branch),
-                        },
-                    ),
-                    Ok(false) => notes.push(format!("branch {} kept", offer.branch)),
-                    Err(error) => notes.push(format!("branch {} kept: {error:#}", offer.branch)),
-                }
+            match branch {
+                BranchChoice::Delete(offer) => notes.push(
+                    match delete_branch(&registered.repo, &offer.branch, offer.force) {
+                        Ok(()) => format!("branch {} deleted", offer.branch),
+                        Err(error) => format!("branch {} kept: {error:#}", offer.branch),
+                    },
+                ),
+                BranchChoice::Keep(offer) => notes.push(format!("branch {} kept", offer.branch)),
+                BranchChoice::NotOffered => {}
             }
         }
         Candidate::Orphan(orphan) => {
@@ -438,7 +478,7 @@ pub struct BranchOffer {
     /// The branch and why it can go (`Branch <name>: <reason>`), shown before the question.
     pub context: String,
     /// The fixed question, which names no branch.
-    pub question: String,
+    pub question: &'static str,
 }
 
 /// The branch deletion offered for a registered worktree: merged branches and branches with no commits of their
@@ -476,7 +516,7 @@ pub fn branch_offer(registered: &RegisteredCandidate) -> Option<BranchOffer> {
         branch,
         force,
         context,
-        question: "Delete the branch?".to_owned(),
+        question: "Delete the branch?",
     })
 }
 
@@ -779,6 +819,66 @@ mod tests {
         let _ = sweep(4, &mut sweeper);
         assert!(sweeper.offers.is_empty());
         assert_eq!(sweeper.finished, vec![0, 1, 2]);
+    }
+
+    fn folder_orphan(orphan_kind: OrphanKind, bytes: u64) -> Candidate {
+        use crate::discover::Orphan;
+        use crate::report::OrphanCandidate;
+        use crate::signals::SizeInfo;
+
+        Candidate::Orphan(OrphanCandidate {
+            orphan: Orphan {
+                path: PathBuf::from(r"D:\repo.wt\stray"),
+                container: PathBuf::from(r"D:\repo.wt"),
+                orphan_kind,
+                link_target: None,
+                stale_gitdir: false,
+                live_gitdir: None,
+                has_git_dir: false,
+            },
+            size: SizeInfo {
+                bytes,
+                ..SizeInfo::default()
+            },
+        })
+    }
+
+    const ONE_MB: BinCapacity = BinCapacity {
+        max_capacity_mb: 1,
+        nuke_on_delete: false,
+    };
+
+    #[test]
+    fn plan_action_link_needs_no_capacity() {
+        let link = folder_orphan(OrphanKind::Link, 0);
+        assert!(!needs_capacity(&link));
+        assert_eq!(plan_action(&link, None), PlanNeed::Run(Action::RemoveLink));
+    }
+
+    #[test]
+    fn plan_action_over_capacity_asks_permanent() {
+        let big = folder_orphan(OrphanKind::Folder, 2 * 1024 * 1024);
+        assert!(needs_capacity(&big));
+        assert!(
+            matches!(plan_action(&big, Some(ONE_MB)), PlanNeed::AskPermanent(reason) if reason.contains("more than")),
+        );
+    }
+
+    #[test]
+    fn plan_action_unknown_capacity_asks_permanent() {
+        let small = folder_orphan(OrphanKind::Folder, 10);
+        assert!(
+            matches!(plan_action(&small, None), PlanNeed::AskPermanent(reason) if reason.contains("unknown")),
+        );
+    }
+
+    #[test]
+    fn plan_action_fits_recycles() {
+        let exact = folder_orphan(OrphanKind::Folder, 1024 * 1024);
+        assert_eq!(
+            plan_action(&exact, Some(ONE_MB)),
+            PlanNeed::Run(Action::Delete(Method::Recycle))
+        );
     }
 
     #[test]

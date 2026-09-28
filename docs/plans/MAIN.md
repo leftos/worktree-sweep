@@ -30,9 +30,12 @@ Design: [v1-design.md](./v1-design.md). Execution ledger (untracked): `.tmp/plan
   - **`--list` and `--json` keep the plain output**; the TUI starts only in interactive mode on a real terminal, and interactive mode refuses to start when stdout is not a TTY.
   - **`dialoguer` is removed entirely**: the TUI is the only interactive picker, with no `--plain` fallback.
   - Picking and confirmation logic stay in pure functions, testable without a terminal; the two new dependencies pass `cargo deny`.
-  - Design: [tui-picker.md](./tui-picker.md), drafted and reviewed 2026-09-27, with its eight open questions answered (unlock line prompts, every question up front, essentials-only keys, risk tints with `NO_COLOR`, Ctrl+C stops after the current item, the scan inside the TUI with a spinner, nothing printed after exit, a final confirmation). Next: briefs T1 (questions up front), T2 (TUI core, not yet wired in), T3 (wiring it in, removing `dialoguer`); the "Proposed brief split" in the design lists each brief's files.
+  - Design: [tui-picker.md](./tui-picker.md), drafted and reviewed 2026-09-27, with its eight open questions answered (unlock line prompts, every question up front, essentials-only keys, risk tints with `NO_COLOR`, Ctrl+C stops after the current item, the scan inside the TUI with a spinner, nothing printed after exit, a final confirmation). The "Proposed brief split" in the design lists each brief's files. Three briefs, in order:
+  - [x] T1 — [archive/brief-t1-decisions.md](./archive/brief-t1-decisions.md): every question asked up front through a pure `Review` (`src/tui/review.rs`), a final confirmation, `Prompter` removed; `main.rs` drives Review with `dialoguer` until T3
+  - [ ] T2: the TUI core, not wired in (`src/tui/mod.rs` already exists from T1 and holds `pub mod review;`)
+  - [ ] T3: wiring it in and removing `dialoguer`; `remove_picks` takes `on_progress` and `offer_unlock` callbacks ready for the worker thread
 
-- [ ] Test cleanup: `make_junction` is copied in three integration test files (`tests/integration/removal.rs:33`, `holders.rs:215`, `agent_remove.rs:52`); move one copy into `tests/integration/fixture.rs`
+- [ ] Test cleanup: `make_junction` is copied in three integration test files (`tests/integration/removal.rs:33`, `holders.rs:215`, `agent_remove.rs:52`), and `tests/integration/discovery.rs:176-199` inlines a fourth `mklink /J`; move one copy into `tests/integration/fixture.rs` and use it in all four
 
 ### Done from the backlog
 

@@ -22,4 +22,5 @@ Start here. Plans live in [plans/MAIN.md](./plans/MAIN.md).
 - **Holder**: a process found without elevation to hold a folder, through its current directory or an open disk handle inside it; the agent path's counterpart of a locker. A holder whose handle can't be named, or that can't be opened, is reported as "may hold".
 - **Lock kind**: how a process holds a folder (its current directory, an open file, a folder handle, a running exe or loaded DLL). Some kinds block a recycle and others only a permanent delete; the table is in [agent-path.md](./agent-path.md).
 - **Released**: a worktree an agent asked to remove but couldn't, marked so the next interactive sweep lists it first and pre-picks it.
+- **Review**: the questions asked after picking and before anything is removed: per pick, what it would lose, a permanent delete, its branch; then one final confirmation.
 - **Caller**: the shell that started worktree-sweep; it is flagged as a locker, never stopped by default.

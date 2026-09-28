@@ -10,6 +10,7 @@ pub mod recycle;
 pub mod remove;
 pub mod report;
 pub mod signals;
+pub mod tui;
 pub mod unlock;
 
 use std::fs;

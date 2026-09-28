@@ -7,8 +7,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use dialoguer::Confirm;
+use dialoguer::console::Term;
 use tracing_subscriber::filter::{LevelFilter, Targets};
 use tracing_subscriber::prelude::*;
+use worktree_sweep::tui::review::{self, Review, StepKind};
 use worktree_sweep::{agent, pick, recycle, remove, report, unlock};
 
 /// Find stale git worktrees and orphan worktree folders under ROOT.
@@ -130,21 +133,71 @@ fn remove_one(path: &Path, options: agent::Options) -> Result<ExitCode> {
     Ok(ExitCode::from(agent::exit_code(report.status)))
 }
 
-/// The default mode after the table: pick, confirm, remove, and print one summary line per pick.
+/// The default mode after the table: pick, answer every question, confirm once, remove, and print one summary line
+/// per pick.
 fn sweep_interactively(report: &report::Report, now: i64, out: &mut impl Write) -> Result<()> {
     let _com = recycle::ComApartment::init()?;
-    let mut prompter = pick::TermPrompter;
-    let picks = pick::pick(report, now, &mut prompter)?;
-    if picks.is_empty() {
+    let picked = pick::pick(report, now)?;
+    if picked.is_empty() {
         writeln!(out, "Nothing picked; nothing removed.").context("cannot write the summary")?;
         return Ok(());
     }
-    let swept = remove::remove_picks(&picks, &report.root, &mut prompter)?;
+    let Some(decisions) = review_on_terminal(&picked, &report.root)? else {
+        writeln!(out, "Nothing removed.").context("cannot write the summary")?;
+        return Ok(());
+    };
+    let swept = remove::remove_picks(&decisions, &mut |_| {}, &mut |paths| unlock::offer(paths));
     for line in remove::summary(&swept, &report.root) {
         writeln!(out, "{line}").context("cannot write the summary")?;
     }
     out.flush().context("cannot flush standard output")?;
     Ok(())
+}
+
+/// Asks Review's questions on the terminal, then the final confirmation (default no) unless every pick is
+/// skipped; `None` when the user cancels there.
+fn review_on_terminal<'a>(
+    picked: &[&'a report::Candidate],
+    root: &Path,
+) -> Result<Option<Vec<remove::Decision<'a>>>> {
+    let term = Term::stderr();
+    let mut review = Review::new(picked, root, &mut remove::read_capacity);
+    while let Some(step) = review.step() {
+        let body = match step.kind {
+            StepKind::Loss | StepKind::Link => {
+                let name = picked
+                    .get(step.pick)
+                    .map(|candidate| report::relative_path(candidate.path(), root))
+                    .unwrap_or_default();
+                format!("{name}: {}", step.body)
+            }
+            StepKind::Permanent | StepKind::Branch => step.body.clone(),
+        };
+        term.write_line(&body)?;
+        let yes = Confirm::new()
+            .with_prompt(step.question)
+            .default(step.default)
+            .interact()?;
+        review.answer(yes);
+    }
+    let totals = review
+        .totals()
+        .context("the review ended with a question unanswered")?;
+    let runnable = totals.recycle + totals.permanent + totals.links + totals.prunes;
+    if runnable > 0 {
+        term.write_line(&review::final_sentence(&totals))?;
+        let go = Confirm::new()
+            .with_prompt("Remove them?")
+            .default(false)
+            .interact()?;
+        if !go {
+            return Ok(None);
+        }
+    }
+    review
+        .decisions()
+        .context("the review ended with a question unanswered")
+        .map(Some)
 }
 
 /// The current time in unix seconds; 0 when the clock is before 1970.

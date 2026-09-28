@@ -133,7 +133,7 @@ Windows note for the brief: crossterm on Windows reports key **press and release
 |---|---|---|
 | `src/tui/mod.rs` | `pub fn run(report, now) -> Result<Vec<String>>` (returns the summary lines): the event loop wiring the pieces below. | No (edge) |
 | `src/tui/app.rs` | `App` state (`screen`, `rows`, `selected`, `ticks: Vec<bool>`, `offset`, review queue and answers, per-pick progress, unlock outcome, warnings, terminal size) and `update(&mut App, Event) -> Vec<Effect>`. | Yes |
-| `src/tui/review.rs` | Builds the review queue from the ticked picks: `review_steps(picks, capacities) -> Vec<Step>` and `decisions(steps, answers) -> Vec<Decision>`; the final-confirmation counts. | Yes |
+| `src/tui/review.rs` | `Review`, an incremental question sequence over the ticked picks (brief T1, 2026-09-27): `Review::new(candidates, root, capacity)`, `step()`, `answer(yes)`, and, once finished, `decisions()` and `totals()`; `final_sentence(&Totals)`. Incremental because a declined loss skips that pick's later questions. | Yes |
 | `src/tui/view.rs` | `render(&App, &mut Frame)`: list, detail pane, dialogs, progress, results, too-small. | Yes (a function of state; tested on `TestBackend`) |
 | `src/tui/terminal.rs` | `TerminalGuard`: enter (raw mode, alternate screen, hidden cursor), `suspend`/`resume`, restore on `Drop`, panic hook. | No (edge) |
 | `src/tui/worker.rs` | Runs the removal on a worker thread and reports `Progress` messages over a channel. | No (edge) |
@@ -148,9 +148,10 @@ Windows note for the brief: crossterm on Windows reports key **press and release
 
 Today `remove_picks` asks the permanent-delete question in `plan` and the branch question in `after_removed`, both through `Prompter`, and the branch question arrives mid-sweep. The proposal (Q2) moves every question into Review, so removal needs no prompter:
 
-- `remove::plan` splits into a pure `plan_action(candidate, capacity: Option<BinCapacity>) -> PlanNeed` (`Run(Action)` or `AskPermanent(reason)`) and the capacity read at the edge.
-- A `Decision { candidate, action: Option<Action> /* None = skipped, with reason */, delete_branch: Option<BranchOffer> }` per pick is what Review produces.
-- `remove_picks(decisions, root, on_progress: &mut dyn FnMut(Progress), offer_unlock: &mut dyn FnMut(&[PathBuf]) -> Result<UnlockOutcome>)`; `after_removed(candidate, delete_branch)` takes the answer instead of asking.
+- `remove::plan` splits into a pure `plan_action(candidate, capacity: Option<BinCapacity>) -> PlanNeed` (`Run(Action)` or `AskPermanent(reason)`) and the capacity read at the edge (`remove::read_capacity`).
+- A `Decision { candidate, plan: Plan /* Run(Action) | Skip(reason) */, branch: BranchChoice /* NotOffered | Delete(offer) | Keep(offer) */ }` per pick is what Review produces; `Keep` keeps today's `branch X kept` note.
+- `remove_picks(decisions, root, on_progress: &mut dyn FnMut(Progress), offer_unlock: &mut dyn FnMut(&[PathBuf]) -> Result<UnlockOutcome>)`, `Progress::{Started(i), Done(i)}` indexed into the decisions; `after_removed(candidate, &BranchChoice)` takes the answer instead of asking.
+- The loss text without the path comes from `pick::loss_text`; `loss_sentence` stays as the prefixed form the agent JSON uses.
 - The `Prompter` trait and `TermPrompter` are deleted; their tests move to `review.rs` and to `remove.rs` tests with explicit decisions.
 
 ### Where removal runs
