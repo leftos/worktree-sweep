@@ -15,7 +15,7 @@ The generic loop is the user-level `nextup` skill; this file supplies only what 
 - Pre-loop hooks: none.
 - Finished-item convention: **tick the line** (`- [x]`). A dispatched brief file moves to `docs/plans/archive/` in the landing commit.
 - Tracker: `gh issue list --repo leftos/worktree-sweep --state open --json number,title`. No triage skill; place issues by the step-0 rule.
-- Pull requests: `gh pr list --repo leftos/worktree-sweep --state open --json number,title,headRefName`. An open PR from an item's own `feat/<slug>` branch is that item still landing: cite `#N` on its line and finish the landing (checks green, then the merge). Any other PR gets a line by the step-0 rule.
+- Pull requests: `gh pr list --repo leftos/worktree-sweep --state open --json number,title,headRefName`. An open PR from an item's own `<slug>` branch is that item still landing, and one from a `feat/<name>` branch is a feature PR, planned by its marker line: cite `#N` on its line and finish the landing (checks green, then the merge). Any other PR gets a line by the step-0 rule.
 - Hotspots: `src/main.rs` (CLI dispatch), `src/remove.rs` (removal orchestration that the unlock flow plugs into), `src/lib.rs` (module list).
 
 ## Rulings every brief carries
@@ -53,7 +53,7 @@ The generic loop is the user-level `nextup` skill; this file supplies only what 
 ## Concurrency
 
 - Ceiling: **one** implementer. The crate is small and every item so far touches `main.rs` or `remove.rs`.
-- Branch: `git switch -c feat/<slug> <base>` in the main checkout (no worktree needed at ceiling one), then `branch.feat/<slug>.base` and `branch.feat/<slug>.landOn` recorded as the user-level `nextup` §3 **Base and target** says (`main` and `main` by default).
+- Branch: `git switch -c <slug> <base>` in the main checkout (no worktree needed at ceiling one; an item under a feature marker is cut from `feat/<name>` in the feature worktree instead), then `branch.<slug>.base` and `branch.<slug>.landOn` recorded as the user-level `nextup` §3 **Base and target** says (`main` and `main` by default).
 - Context: read the status bar's figure at every landing (`jq .context_window.used_percentage <scratchpad>/statusline.json`); past 40% stop refilling, per the user-level `nextup`.
 
 ## Docs map
@@ -68,6 +68,7 @@ The generic loop is the user-level `nextup` skill; this file supplies only what 
 
 ## Landing
 
-- A feature item (multi-file, from a brief): commit on `feat/<slug>` (the prek hook runs fmt and clippy), `git push -u origin feat/<slug>`, `gh pr create --base <landOn>` with the agent-authored marker line as the body's first line, then `gh pr merge --squash --delete-branch`, `git switch <landOn>`, `git pull --ff-only`. Merge PRs yourself as you go.
+- A multi-file item (from a brief): commit on `<slug>` (the prek hook runs fmt and clippy), `git push -u origin <slug>`, `gh pr create --base <landOn>` with the agent-authored marker line as the body's first line, then `gh pr merge --rebase --delete-branch`, `git switch <landOn>`, `git pull --ff-only`. Merge PRs yourself as you go. `feat/*` names belong to feature branches alone.
+- An item under a feature marker (user-level `nextup` §3, "Feature branches") has `landOn` = `feat/<name>`, so its PR targets the feature branch; the feature PR into `main` merges only through `/ship` on the feature branch, and the item's plan tick is its own commit on `main`. The repo has no CI, so the feature PR's checks are the local gates.
 - A small change (docs, plan, config, one-line fix): commit on `main` and `git push`. A session running from a worktree offers `/ship` instead of pushing (user-level `nextup`, "A worktree session offers a ship instead of a push").
 - Commit messages: ≤4-char type tag, imperative, ≤72-char subject, the session's attribution trailers.
