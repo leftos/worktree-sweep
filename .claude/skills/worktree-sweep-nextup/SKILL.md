@@ -15,6 +15,7 @@ The generic loop is the user-level `nextup` skill; this file supplies only what 
 - Pre-loop hooks: none.
 - Finished-item convention: **tick the line** (`- [x]`). A dispatched brief file moves to `docs/plans/archive/` in the landing commit.
 - Tracker: `gh issue list --repo leftos/worktree-sweep --state open --json number,title`. No triage skill; place issues by the step-0 rule.
+- Pull requests: `gh pr list --repo leftos/worktree-sweep --state open --json number,title,headRefName`. An open PR from an item's own `feat/<slug>` branch is that item still landing: cite `#N` on its line and finish the landing (checks green, then the merge). Any other PR gets a line by the step-0 rule.
 - Hotspots: `src/main.rs` (CLI dispatch), `src/remove.rs` (removal orchestration that the unlock flow plugs into), `src/lib.rs` (module list).
 
 ## Rulings every brief carries
