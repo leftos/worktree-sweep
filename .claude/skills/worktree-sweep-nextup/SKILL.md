@@ -68,5 +68,5 @@ The generic loop is the user-level `nextup` skill; this file supplies only what 
 ## Landing
 
 - A feature item (multi-file, from a brief): commit on `feat/<slug>` (the prek hook runs fmt, clippy and tests), `git push -u origin feat/<slug>`, `gh pr create` with the agent-authored marker line as the body's first line, then `gh pr merge --squash --delete-branch`, `git switch main`, `git pull --ff-only`. Merge PRs yourself as you go.
-- A small change (docs, plan, config, one-line fix): commit on `main` and `git push`.
+- A small change (docs, plan, config, one-line fix): commit on `main` and `git push`. A session running from a worktree offers `/ship` instead of pushing (user-level `nextup`, "A worktree session offers a ship instead of a push").
 - Commit messages: ≤4-char type tag, imperative, ≤72-char subject, the session's attribution trailers.
