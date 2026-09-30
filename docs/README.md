@@ -2,6 +2,8 @@
 
 Start here. Plans live in [plans/MAIN.md](./plans/MAIN.md).
 
+- [`ARCHITECTURE.md`](ARCHITECTURE.md): the architecture entry point: Task Index, layers, integration footguns, test locations and the deep docs.
+
 ## Glossary
 
 - **Brief**: a written, self-contained implementation step (files, change, proving commands) handed to an implementer agent; open briefs live in `docs/plans/`.
