@@ -11,7 +11,7 @@ The generic loop is the user-level `nextup` skill; this file supplies only what 
 
 - Index: `docs/plans/MAIN.md`, section `## Current focus: v1`, top to bottom, then `## Backlog`. The approved design is `docs/plans/v1-design.md`; every brief reads its section for the module it touches.
 - A written brief waiting in `docs/plans/` (e.g. `brief-3-unlock.md`) is dispatched as written. Re-check its "Measured facts" against the code on `main` first (brief 2 may have changed a signature it names), and fix the brief, not the implementer's result.
-- Siblings: none.
+- siblings: none
 - Pre-loop hooks: none.
 - Finished-item convention: **tick the line** (`- [x]`). A dispatched brief file moves to `docs/plans/archive/` in the landing commit.
 - Tracker: `gh issue list --repo leftos/worktree-sweep --state open --json number,title`. No triage skill; place issues by the step-0 rule.
