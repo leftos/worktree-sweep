@@ -1,0 +1,12 @@
+{
+  "issues": {
+    "L35": {
+      "id": "8789cd30-dcca-4a9e-9608-ad85e03fb1e9",
+      "identifier": "WTS-3",
+      "linked": true
+    }
+  },
+  "projects": {
+    "TUI": "c4639264-fe12-48da-b82d-fa44fa45d27e"
+  }
+}

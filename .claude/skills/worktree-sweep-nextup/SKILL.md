@@ -7,15 +7,18 @@ description: Profile for the user-level `nextup` skill in the worktree-sweep rep
 
 The generic loop is the user-level `nextup` skill; this file supplies only what is worktree-sweep-specific.
 
+siblings: none
+linear: worktree-sweep
+
 ## Plan and tracker
 
-- Index: `docs/plans/MAIN.md`, section `## Current focus: v1`, top to bottom, then `## Backlog`. The approved design is `docs/plans/v1-design.md`; every brief reads its section for the module it touches.
-- A written brief waiting in `docs/plans/` (e.g. `brief-3-unlock.md`) is dispatched as written. Re-check its "Measured facts" against the code on `main` first (brief 2 may have changed a signature it names), and fix the brief, not the implementer's result.
-- siblings: none
+- The plan lives in Linear: every task is a Linear issue in team WTS, per `~/.claude/docs/plan-operations.md`; `docs/plans/MAIN.md` is its generated snapshot, never edited by hand. Projects are worked in Linear's project order; an item no project fits goes to `Backlog`. The approved design is `docs/design.md`; every brief reads its section for the module it touches.
+- A written brief waiting in `docs/plans/` and linked from its issue is dispatched as written. Re-check its "Measured facts" against the code on `main` first (brief 2 may have changed a signature it names), and fix the brief, not the implementer's result.
 - Pre-loop hooks: none.
-- Finished-item convention: **tick the line** (`- [x]`). A dispatched brief file moves to `docs/plans/archive/` in the landing commit.
-- Tracker: `gh issue list --repo leftos/worktree-sweep --state open --json number,title`. No triage skill; place issues by the step-0 rule.
-- Pull requests: `gh pr list --repo leftos/worktree-sweep --state open --json number,title,headRefName`. An open PR from an item's own `<slug>` branch is that item still landing, and one from a `feat/<name>` branch is a feature PR, planned by its marker line: cite `#N` on its line and finish the landing (checks green, then the merge). Any other PR gets a line by the step-0 rule.
+- An item **land**s after its commit. A dispatched brief file moves to `docs/plans/archive/` in the landing commit.
+- A steer or a finding the item does not fix gets an **add**, in the project whose files it shares, else in `Backlog`.
+- Tracker: **triage** as plan-operations says (GitHub issues reach the team through Linear's sync; an untriaged one is top-level with no project), each placed in the project that shares its files, else in `Backlog`.
+- Pull requests: `gh pr list --repo leftos/worktree-sweep --state open --json number,title,headRefName`. An open PR from an item's own `<slug>` branch is that item still landing, and one from a `feat/<name>` branch is a feature PR, planned by its project's tracking issue: finish the landing (checks green, then the merge). Any other PR is triaged as plan-operations says.
 - Hotspots: `src/main.rs` (CLI dispatch), `src/remove.rs` (removal orchestration that the unlock flow plugs into), `src/lib.rs` (module list).
 
 ## Rulings every brief carries
@@ -63,12 +66,12 @@ The generic loop is the user-level `nextup` skill; this file supplies only what 
 | CLI flag, subcommand, output or behaviour a user sees | `README.md` usage and safety sections, `CHANGELOG.md` |
 | A term used in a project-specific sense | `docs/README.md` glossary |
 | JSON report shape | `README.md` (the `--json` section), since agents read it |
-| A design decision that changes the approved design | `docs/plans/v1-design.md` |
-| An item finished | tick it in `docs/plans/MAIN.md`; brief file to `docs/plans/archive/` |
+| A design decision that changes the approved design | `docs/design.md` |
+| An item finished | **land** its issue after the commit; brief file to `docs/plans/archive/` |
 
 ## Landing
 
 - A multi-file item (from a brief): commit on `<slug>` (the prek hook runs fmt and clippy), `git push -u origin <slug>`, `gh pr create --base <landOn>` with the agent-authored marker line as the body's first line, then `gh pr merge --rebase --delete-branch`, `git switch <landOn>`, `git pull --ff-only`. Merge PRs yourself as you go. `feat/*` names belong to feature branches alone.
-- An item under a feature marker (user-level `nextup` §3, "Feature branches") has `landOn` = `feat/<name>`, so its PR targets the feature branch; the feature PR into `main` merges only through `/ship` on the feature branch, and the item's plan tick is its own commit on `main`. The repo has no CI, so the feature PR's checks are the local gates.
+- An item under a feature marker (user-level `nextup` §3, "Feature branches") has `landOn` = `feat/<name>`, so its PR targets the feature branch; the feature PR into `main` merges only through `/ship` on the feature branch, and the item is **land**ed with the note `on feat/<name>, ships with #N`. The repo has no CI, so the feature PR's checks are the local gates.
 - A small change (docs, plan, config, one-line fix): commit on `main` and `git push`. A session running from a worktree offers `/ship` instead of pushing (user-level `nextup`, "A worktree session offers a ship instead of a push").
 - Commit messages: ≤4-char type tag, imperative, ≤72-char subject, the session's attribution trailers.

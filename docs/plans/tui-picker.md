@@ -1,8 +1,8 @@
 # Full-screen picker (ratatui + crossterm): design for review
 
-Design pass for the MAIN.md Backlog item "Full-screen picker with `ratatui` + `crossterm`" and its Rulings. The user's answers to its eight open questions are under "Rulings from the review", and the sections above them already reflect those answers.
+Design for the Linear project "Full-screen picker" (team WTS). The user's answers to its eight open questions are under "Rulings from the review", and the sections above them already reflect those answers.
 
-## Rulings this design takes as fixed (MAIN.md)
+## Rulings this design takes as fixed
 
 - Unlock step: leave the alternate screen and restore the terminal, run `unlock::offer` as today (plain prompts, UAC), re-enter, show the retry results in-screen; a guard restores the terminal on any exit or panic.
 - `--list` and `--json` keep their plain output. The TUI runs only in interactive mode on a real terminal, and interactive mode refuses to start when stdout is not a TTY.
@@ -188,7 +188,7 @@ Synchronous removal between frames (no thread) is the alternative: simpler, but 
 | Review | Unit tests on `review_steps` / `decisions` | Dirty + unmerged pick asks loss first, default Keep; an over-capacity pick asks permanent delete, default Skip; a squashed branch gets a `-D` offer, default Delete; a declined loss skips the permanent and branch questions; final counts. |
 | Removal | Existing `sweep` tests with a fake `Sweeper`; `remove_picks` with explicit decisions on `tempfile` fixtures | Branch deleted only after a successful removal; skipped decisions never touch the disk. |
 | Rendering | `ratatui::backend::TestBackend` + `assert_buffer_lines` on a handful of fixed states, not a snapshot of every screen | List at 100×20 with a released pre-ticked row and a truncated path; a loss dialog; Too small at 60×10; Results total line. No new snapshot crate. |
-| Manual | Real terminal, by the user | Resize while on each screen; the unlock hand-off with the manual lock test from v1-design (sudo prompt, return, retry shown in-screen); a forced panic restores the terminal; Windows Terminal and conhost; `NO_COLOR`. |
+| Manual | Real terminal, by the user | Resize while on each screen; the unlock hand-off with the manual lock test from `../design.md` (sudo prompt, return, retry shown in-screen); a forced panic restores the terminal; Windows Terminal and conhost; `NO_COLOR`. |
 
 ## What is removed, and doc changes
 
@@ -197,7 +197,7 @@ Synchronous removal between frames (no thread) is the alternative: simpler, but 
 - README: Usage line for the default mode (`scan, then pick in a full-screen list, confirm, remove`); a short "Interactive mode" section with the key table and the Review order; "The interactive mode needs a terminal. Nothing is picked by default." becomes "…needs a terminal on stdin and stdout. Nothing is picked by default, except released worktrees."; Locked folders step 2 notes that the full screen is left for the elevated step and comes back for the retry.
 - CHANGELOG `[Unreleased]`: one Changed bullet for the full-screen picker, one for the final confirmation if kept; `dialoguer` removal needs no bullet.
 - Glossary (`docs/README.md`): **Picker** (the full-screen list), **Detail pane**, **Review** (the dialogs after Enter), **Hand-off** (leaving the full screen for the unlock flow).
-- `v1-design.md`: its `dialoguer` lines (22, 67, 101) are history; the orchestrator adds a pointer to this doc rather than rewriting them.
+- `../design.md`: its `dialoguer` lines (22, 67, 101) are history; the orchestrator adds a pointer to this doc rather than rewriting them.
 - `.claude/skills/worktree-sweep-nextup/SKILL.md:47` ("`dialoguer` needs a terminal") becomes "the TUI needs a terminal".
 
 ## Dependencies
@@ -209,7 +209,7 @@ Looked up 2026-09-27 with `cargo search` and `cargo info` against crates.io, and
 | `ratatui` | 0.30.2 | MIT | rust-version 1.88. Default features `all-widgets, crossterm, layout-cache, macros, underline-color`. Proposed: `default-features = false, features = ["crossterm"]` (123 → 115 lines in the resolved tree). |
 | `crossterm` | 0.29.0 | MIT | Pulled by `ratatui-crossterm` 0.1.2 (default feature `crossterm_0_29`). Use it through `ratatui::crossterm` (re-export) so the versions cannot drift, rather than a second direct dependency. On Windows it brings `winapi` 0.3.9 and `crossterm_winapi` 0.9.1, a second Windows binding family beside `windows` 0.62.2; no version duplicate of `windows`. |
 
-`cargo deny check` result with the unchanged `deny.toml`: **licenses FAILED**, one error: `foldhash` 0.2.0 is `Zlib`, pulled by `hashbrown` 0.16.1 (via `kasuari` 0.4.12 → `ratatui-core`) and `hashbrown` 0.17.1 (via `lru`, `ratatui-core`, `ratatui-widgets`). It fails with `default-features = false` too, since `kasuari` is always there. The fix is adding `"Zlib"` to `[licenses] allow`, which `v1-design.md` line 103 already lists but `deny.toml` does not. Advisories, bans and sources pass. New warning: duplicate `hashbrown` (0.16.1 and 0.17.1); `bans.multiple-versions = "warn"`, so it does not fail. The existing warnings (duplicate `syn` 2/3, `ISC` and `BSD-3-Clause` allowances unmatched) are there on the repo today.
+`cargo deny check` result with the unchanged `deny.toml`: **licenses FAILED**, one error: `foldhash` 0.2.0 is `Zlib`, pulled by `hashbrown` 0.16.1 (via `kasuari` 0.4.12 → `ratatui-core`) and `hashbrown` 0.17.1 (via `lru`, `ratatui-core`, `ratatui-widgets`). It fails with `default-features = false` too, since `kasuari` is always there. The fix is adding `"Zlib"` to `[licenses] allow`, which `../design.md` line 103 already lists but `deny.toml` does not. Advisories, bans and sources pass. New warning: duplicate `hashbrown` (0.16.1 and 0.17.1); `bans.multiple-versions = "warn"`, so it does not fail. The existing warnings (duplicate `syn` 2/3, `ISC` and `BSD-3-Clause` allowances unmatched) are there on the repo today.
 
 Binary size, measured on minimal release builds in the scratchpad (default profile): a program using `dialoguer` 0.12.0 (`MultiSelect` + `Confirm`) is 194,048 bytes; one using `ratatui` 0.30.2 defaults (a `List`, a `Paragraph`, one `crossterm` event read) is 363,008 bytes. Roughly +165 KiB for the swap; the real binary's figure is unmeasured.
 
@@ -265,4 +265,4 @@ In order; each after 4b and 4c have landed (4c changes `ordered`, `pick.rs` and 
 1. **Brief T1: decisions up front** (Q2a). `src/remove.rs` (pure `plan_action`, `Decision`, `remove_picks` with progress and unlock callbacks, `after_removed` taking the answer, `Prompter` removed), `src/pick.rs` (loss text split from the path; `default_picks` kept), a new pure `src/tui/review.rs`, `src/main.rs` (temporarily drives Review with the existing `dialoguer` prompts so the tool keeps working between briefs), their tests. About 5 files.
 2. **Brief T2: the TUI core, not wired.** `Cargo.toml` (ratatui, `Zlib` via `deny.toml`), `src/tui/mod.rs` (module only), `src/tui/app.rs` (state and `update`, including the Scanning, Empty and Scan failed states), `src/tui/view.rs` (render), `src/report.rs` (`Row` and truncation helpers `pub(crate)`), with `update` unit tests and `TestBackend` render tests. 6 files.
 3. **Brief T3: wiring and removal of `dialoguer`.** `src/tui/terminal.rs` (guard, panic hook, suspend/resume), `src/tui/worker.rs` (the scan and removal threads, channels, the unlock reply), `src/tui/mod.rs` (event loop), `src/main.rs` (TTY check on stdout before anything is drawn, tracing switch, calls `tui::run`, prints nothing afterwards), `src/unlock.rs` (Q1's prompts), `Cargo.toml` (drop `dialoguer`), `src/report.rs`/`src/pick.rs` deletions (`picker_items`, `PICKER_WIDTH`, `pick::pick`, `ensure_interactive` moved). About 7 files; if the brief must stay at 6, `src/unlock.rs` (Q1) goes in its own small brief T3b first.
-4. **Docs (orchestrator, no brief):** README, CHANGELOG, glossary, the nextup profile line, a pointer in `v1-design.md`; then the manual checks in the Testing table.
+4. **Docs (orchestrator, no brief):** README, CHANGELOG, glossary, the nextup profile line, a pointer in `../design.md`; then the manual checks in the Testing table.

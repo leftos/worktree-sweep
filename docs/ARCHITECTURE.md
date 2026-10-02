@@ -6,13 +6,13 @@
 
 | Task | Files, in order | Deep doc |
 |---|---|---|
-| Add or change a scan signal (merge state, dirty, upstream, size) | `src/signals.rs` → `src/report.rs` (`RegisteredCandidate`, table, JSON) → `src/pick.rs` (`loss_text`) → `tests/integration/worktree_status.rs` or `merge_state.rs` | [`plans/v1-design.md`](plans/v1-design.md) |
+| Add or change a scan signal (merge state, dirty, upstream, size) | `src/signals.rs` → `src/report.rs` (`RegisteredCandidate`, table, JSON) → `src/pick.rs` (`loss_text`) → `tests/integration/worktree_status.rs` or `merge_state.rs` | [`design.md`](design.md) |
 | Change what counts as a container dir or an orphan | `src/discover.rs` → `src/lib.rs` (`scan`, `container_repo`) → `tests/integration/discovery.rs` | [`README.md`](README.md) (glossary) |
-| Change the `git` calls the scan makes | `src/git.rs` → `tests/integration/git_env.rs` | [`plans/v1-design.md`](plans/v1-design.md) |
+| Change the `git` calls the scan makes | `src/git.rs` → `tests/integration/git_env.rs` | [`design.md`](design.md) |
 | Change the table or the `--json` report | `src/report.rs` → `README.md` (`JSON report`) → `CHANGELOG.md` | none |
 | Change what removing a pick loses, or the Review questions | `src/pick.rs` (`loss_text`) → `src/tui/review.rs` → `src/remove.rs` (`Plan`, `Decision`) | [`plans/tui-picker.md`](plans/tui-picker.md) |
-| Change how a pick is removed (recycle, permanent delete, prune, branch) | `src/remove.rs` → `src/recycle.rs` → `tests/integration/removal.rs` | [`plans/v1-design.md`](plans/v1-design.md) |
-| Change the unlock flow (elevated `handle.exe`) | `src/unlock.rs` → `src/handle_csv.rs` → `src/main.rs` (`Command::Unlock`) | [`plans/v1-design.md`](plans/v1-design.md) |
+| Change how a pick is removed (recycle, permanent delete, prune, branch) | `src/remove.rs` → `src/recycle.rs` → `tests/integration/removal.rs` | [`design.md`](design.md) |
+| Change the unlock flow (elevated `handle.exe`) | `src/unlock.rs` → `src/handle_csv.rs` → `src/main.rs` (`Command::Unlock`) | [`design.md`](design.md) |
 | Change how lock holders are found or which ones may be stopped | `src/holders.rs` (`find_holders`, `stoppable`) → `src/agent.rs` → `tests/integration/holders.rs` | [`agent-path.md`](agent-path.md) |
 | Change the agent `remove` command (statuses, refusals, exit codes, marker) | `src/agent.rs` → `src/lib.rs` (`resolve_one`, `RefusalReason`) → `src/main.rs` (`Command::Remove`) → `tests/integration/agent_remove.rs`, `released.rs` | [`agent-path.md`](agent-path.md) |
 | Change the full-screen picker | `src/tui/app.rs` → `src/tui/view.rs` → `src/tui/review.rs` → `src/tui/fixtures.rs` | [`plans/tui-picker.md`](plans/tui-picker.md) |
@@ -61,6 +61,6 @@ Rules the docs or code state: the scan writes nothing and every git call clears 
 
 - [`README.md`](README.md): glossary, start page.
 - [`agent-path.md`](agent-path.md): the agent `remove` path, lock-kind measurements, rulings.
-- [`plans/v1-design.md`](plans/v1-design.md): the approved v1 design, module list and test plan.
+- [`design.md`](design.md): the approved v1 design, module list and test plan.
 - [`plans/tui-picker.md`](plans/tui-picker.md): the full-screen picker design.
-- [`plans/MAIN.md`](plans/MAIN.md): the plan index.
+- [`plans/MAIN.md`](plans/MAIN.md): the generated snapshot of the plan in Linear (team WTS).
