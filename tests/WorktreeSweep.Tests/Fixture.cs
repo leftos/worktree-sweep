@@ -1,5 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
+using System.Text;
 using WorktreeSweep.Discovery;
 using WorktreeSweep.Git;
 using WorktreeSweep.Report;
@@ -95,9 +97,54 @@ public sealed class Fixture : IDisposable
     public (WorktreeRecord Record, WorktreeSignals Signals) Registered(string path)
     {
         DiscoveryResult found = Discoverer.Discover(Root);
-        (Repo Repo, WorktreeRecord Record) pair = Assert.Single(found.Registered, candidate => SamePath(candidate.Record.Path, path));
+        (Repo Repo, WorktreeRecord Record) pair = RegisteredOnly(found, path);
         DefaultBranches defaults = SignalReader.ReadDefaultBranches(pair.Repo.Path);
         return (pair.Record, SignalReader.ReadWorktreeSignals(defaults, pair.Record));
+    }
+
+    /// <summary>
+    /// The one registered worktree at <paramref name="path"/>, or a failure naming every repo with its worktree paths, every
+    /// discovery error and every orphan with its live git dir.
+    /// </summary>
+    /// <param name="found">What discovery found.</param>
+    /// <param name="path">The registered worktree wanted.</param>
+    /// <returns>The repo and record.</returns>
+    private static (Repo Repo, WorktreeRecord Record) RegisteredOnly(DiscoveryResult found, string path)
+    {
+        List<(Repo Repo, WorktreeRecord Record)> matches = [.. found.Registered.Where(pair => SamePath(pair.Record.Path, path))];
+        if (matches.Count != 1)
+        {
+            Assert.Fail(DescribeDiscovery(found, path, matches.Count));
+        }
+        return matches[0];
+    }
+
+    /// <summary>What discovery found, as a failure message: the wanted path, then every repo, discovery error and orphan.</summary>
+    /// <param name="found">What discovery found.</param>
+    /// <param name="path">The registered worktree wanted.</param>
+    /// <param name="matches">How many registered worktrees matched it.</param>
+    /// <returns>The message.</returns>
+    private static string DescribeDiscovery(DiscoveryResult found, string path, int matches)
+    {
+        var message = new StringBuilder();
+        message.AppendLine(CultureInfo.InvariantCulture, $"wanted exactly one registered worktree at {path}, found {matches}");
+        foreach (Repo repo in found.Repos)
+        {
+            message.AppendLine(CultureInfo.InvariantCulture, $"repo {repo.Path}:");
+            foreach (WorktreeRecord record in repo.Worktrees)
+            {
+                message.AppendLine(CultureInfo.InvariantCulture, $"  worktree {record.Path}");
+            }
+        }
+        foreach (DiscoveryError error in found.Errors)
+        {
+            message.AppendLine(CultureInfo.InvariantCulture, $"discovery error {error.Path}: {error.Message}");
+        }
+        foreach (Orphan orphan in found.Orphans)
+        {
+            message.AppendLine(CultureInfo.InvariantCulture, $"orphan {orphan.Path}, live gitdir {orphan.LiveGitdir ?? "none"}");
+        }
+        return message.ToString();
     }
 
     /// <summary>Scans the root.</summary>

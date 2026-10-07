@@ -29,7 +29,9 @@ public static class Discoverer
     /// <summary>Finds the repos, registered worktrees, container dirs and orphans under <paramref name="root"/>.</summary>
     /// <remarks>
     /// A child that cannot be read (such as <c>System Volume Information</c>) is skipped with a trace line, and a repo whose
-    /// worktrees git cannot list is skipped with a trace warning. A walked folder matches a registered worktree when its path below
+    /// worktrees git cannot list is skipped with a trace warning; a failed list, an unreadable worktrees folder and a worktree
+    /// git's list leaves out are all reported in the result's errors. A walked folder matches a registered worktree when its path
+    /// below
     /// <paramref name="root"/>, put below the resolved root, names the registered path with its parent resolved; so a substed,
     /// 8.3-spelled or <c>\\?\</c>-prefixed root matches the paths git prints, while a link inside a container never matches through
     /// its target, and a registered worktree folder that is itself a junction still matches. A walked folder spelled as git spells a
@@ -62,11 +64,12 @@ public static class Discoverer
 
         var repos = new List<Repo>();
         var containers = new List<string>();
+        var errors = new List<DiscoveryError>();
         foreach (FileSystemInfo child in children)
         {
             if (IsPlainDir(child.Attributes))
             {
-                Classify(child.FullName, repos, containers);
+                Classify(child.FullName, repos, containers, errors);
             }
         }
 
@@ -78,7 +81,7 @@ public static class Discoverer
         {
             WalkContainer(container, container, registered, orphans);
         }
-        return new DiscoveryResult(full, repos, containers, orphans);
+        return new DiscoveryResult(full, repos, containers, orphans, errors);
     }
 
     /// <summary>Parses <c>git worktree list --porcelain</c> output into records, in git's order (the main worktree first).</summary>
@@ -237,7 +240,7 @@ public static class Discoverer
         return record;
     }
 
-    private static void Classify(string child, List<Repo> repos, List<string> containers)
+    private static void Classify(string child, List<Repo> repos, List<string> containers, List<DiscoveryError> errors)
     {
         if (!IsPlainDir(AttributesOrSkip(Path.Join(child, ".git"))))
         {
@@ -255,8 +258,10 @@ public static class Discoverer
         catch (GitException error)
         {
             Trace.TraceWarning($"skipping repo {child}: {error.Message}");
+            errors.Add(new DiscoveryError(child, child, $"git worktree list failed: {error.Message}"));
             return;
         }
+        errors.AddRange(LeftOutWorktrees(child, worktrees));
         string claudeDir = Path.Join(child, ".claude");
         string claude = Path.Join(claudeDir, "worktrees");
         if (IsPlainDir(AttributesOrSkip(claudeDir)) && IsPlainDir(AttributesOrSkip(claude)))
@@ -264,6 +269,100 @@ public static class Discoverer
             containers.Add(claude);
         }
         repos.Add(new Repo(child, worktrees));
+    }
+
+    /// <summary>
+    /// The problems in the admin folders under the repo's <c>.git\worktrees</c>: one whose <c>gitdir</c> file is missing, unreadable
+    /// or empty, or one that names a worktree git's list does not hold; either way git leaves that worktree out of its list, so its
+    /// folder would otherwise look like an orphan.
+    /// </summary>
+    /// <param name="repo">The repo whose worktrees git listed.</param>
+    /// <param name="listed">The records git returned, the main worktree first.</param>
+    /// <returns>One error per problem, naming the <c>gitdir</c> file or the <c>worktrees</c> folder.</returns>
+    internal static List<DiscoveryError> LeftOutWorktrees(string repo, IReadOnlyList<WorktreeRecord> listed)
+    {
+        var errors = new List<DiscoveryError>();
+        string worktrees = Path.Join(repo, ".git", "worktrees");
+        if (!IsPlainDir(AttributesOrSkip(worktrees)))
+        {
+            return errors;
+        }
+        List<FileSystemInfo> entries;
+        try
+        {
+            entries = ReadChildren(worktrees);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            Trace.WriteLine($"cannot read {worktrees}: {error.Message}");
+            errors.Add(new DiscoveryError(repo, worktrees, $"cannot read {worktrees}: {error.Message}"));
+            return errors;
+        }
+        var listedKeys = new HashSet<string>(listed.Skip(1).Select(record => PathKey(record.Path)), StringComparer.Ordinal);
+        foreach (FileSystemInfo entry in entries)
+        {
+            if (IsLink(entry) || !entry.Attributes.HasFlag(FileAttributes.Directory))
+            {
+                continue;
+            }
+            string gitdir = Path.Join(entry.FullName, "gitdir");
+            if (LeftOutMessage(entry.FullName, gitdir, listedKeys) is { } message)
+            {
+                errors.Add(new DiscoveryError(repo, gitdir, message));
+            }
+        }
+        return errors;
+    }
+
+    /// <summary>Why git's list leaves out the worktree an admin folder describes, or <see langword="null"/> when it listed it.</summary>
+    /// <param name="adminFolder">The admin folder, <c>{repo}\.git\worktrees\{id}</c>.</param>
+    /// <param name="gitdir">Its <c>gitdir</c> file.</param>
+    /// <param name="listedKeys">The path keys of the linked worktrees git's list holds.</param>
+    /// <returns>The message for the result's errors, or <see langword="null"/> when the worktree is listed.</returns>
+    private static string? LeftOutMessage(string adminFolder, string gitdir, HashSet<string> listedKeys)
+    {
+        string text;
+        try
+        {
+            text = File.ReadAllText(gitdir).Trim();
+        }
+        catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return "git's worktree list leaves this worktree out: its gitdir file is missing; "
+                + "if the worktree folder is gone, git worktree prune clears the record";
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            return $"git's worktree list leaves this worktree out: cannot read its gitdir file: {error.Message}";
+        }
+        if (text.Length == 0)
+        {
+            return "git's worktree list leaves this worktree out: its gitdir file is empty";
+        }
+        string worktree;
+        try
+        {
+            worktree = WorktreeGitdirNames(adminFolder, text);
+        }
+        catch (Exception error) when (error is ArgumentException or NotSupportedException or IOException)
+        {
+            return $"git's worktree list leaves this worktree out: cannot read its gitdir file: {error.Message}";
+        }
+        return listedKeys.Contains(PathKey(worktree)) ? null : $"git's worktree list leaves out the worktree its gitdir file names: {worktree}";
+    }
+
+    /// <summary>
+    /// The worktree a <c>gitdir</c> file names: its content without the worktree's <c>.git</c> file, resolved against the admin
+    /// folder when git wrote it relative, as it does with <c>worktree.useRelativePaths</c>.
+    /// </summary>
+    /// <param name="adminFolder">The admin folder a relative content is against.</param>
+    /// <param name="text">The trimmed content of the <c>gitdir</c> file.</param>
+    /// <returns>The worktree folder's path.</returns>
+    private static string WorktreeGitdirNames(string adminFolder, string text)
+    {
+        string rest = text.EndsWith(".git", StringComparison.OrdinalIgnoreCase) ? text[..^".git".Length] : text;
+        string trimmed = rest.TrimEnd(Separator, '/');
+        return Path.IsPathFullyQualified(trimmed) ? trimmed : Path.GetFullPath(Path.Join(adminFolder, trimmed));
     }
 
     /// <summary>Every proper ancestor key of each known key, so one lookup tells whether a registered worktree lies below a folder.</summary>

@@ -95,6 +95,37 @@ public sealed class ReportTableTests
     public void EmptyReportSaysNothingWasFound() =>
         Assert.Equal("No worktrees or orphan folders found under D:\\.\n", ReportTable.Render(ReportOf(), Now));
 
+    /// <summary>A discovery error is one trailing line after the table, a <c>\r\n</c> in its message turned into <c>; </c>.</summary>
+    [Fact]
+    public void RenderTableAppendsDiscoveryErrors()
+    {
+        ScanReport report = ReportOf(Orphan(@"yaat.wt\stray", OrphanKind.Folder, Size(0, Now))) with
+        {
+            DiscoveryErrors =
+            [
+                new DiscoveryError(Under("yaat"), Under(@"yaat\.git\worktrees\feat\gitdir"), "git worktree list failed\r\nbad config"),
+            ],
+        };
+
+        Assert.EndsWith(
+            "discovery error: yaat\\.git\\worktrees\\feat\\gitdir: git worktree list failed; bad config\n",
+            ReportTable.Render(report, Now),
+            StringComparison.Ordinal
+        );
+    }
+
+    /// <summary>A discovery error follows the no-candidates message, a <c>\n</c> in its message turned into <c>; </c>.</summary>
+    [Fact]
+    public void RenderEmptyReportAppendsDiscoveryErrors()
+    {
+        ScanReport report = ReportOf() with { DiscoveryErrors = [new DiscoveryError(Under("yaat"), Under("yaat"), "line one\nline two")] };
+
+        Assert.Equal(
+            "No worktrees or orphan folders found under D:\\.\ndiscovery error: yaat: line one; line two\n",
+            ReportTable.Render(report, Now)
+        );
+    }
+
     /// <summary>A branch longer than 28 characters keeps its first 27 behind a <c>…</c>.</summary>
     [Fact]
     public void LongBranchIsTruncatedAtTwentyEightCharacters()

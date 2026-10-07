@@ -153,6 +153,27 @@ public sealed class ReportJsonTests
         Assert.Equal(GoldenDocument.ReplaceLineEndings("\n") + "\n", Encoding.UTF8.GetString(bytes));
     }
 
+    /// <summary>A discovery error is written as its repo, path and message, between <c>repos</c> and <c>candidates</c>.</summary>
+    [Fact]
+    public void WriteJsonCarriesDiscoveryErrors()
+    {
+        ScanReport report = ReportOf() with
+        {
+            DiscoveryErrors = [new DiscoveryError(@"D:\yaat", @"D:\yaat\.git\worktrees\feat\gitdir", "git worktree list failed: bad config")],
+        };
+
+        using var document = JsonDocument.Parse(Json(report));
+
+        string[] topLevel = [.. document.RootElement.EnumerateObject().Select(property => property.Name)];
+        Assert.Equal(["root", "repos", "discovery_errors", "candidates"], topLevel);
+        JsonElement error = Assert.Single(document.RootElement.GetProperty("discovery_errors").EnumerateArray());
+        string[] keys = [.. error.EnumerateObject().Select(property => property.Name)];
+        Assert.Equal(["repo", "path", "message"], keys);
+        Assert.Equal(@"D:\yaat", error.GetProperty("repo").GetString());
+        Assert.Equal(@"D:\yaat\.git\worktrees\feat\gitdir", error.GetProperty("path").GetString());
+        Assert.Equal("git worktree list failed: bad config", error.GetProperty("message").GetString());
+    }
+
     private const string GoldenDocument = """
         {
           "root": "D:\\",
@@ -165,6 +186,7 @@ public sealed class ReportJsonTests
               }
             }
           ],
+          "discovery_errors": [],
           "candidates": [
             {
               "kind": "registered",

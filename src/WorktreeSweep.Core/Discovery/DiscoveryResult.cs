@@ -5,7 +5,17 @@ namespace WorktreeSweep.Discovery;
 /// <param name="Repos">Repos at depth 1 of the root.</param>
 /// <param name="Containers">Container dirs that were walked for orphans.</param>
 /// <param name="Orphans">Orphans found in the container dirs.</param>
-public sealed record DiscoveryResult(string Root, IReadOnlyList<Repo> Repos, IReadOnlyList<string> Containers, IReadOnlyList<Orphan> Orphans)
+/// <param name="Errors">
+/// The problems discovery met while listing the repos' worktrees, one per failed list, unreadable folder or left-out worktree; see
+/// <see cref="DiscoveryError"/>.
+/// </param>
+public sealed record DiscoveryResult(
+    string Root,
+    IReadOnlyList<Repo> Repos,
+    IReadOnlyList<string> Containers,
+    IReadOnlyList<Orphan> Orphans,
+    IReadOnlyList<DiscoveryError> Errors
+)
 {
     /// <summary>Gets every registered worktree that is a candidate, with its repo; a repo's main worktree never is.</summary>
     public IEnumerable<(Repo Repo, WorktreeRecord Record)> Registered =>

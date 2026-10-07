@@ -93,6 +93,7 @@ internal static class ReportSamples
         {
             Root = Root,
             Repos = [],
+            DiscoveryErrors = [],
             Candidates = candidates,
         };
 }
