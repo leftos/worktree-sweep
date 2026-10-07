@@ -7,15 +7,17 @@
 - [x] WTS-7 C1: scaffold the C# solution, conventions and git runner
 - [x] WTS-4 Rewrite worktree-sweep in C# with a WPF window
 - [x] WTS-8 C2: port discovery to C#
-- [ ] WTS-9 C3: port the worktree signals to C#
-- [ ] WTS-23 Time out a git child that never exits, and disable git's prompts
-- [ ] WTS-10 C4: port the report, the --list table and a redesigned scan JSON
-- [ ] WTS-11 C5: port the scan and the command line (--list, --json)
+- [x] WTS-9 C3: port the worktree signals to C#
+- [x] WTS-23 Time out a git child that never exits, and disable git's prompts
+- [x] WTS-10 C4: port the report, the --list table and a redesigned scan JSON
+- [x] WTS-11 C5: port the scan and the command line (--list, --json)
+- [ ] WTS-30 Drop and report a dangling origin/HEAD default branch
+- [ ] WTS-29 Skip a stalled worktree's remaining git calls after one times out
 - [ ] WTS-24 Match registered worktrees across path spellings (subst drive, 8.3 name, device prefix)
-- [ ] WTS-12 C6: port the process primitives
-- [ ] WTS-13 C7: port the holder finder's process census
+- [x] WTS-12 C6: port the process primitives
+- [x] WTS-13 C7: port the holder finder's process census
 - [ ] WTS-14 C8: port the holder finder's handle naming
-- [ ] WTS-15 C9: port recycling through IFileOperation
+- [/] WTS-15 C9: port recycling through IFileOperation
 - [ ] WTS-16 C10: port the link-safe permanent delete
 - [ ] WTS-17 C11: port the plan, the two-pass sweep and Review
 - [ ] WTS-18 C12: port the unlock flow with numbered line prompts
@@ -23,6 +25,9 @@
 - [ ] WTS-20 C14: build the window's view models
 - [ ] WTS-21 C15: build the WPF window and wire the interactive mode
 - [ ] WTS-22 C16: cut over to the C# tool and delete the Rust crate
+- [x] WTS-25 Report a failed merge-tree as a signal error instead of 'not contained'
+- [x] WTS-27 Create one merge-tree scratch folder per worktree, not per default ref
+- [ ] WTS-28 Surface a repo whose worktree list fails, and fix the discovery test flake
 
 ## No project
 
