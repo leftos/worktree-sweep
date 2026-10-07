@@ -242,23 +242,67 @@ public static class AgentRemover
     /// <returns><see langword="true"/> when the folder is gone and the removal should finish as removed.</returns>
     private static bool GoneAfterTimeout(RegisteredCandidate candidate, Draft draft)
     {
-        if (!Path.Exists(candidate.Path))
+        if (FolderIsGone(candidate.Path))
         {
             draft.Notes.Add(MovedAfterTimeoutNote);
             return true;
         }
+        string? admin = Discoverer.ReadGitdirFile(candidate.Path);
         int notesBeforeRelease = draft.Notes.Count;
         Release(draft, candidate, Reason.ShellTimeout);
-        if (!Path.Exists(candidate.Path))
+        if (!FolderIsGone(candidate.Path))
         {
-            draft.Notes.RemoveRange(notesBeforeRelease, draft.Notes.Count - notesBeforeRelease);
-            draft.Status = RemoveStatus.Removed;
-            draft.Reason = null;
-            draft.Released = null;
-            draft.Notes.Add(MovedAfterTimeoutNote);
+            return false;
+        }
+        draft.Notes.RemoveRange(notesBeforeRelease, draft.Notes.Count - notesBeforeRelease);
+        draft.Released = null;
+        if (admin is not null)
+        {
+            DeleteReleasedMarker(admin, draft);
+        }
+        draft.Notes.Add(MovedAfterTimeoutNote);
+        return true;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="path"/> is gone. Only a not-found failure means gone: a path that exists but cannot be read is still
+    /// there, since finishing such a worktree as removed would be wrong.
+    /// </summary>
+    /// <param name="path">The path to check.</param>
+    /// <returns><see langword="true"/> when the path does not exist.</returns>
+    private static bool FolderIsGone(string path)
+    {
+        try
+        {
+            _ = File.GetAttributes(path);
+            return false;
+        }
+        catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException)
+        {
             return true;
         }
-        return false;
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            Trace.TraceWarning(
+                string.Create(CultureInfo.InvariantCulture, $"cannot tell whether {path} exists, treating it as still there: {error.Message}")
+            );
+            return false;
+        }
+    }
+
+    /// <summary>Deletes the released marker <see cref="Release"/> wrote whose worktree turned out to be gone; a failure is a note.</summary>
+    /// <param name="adminDir">The worktree's admin dir, where the marker lives.</param>
+    /// <param name="draft">The report as the run builds it.</param>
+    private static void DeleteReleasedMarker(string adminDir, Draft draft)
+    {
+        try
+        {
+            File.Delete(Path.Join(adminDir, ReleasedMarker.FileName));
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            draft.Notes.Add($"could not delete the released marker: {error.Message}");
+        }
     }
 
     /// <summary>
