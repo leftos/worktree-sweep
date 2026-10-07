@@ -15,6 +15,7 @@ The rule that shapes it: the scan writes nothing, and the parts of the interacti
 | Change what removing a pick loses, or the Review questions | `src/pick.rs` (`loss_text`) → `src/tui/review.rs` → `src/remove.rs` (`Plan`, `Decision`) | [`plans/csharp-rewrite.md`](plans/csharp-rewrite.md) |
 | Change how a pick is removed (recycle, permanent delete, prune, branch) | `src/remove.rs` → `src/recycle.rs` → `tests/integration/removal.rs` | [`design.md`](design.md) |
 | Change the unlock flow (elevated `handle.exe`) | `src/unlock.rs` → `src/handle_csv.rs` → `src/main.rs` (`Command::Unlock`) | [`design.md`](design.md) |
+| Change the C# unlock flow (handle CSV, sudo, prompts) | `src/unlock.rs`, `src/handle_csv.rs` → `src/WorktreeSweep.Core/Unlock/` (`HandleCsv`, `SudoConfig`, `SudoCommand`, `LinePrompt`, `ChoicePrompt`) → `tests/WorktreeSweep.Tests/HandleCsvTests.cs`, `SudoConfigTests.cs`, `SudoCommandTests.cs`, `LinePromptTests.cs` | [`plans/csharp-rewrite.md`](plans/csharp-rewrite.md) ("Unlock step") |
 | Change how lock holders are found or which ones may be stopped | `src/holders.rs` (`find_holders`, `stoppable`) → `src/agent.rs` → `tests/integration/holders.rs` | [`agent-path.md`](agent-path.md) |
 | Change the agent `remove` command (statuses, refusals, exit codes, marker) | `src/agent.rs` → `src/lib.rs` (`resolve_one`, `RefusalReason`) → `src/main.rs` (`Command::Remove`) → `tests/integration/agent_remove.rs`, `released.rs` | [`agent-path.md`](agent-path.md) |
 | Change the C# table, scan JSON or released-marker reader | `docs/plans/csharp-rewrite.md` (Rulings, "Scan JSON (C4)") → `src/WorktreeSweep.Core/Report/` (`ReportTable`, `ReportJson` and `ReportDocument`, `ReleasedMarker`) → `tests/WorktreeSweep.Tests/ReportTableTests.cs`, `ReportJsonTests.cs`, `ReleasedMarkerTests.cs` | [`plans/csharp-rewrite.md`](plans/csharp-rewrite.md) |
@@ -66,6 +67,8 @@ The C# rewrite (`WorktreeSweep.slnx`) grows beside the crate, one module at a ti
 
   `Processes/` ports the process helpers of `src/unlock.rs` through CsWin32 (`NativeMethods.txt`): the ToolHelp `ProcessTable` with its parent chain and exclusions, `LockedPaths` matching, and `ProcessStopper`, which re-checks a process's image name through the handle it opened before terminating it, so a reused PID is never stopped.
 
+  `Unlock/` ports the pure half of `src/unlock.rs` and `src/handle_csv.rs`: `HandleCsv` parses `handle.exe -v` output and groups it into lockers, `SudoConfig` reads the `sudo config` mode, `SudoCommand` builds the elevated and the manual command lines, and `LinePrompt` asks the numbered line prompts that replace `dialoguer` (an empty line takes the default, three invalid answers take the safe one, end of input means no).
+
   `Holders/` ports the census half of `src/holders.rs`: `HolderFinder.Find` lists processes whose current folder is inside a folder (PEB reads for 64-bit and WOW64 processes), `StopAllowlist` decides which may be stopped, and the open-handle half fills the internal `HandleScanner` seam.
 
   In that half, `OpenHandles` lists each candidate's File handles by the File type index, names them through `HandleNaming`'s abandonable workers (200 ms per lookup, a hung one cancelled), and asks the file system which processes use the folder.
@@ -100,7 +103,7 @@ Rules the docs or code state: the scan writes nothing and every git call clears 
 
   `RecycleRetryTests`, `RecycleDecisionTests` and `BinCapacityReaderTests` pin `Recycle/` without the Shell or the real registry; `ShellRecyclerTests` drive the real Shell on a thread with a timeout, and its `RecycleMovesFolderToRecycleBin` is Explicit, run only with the owner's go-ahead (`--explicit on`).
 
-  `PermanentDeleteTests` pin `Removal/PermanentDelete` on fixtures with junctions, read-only entries, a held file and a folder whose listing is denied. Tests that set process environment variables sit in the non-parallel "process environment" collection.
+  `PermanentDeleteTests` pin `Removal/PermanentDelete` on fixtures with junctions, read-only entries, a held file and a folder whose listing is denied. `HandleCsvTests`, `SudoConfigTests`, `SudoCommandTests` and `LinePromptTests` pin `Unlock/` without running `sudo` or `handle.exe`; the CSV tests read `tests/fixtures/handle*.csv`, which the test project copies to its output. Tests that set process environment variables sit in the non-parallel "process environment" collection.
 - Never run the removing mode against a real folder from an agent session; use `--list` / `--json` or `tempfile` fixtures (`CLAUDE.md`).
 
 ## Deep docs
