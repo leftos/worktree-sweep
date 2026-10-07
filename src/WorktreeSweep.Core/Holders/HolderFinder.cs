@@ -171,7 +171,9 @@ public static class HolderFinder
             ? path[Verbatim.Length..]
             : path;
 
-    private static ulong? StartedAt(int pid)
+    /// <summary>The process's creation time, or <see langword="null"/> when it cannot be opened or read.</summary>
+    /// <param name="pid">The process.</param>
+    internal static ulong? StartedAt(int pid)
     {
         using SafeFileHandle? process = ProcessQuery.Open(pid, PROCESS_ACCESS_RIGHTS.PROCESS_QUERY_LIMITED_INFORMATION);
         return process is null ? null : ProcessQuery.CreationTime(process);
