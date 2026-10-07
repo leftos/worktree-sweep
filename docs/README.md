@@ -30,6 +30,8 @@ Start here. Plans live in [plans/MAIN.md](./plans/MAIN.md).
 - **Share-none**: a file opened with no sharing (`FileShare.None`), so no other process can open, rename or delete it while it is held.
 - **Lock kind**: how a process holds a folder (its current directory, an open file, a folder handle, a running exe or loaded DLL). Some kinds block a recycle and others only a permanent delete; the table is in [agent-path.md](./agent-path.md).
 - **Released**: a worktree an agent asked to remove but couldn't, marked so the next interactive sweep lists it first and pre-picks it.
+- **Plan** (removal): what will happen to one pick once Review is answered: an action to run (remove the link, prune the registration, recycle, or delete permanently) or a reason to skip it.
+- **Decision**: a pick with its plan and its branch choice, the unit the sweep works through.
 - **Review**: the questions asked after picking and before anything is removed: per pick, what it would lose, a permanent delete, its branch; then one final confirmation.
 - **Caller**: the shell that started worktree-sweep; it is flagged as a locker, never stopped by default.
 - **Feature marker**: `branch: feat/<name>` in a Linear project's content; every item under it lands on the `feat/<name>` branch instead of `main` (user-level `nextup` §3, "Feature branches").
