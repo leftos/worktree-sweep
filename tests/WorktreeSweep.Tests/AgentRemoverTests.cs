@@ -140,7 +140,9 @@ public sealed class AgentRemoverTests
             Thread.Sleep(TimeSpan.FromSeconds(5));
         }
 
-        RemoveReport report = AgentRemover.Run(worktree, Plain, Seams(MoveThenLinger, NoHolders, NeverStop));
+        AgentSeams seams = Seams(MoveThenLinger, NoHolders, NeverStop) with { RecycleTimeout = TimeSpan.FromSeconds(1) };
+
+        RemoveReport report = AgentRemover.Run(worktree, Plain, seams);
 
         Assert.Equal(RemoveStatus.Removed, report.Status);
         Assert.Null(report.Reason);
