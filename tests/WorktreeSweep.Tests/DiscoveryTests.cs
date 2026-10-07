@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using WorktreeSweep.Discovery;
 using WorktreeSweep.Signals;
 
@@ -114,6 +115,183 @@ public sealed class DiscoveryTests
         WorktreeRecord record = RegisteredAt(found, wt);
         Assert.NotNull(record.Prunable);
         Assert.Empty(found.Orphans);
+    }
+
+    /// <summary>
+    /// A pin: a root given by its 8.3 short name still matches the worktree git registered under the long name. It held before paths
+    /// were resolved too, because <see cref="Path.GetFullPath(string)"/> already expands a short root.
+    /// </summary>
+    [Fact]
+    public void RegisteredWorktreeIsNotAnOrphanWhenRootIsShortNameSpelled()
+    {
+        using var fx = new Fixture();
+        string repo = fx.Repo("repo");
+        string wt = fx.PathTo("repo.wt/feat");
+        Fixture.AddWorktree(repo, wt, "feat");
+        string shortRoot = NativeMethods.ShortPath(fx.Root);
+        Assert.SkipWhen(shortRoot.Equals(fx.Root, StringComparison.OrdinalIgnoreCase), $"{fx.Root} has no 8.3 name");
+
+        DiscoveryResult found = Discoverer.Discover(shortRoot);
+
+        Assert.Empty(found.Orphans);
+        _ = RegisteredAt(found, wt);
+    }
+
+    /// <summary>A root given with a <c>\\?\</c> prefix still matches the worktree git registered without one.</summary>
+    [Fact]
+    public void RegisteredWorktreeIsNotAnOrphanWhenRootHasVerbatimPrefix()
+    {
+        using var fx = new Fixture();
+        string repo = fx.Repo("repo");
+        string wt = fx.PathTo("repo.wt/feat");
+        Fixture.AddWorktree(repo, wt, "feat");
+
+        DiscoveryResult found = Discoverer.Discover(@"\\?\" + fx.Root);
+
+        Assert.Empty(found.Orphans);
+        _ = RegisteredAt(found, wt);
+    }
+
+    /// <summary>A junction in a container pointing at a registered worktree is a link orphan: it never matches through its target.</summary>
+    [Fact]
+    public void JunctionToARegisteredWorktreeStaysALinkOrphan()
+    {
+        using var fx = new Fixture();
+        string repo = fx.Repo("repo");
+        string wt = fx.PathTo("repo.wt/feat");
+        Fixture.AddWorktree(repo, wt, "feat");
+        string link = fx.PathTo("repo.wt/link");
+        Assert.SkipUnless(Fixture.MakeJunction(link, wt), "mklink /J is unavailable");
+
+        DiscoveryResult found = Discoverer.Discover(fx.Root);
+
+        Orphan orphan = Assert.Single(found.Orphans);
+        Assert.True(Fixture.SamePath(orphan.Path, link), orphan.ToString());
+        Assert.Equal(OrphanKind.Link, orphan.Kind);
+        _ = RegisteredAt(found, wt);
+    }
+
+    /// <summary>
+    /// A worktree registered at a path that is now a junction (its folder moved elsewhere and linked back) stays matched: the
+    /// registered path is not resolved through its own last segment, so the walk skips the junction instead of calling it an orphan.
+    /// </summary>
+    [Fact]
+    public void RegisteredWorktreeThatIsAJunctionStaysRegistered()
+    {
+        using var fx = new Fixture();
+        string repo = fx.Repo("repo");
+        string wt = fx.PathTo("repo.wt/feat");
+        Fixture.AddWorktree(repo, wt, "feat");
+        string moved = fx.PathTo("moved");
+        Directory.Move(wt, moved);
+        Assert.SkipUnless(Fixture.MakeJunction(wt, moved), "mklink /J is unavailable");
+
+        DiscoveryResult found = Discoverer.Discover(fx.Root);
+
+        Assert.Empty(found.Orphans);
+        _ = RegisteredAt(found, wt);
+    }
+
+    /// <summary>
+    /// When the root resolves to another spelling (as a subst drive does) but a record's parent cannot be resolved, the record still
+    /// matches the walked folder by its spelling as given: a failed resolution never makes an orphan.
+    /// </summary>
+    [Fact]
+    public void RecordWhoseParentCannotBeResolvedIsStillMatched()
+    {
+        using var fx = new Fixture();
+        string repo = fx.Repo("repo");
+        string wt = fx.PathTo("repo.wt/feat");
+        Fixture.AddWorktree(repo, wt, "feat");
+        const string RootElsewhere = @"Q:\as-if-substed";
+
+        DiscoveryResult found = Discoverer.Discover(fx.Root, path => Fixture.SamePath(path, fx.Root) ? RootElsewhere : Path.GetFullPath(path));
+
+        Assert.Empty(found.Orphans);
+        _ = RegisteredAt(found, wt);
+    }
+
+    /// <summary>
+    /// A pin: a worktree added through its 8.3 short name matches the walked folder's long name. Git records the long name, so this
+    /// held before the registered name was expanded too.
+    /// </summary>
+    [Fact]
+    public void WorktreeRegisteredByItsShortNameIsNotAnOrphan()
+    {
+        using var fx = new Fixture();
+        string repo = fx.Repo("repo");
+        string wt = fx.PathTo("repo.wt/feature-branch");
+        Directory.CreateDirectory(wt);
+        string shortWt = NativeMethods.ShortPath(wt);
+        Assert.SkipWhen(Path.GetFileName(shortWt).Equals("feature-branch", StringComparison.OrdinalIgnoreCase), $"{wt} has no 8.3 name");
+        Fixture.AddWorktree(repo, shortWt, "feat");
+
+        DiscoveryResult found = Discoverer.Discover(fx.Root);
+
+        Assert.Empty(found.Orphans);
+        _ = RegisteredAt(found, wt);
+    }
+
+    /// <summary>
+    /// A registration whose folder is gone, scanned through a short-named root, stays prunable and leaves no orphan; its path resolves
+    /// to the resolved nearest existing folder plus the missing segments.
+    /// </summary>
+    [Fact]
+    public void PrunableRegistrationWithMissingFolderIsNotAnOrphan()
+    {
+        using var fx = new Fixture();
+        string repo = fx.Repo("repo");
+        string wt = fx.PathTo("repo.wt/gone");
+        Fixture.AddWorktree(repo, wt, "gone");
+        Directory.Delete(wt, recursive: true);
+        string shortRoot = NativeMethods.ShortPath(fx.Root);
+        Assert.SkipWhen(shortRoot.Equals(fx.Root, StringComparison.OrdinalIgnoreCase), $"{fx.Root} has no 8.3 name");
+
+        DiscoveryResult found = Discoverer.Discover(shortRoot);
+
+        Assert.NotNull(RegisteredAt(found, wt).Prunable);
+        Assert.Empty(found.Orphans);
+        string ancestor = Discoverer.StripVerbatim(PathResolver.FinalPath(fx.PathTo("repo.wt")));
+        Assert.Equal(Path.Join(ancestor, "gone", "deeper"), PathResolver.Resolve(Path.Join(shortRoot, "repo.wt", "gone", "deeper")));
+    }
+
+    /// <summary>An existing folder resolves to its own path as the system names it, case included, without a <c>\\?\</c> prefix.</summary>
+    [Fact]
+    public void ResolveGivesAnExistingFolderAsTheSystemNamesIt()
+    {
+        using var fx = new Fixture();
+        string dir = fx.PathTo("Some Dir");
+        Directory.CreateDirectory(dir);
+
+        string resolved = PathResolver.Resolve(dir.ToUpperInvariant());
+
+        Assert.Equal(dir, resolved, ignoreCase: true);
+        Assert.EndsWith(@"\Some Dir", resolved, StringComparison.Ordinal);
+        Assert.DoesNotContain(@"\\?\", resolved, StringComparison.Ordinal);
+    }
+
+    /// <summary>A <c>\\?\</c>-prefixed spelling resolves to the same path as the plain one.</summary>
+    [Fact]
+    public void ResolveRemovesTheVerbatimPrefix()
+    {
+        using var fx = new Fixture();
+        string dir = fx.PathTo("dir");
+        Directory.CreateDirectory(dir);
+
+        Assert.Equal(PathResolver.Resolve(dir), PathResolver.Resolve(@"\\?\" + dir));
+    }
+
+    /// <summary>A missing path resolves its nearest existing folder and keeps the missing segments as spelled.</summary>
+    [Fact]
+    public void ResolveKeepsAMissingPathsTail()
+    {
+        using var fx = new Fixture();
+        string dir = fx.PathTo("dir");
+        Directory.CreateDirectory(dir);
+
+        string resolved = PathResolver.Resolve(Path.Join(dir, "Missing", "deeper"));
+
+        Assert.Equal(Path.Join(PathResolver.Resolve(dir), "Missing", "deeper"), resolved);
     }
 
     /// <summary>A repo's <c>.claude\worktrees</c> folder is a container, and an unregistered folder in it an orphan.</summary>
@@ -375,4 +553,57 @@ public sealed class DiscoveryTests
 
     private static WorktreeRecord RegisteredAt(DiscoveryResult found, string path) =>
         Assert.Single(found.Registered, pair => Fixture.SamePath(pair.Record.Path, path)).Record;
+}
+
+/// <summary>
+/// What path resolution writes to <see cref="Trace"/>. The test adds a listener to the process-wide trace
+/// listeners, so it runs in the collection no other test runs beside.
+/// </summary>
+[Collection(ProcessEnvironment.Name)]
+public sealed class PathResolverTraceTests
+{
+    /// <summary>A path on a drive letter nothing is mapped to is returned made absolute, as spelled, with a trace warning.</summary>
+    [Fact]
+    public void UnresolvablePathIsComparedAsSpelledWithAWarning()
+    {
+        HashSet<char> mapped = [.. DriveInfo.GetDrives().Select(drive => char.ToUpperInvariant(drive.Name[0]))];
+        char[] free = [.. "QRSTUVWXYZ".Where(letter => !mapped.Contains(letter))];
+        Assert.SkipWhen(free.Length == 0, "every drive letter from Q to Z is mapped");
+        string path = $@"{free[0]}:\nothing\here";
+
+        (string resolved, string trace) = ResolveTraced(path);
+
+        Assert.Equal(Path.GetFullPath(path), resolved);
+        Assert.Contains($"cannot resolve {path}: ", trace, StringComparison.Ordinal);
+        Assert.Contains("; comparing it as spelled", trace, StringComparison.Ordinal);
+    }
+
+    /// <summary>An empty path, which cannot be made absolute, is returned as given with a trace warning instead of throwing.</summary>
+    [Fact]
+    public void EmptyPathIsComparedAsSpelledWithAWarning()
+    {
+        (string resolved, string trace) = ResolveTraced("");
+
+        Assert.Equal("", resolved);
+        Assert.Contains("cannot resolve : ", trace, StringComparison.Ordinal);
+        Assert.Contains("; comparing it as spelled", trace, StringComparison.Ordinal);
+    }
+
+    private static (string Resolved, string Trace) ResolveTraced(string path)
+    {
+        using var text = new StringWriter();
+        using var listener = new TextWriterTraceListener(text);
+        _ = Trace.Listeners.Add(listener);
+        string resolved;
+        try
+        {
+            resolved = PathResolver.Resolve(path);
+        }
+        finally
+        {
+            Trace.Listeners.Remove(listener);
+        }
+        listener.Flush();
+        return (resolved, text.ToString());
+    }
 }
