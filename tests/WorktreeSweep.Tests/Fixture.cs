@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using WorktreeSweep.Discovery;
 using WorktreeSweep.Git;
+using WorktreeSweep.Signals;
 
 namespace WorktreeSweep.Tests;
 
@@ -69,6 +70,33 @@ public sealed class Fixture : IDisposable
     /// <param name="path">Where the worktree goes.</param>
     /// <param name="branch">The new branch's name.</param>
     public static void AddWorktree(string repo, string path, string branch) => Git(repo, ["worktree", "add", "-q", "-b", branch, path]);
+
+    /// <summary>
+    /// Creates a bare repo at <c>{root}/origin.git</c> on <c>main</c> and adds it to <paramref name="repo"/> as its <c>origin</c>.
+    /// </summary>
+    /// <param name="repo">The repo that gets the remote.</param>
+    /// <returns>The bare repo's path.</returns>
+    public string Origin(string repo)
+    {
+        string origin = PathTo("origin.git");
+        Git(Root, ["init", "-q", "--bare", "-b", "main", origin]);
+        Git(repo, ["remote", "add", "origin", origin]);
+        return origin;
+    }
+
+    /// <summary>
+    /// Discovers the root and reads the signals of the registered worktree at <paramref name="path"/> against its repo's default
+    /// branches, as a scan does.
+    /// </summary>
+    /// <param name="path">The registered worktree.</param>
+    /// <returns>Its record and its signals.</returns>
+    public (WorktreeRecord Record, WorktreeSignals Signals) Registered(string path)
+    {
+        DiscoveryResult found = Discoverer.Discover(Root);
+        (Repo Repo, WorktreeRecord Record) pair = Assert.Single(found.Registered, candidate => SamePath(candidate.Record.Path, path));
+        DefaultBranches defaults = SignalReader.ReadDefaultBranches(pair.Repo.Path);
+        return (pair.Record, SignalReader.ReadWorktreeSignals(defaults, pair.Record));
+    }
 
     /// <summary>Makes a directory junction with <c>mklink /J</c>.</summary>
     /// <param name="link">The junction to create.</param>

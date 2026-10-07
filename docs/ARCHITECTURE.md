@@ -41,7 +41,7 @@ One crate, `worktree-sweep` (`Cargo.toml`), with a library and a binary. Modules
 
 The C# rewrite (`WorktreeSweep.slnx`) grows beside the crate, one module at a time:
 
-- **`WorktreeSweep.Core`** (`src/WorktreeSweep.Core/`): the class library the ports land in, never referencing WPF. `Git/GitRunner` runs `git` with the same rules as `src/git.rs` (`RepoLocalEnvVars` cleared, `GIT_OPTIONAL_LOCKS=0`, `core.fsmonitor=false`). `Discovery/Discoverer` ports `src/discover.rs`: repos, worktree records, containers and orphans. It never follows a link: a junctioned `.claude` is not a container, and a gitdir that is a dangling link reads as stale.
+- **`WorktreeSweep.Core`** (`src/WorktreeSweep.Core/`): the class library the ports land in, never referencing WPF. `Git/GitRunner` runs `git` with the same rules as `src/git.rs` (`RepoLocalEnvVars` cleared, `GIT_OPTIONAL_LOCKS=0`, `core.fsmonitor=false`). `Discovery/Discoverer` ports `src/discover.rs`: repos, worktree records, containers and orphans. It never follows a link: a junctioned `.claude` is not a container, and a gitdir that is a dangling link reads as stale. `Signals/SignalReader` ports `src/signals.rs`: merge state (best of the local and `origin` default branches, `merge-tree` into a `ScratchObjects` folder), dirty, upstream, last activity, size (never through a link) and `ParallelMap`.
 
 Rules the docs or code state: the scan writes nothing and every git call clears the repo-local env (`git::clear_repo_env`); junctions are links and are never sized, walked or deleted through; one elevation per run, for every locked pick together (see `.claude/skills/worktree-sweep-nextup/SKILL.md`, "Rulings every brief carries").
 
@@ -61,7 +61,7 @@ Rules the docs or code state: the scan writes nothing and every git call clears 
 - `src/tui/fixtures.rs`: candidates and reports for the TUI tests, built without git.
 - `tests/integration/` (one binary, `main.rs`, with real `git` in `tempfile` folders): `discovery`, `worktree_status`, `merge_state`, `size` pin the scan; `removal` pins `remove`; `holders` pins `find_holders`; `agent_remove` and `released` pin the agent path; `git_env` pins the git runner. Shared repo builders (`git`, `commit_file`, `add_worktree`, `make_junction`) live in `tests/integration/fixture.rs`.
 - `tests/fixtures/`: sample `handle.exe` CSV files.
-- `tests/WorktreeSweep.Tests/` (xUnit v3, the C# rewrite): `Fixture.cs` ports the Rust repo builders; `GitRunnerTests` and `GitEnvTests` pin the C# git runner; `DiscoveryTests` pins discovery on `Discoverer.Discover` (the Rust suite's eight tests, plus link and gitdir edge cases). Tests that set process environment variables sit in the non-parallel "process environment" collection.
+- `tests/WorktreeSweep.Tests/` (xUnit v3, the C# rewrite): `Fixture.cs` ports the Rust repo builders; `GitRunnerTests` and `GitEnvTests` pin the C# git runner; `DiscoveryTests` pins discovery on `Discoverer.Discover` (the Rust suite's eight tests, plus link and gitdir edge cases); `MergeStateTests`, `WorktreeStatusTests`, `SizeTests` and `ReflogTests` pin `SignalReader` through `Fixture.Registered`. Tests that set process environment variables sit in the non-parallel "process environment" collection.
 - Never run the removing mode against a real folder from an agent session; use `--list` / `--json` or `tempfile` fixtures (`CLAUDE.md`).
 
 ## Deep docs
