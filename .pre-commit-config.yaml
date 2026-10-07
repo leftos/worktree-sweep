@@ -20,6 +20,27 @@ repos:
         language: system
         types: [rust]
         pass_filenames: false
+      - id: dotnet-format-style
+        name: dotnet format style (info)
+        entry: pwsh tools/hooks/dotnet-format-wrapper.ps1 style
+        language: system
+        types: [c#]
+        require_serial: true
+        stages: [pre-commit]
+      - id: csharpier
+        name: dotnet csharpier format
+        entry: pwsh tools/hooks/csharpier-wrapper.ps1
+        language: system
+        types: [c#]
+        require_serial: true
+        stages: [pre-commit]
+      - id: dotnet-build
+        name: dotnet build (warnings as errors)
+        entry: dotnet build WorktreeSweep.slnx -c Release
+        language: system
+        files: '\.(cs|csproj|props|slnx)$'
+        pass_filenames: false
+        stages: [pre-commit]
       - id: agent-mail-guard
         name: agent-mail lease guard
         entry: pwsh -NoProfile -File tools/agent-mail-guard.ps1

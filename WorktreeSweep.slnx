@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/WorktreeSweep.Core/WorktreeSweep.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/WorktreeSweep.Tests/WorktreeSweep.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -40,12 +40,20 @@ linear: worktree-sweep
   - `cargo clippy --all-targets --all-features -- -D warnings`
   - `cargo test` (no prek hook runs it)
   - `cargo deny check` when `Cargo.toml` or `Cargo.lock` changed
+- C# gates (the rewrite, `docs/plans/csharp-rewrite.md`), each through `pwsh -NoProfile -File tools/gate.ps1 -Log .tmp/<name>.log -TimeoutSeconds 600 -Slot heavy -- <command>` from the repo root:
+  - `dotnet build WorktreeSweep.slnx -c Release` (warnings are errors)
+  - `dotnet test WorktreeSweep.slnx -c Release --no-build` (runs under Microsoft.Testing.Platform through the root `global.json`)
+  - `dotnet csharpier check .`
+  - `dotnet format style WorktreeSweep.slnx --verify-no-changes --severity info` and the same with `analyzers`
 - Needs the user: anything that runs elevated. `handle.exe` sees nothing unelevated, and a UAC prompt needs a person. Ask the user to run the command with `!`, quoting a Windows path in single quotes (`'D:\x\y'`): bash eats unquoted backslashes, and `handle.exe` matches only backslash paths.
 - Parent-side gate: `git status --short` in the repo.
 
 ## Traps
 
-- **A test that runs `git` inherits the hook environment.** Fixture helpers must go through `git::clear_repo_env`; a test that passes on its own and fails in `git commit` is this.
+- **A test that runs `git` inherits the hook environment.** Fixture helpers must go through `git::clear_repo_env` (C#: `GitRunner`, which clears `GitRunner.RepoLocalEnvVars`); a test that passes on its own and fails in `git commit` is this.
+- **C# tests that set process environment variables** go in the xUnit collection "process environment", which runs without parallelism; anywhere else they leak into concurrent git-backed tests.
+- **`dotnet test` refuses VSTest on the .NET 10 SDK** with xUnit v3 4.x: the root `global.json` sets the Microsoft.Testing.Platform runner. Never add `xunit.runner.visualstudio` or `Microsoft.NET.Test.Sdk` back.
+- **`prek run --all-files` sees only tracked files**, so a C# hook shows "(no files to check)" on a branch whose files are still untracked; run `prek run <hook> --files <path>` to exercise it.
 - **D:\ changes under you.** Other sessions add and remove worktrees there all the time; a brief never hard-codes counts from D:\, only paths that must or must not appear.
 - **Cargo's `did not finalize incremental compilation session directory … Access is denied`** is environmental and harmless.
 - **`dialoguer` needs a terminal**: interactive code sits at the edge; logic is tested through pure functions with explicit choices.
