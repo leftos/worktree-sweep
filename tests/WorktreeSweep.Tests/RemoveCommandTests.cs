@@ -1,9 +1,6 @@
-using System.Diagnostics;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using WorktreeSweep.Agent;
-using WorktreeSweep.Git;
 using WorktreeSweep.Report;
 
 namespace WorktreeSweep.Tests;
@@ -11,12 +8,8 @@ namespace WorktreeSweep.Tests;
 /// <summary>The built exe's <c>remove</c> subcommand: its report, its exit codes and what it leaves on disk.</summary>
 public sealed class RemoveCommandTests
 {
-    private const string LogVariable = "WORKTREE_SWEEP_LOG";
-
     // Each Shell recycle may take 30 s, and a locked run makes two of them plus a holder scan.
     private static readonly TimeSpan RunTimeout = TimeSpan.FromSeconds(120);
-
-    private static readonly string Exe = Path.Join(AppContext.BaseDirectory, "worktree-sweep.exe");
 
     /// <summary>Each status has its exit code: 0 removed, 5 released, 6 refused.</summary>
     [Fact]
@@ -70,9 +63,9 @@ public sealed class RemoveCommandTests
     {
         using var fx = new Fixture();
         (string repo, string worktree) = RepoWithWorktree(fx, @"x.wt\feat", "feat");
-        string script = $"& {ReadyChild.Quoted(Exe)} remove {ReadyChild.Quoted(worktree)} --json; exit $LASTEXITCODE";
+        string script = $"& {ReadyChild.Quoted(ExeRunner.Exe)} remove {ReadyChild.Quoted(worktree)} --json; exit $LASTEXITCODE";
 
-        Run run = await RunInAsync(worktree, "pwsh", "-NoProfile", "-NonInteractive", "-Command", script);
+        Run run = await ExeRunner.RunProgramAsync(worktree, "pwsh", RunTimeout, "-NoProfile", "-NonInteractive", "-Command", script);
 
         AssertExit(6, run);
         Assert.Equal("caller_holds", run.Text("reason"));
@@ -112,12 +105,12 @@ public sealed class RemoveCommandTests
         Assert.Contains(holder.Id, run.Pids("holders"));
         JsonNode released = run.Json["released"] ?? throw new InvalidOperationException($"no released record: {run.Stdout}");
         Assert.Equal("locked", released["reason"]?.GetValue<string>());
-        Assert.Contains(holder.Id, Pids(released["holders"]));
+        Assert.Contains(holder.Id, Run.Pids(released["holders"]));
         string markerPath = Path.Join(repo, ".git", "worktrees", "feat", ReleasedMarker.FileName);
         JsonNode marker = JsonNode.Parse(File.ReadAllText(markerPath)) ?? throw new InvalidOperationException($"{markerPath} is null");
         Assert.Equal("locked", marker["reason"]?.GetValue<string>());
         Assert.Equal(JsonValueKind.Number, marker["released_at"]?.GetValueKind());
-        Assert.Contains(holder.Id, Pids(marker["holders"]));
+        Assert.Contains(holder.Id, Run.Pids(marker["holders"]));
         Assert.True(File.Exists(Path.Join(worktree, "README.md")), "part of the worktree was recycled");
     }
 
@@ -198,7 +191,7 @@ public sealed class RemoveCommandTests
     {
         using var fx = new Fixture();
 
-        Run run = await RunInAsync(fx.Root, Exe, "remove", fx.PathTo(@"x.wt\feat"));
+        Run run = await ExeRunner.RunInAsync(fx.Root, RunTimeout, "remove", fx.PathTo(@"x.wt\feat"));
 
         Assert.Equal(2, run.Code);
         Assert.StartsWith("error: ", run.Stderr, StringComparison.Ordinal);
@@ -212,7 +205,7 @@ public sealed class RemoveCommandTests
     {
         using var fx = new Fixture();
 
-        Run run = await RunInAsync(fx.Root, Exe, "remove", "", "--json", "false");
+        Run run = await ExeRunner.RunInAsync(fx.Root, RunTimeout, "remove", "", "--json", "false");
 
         Assert.Equal(2, run.Code);
         Assert.StartsWith("error: ", run.Stderr, StringComparison.Ordinal);
@@ -244,9 +237,6 @@ public sealed class RemoveCommandTests
 
     private static bool BranchExists(string repo, string branch) => Fixture.Git(repo, ["branch", "--list", branch]).Length > 0;
 
-    private static List<int> Pids(JsonNode? items) =>
-        [.. (items?.AsArray() ?? []).Select(item => item?["pid"]?.GetValue<int>() ?? throw new InvalidOperationException($"no pid in {item}"))];
-
     private static void AssertExit(int expected, Run run)
     {
         if (run.Code != expected)
@@ -256,72 +246,6 @@ public sealed class RemoveCommandTests
     }
 
     /// <summary>Runs <c>remove PATH --json</c> in <paramref name="workingDirectory"/>.</summary>
-    private static Task<Run> RemoveAsync(string path, string workingDirectory) => RunInAsync(workingDirectory, Exe, "remove", path, "--json");
-
-    /// <summary>
-    /// Runs <paramref name="program"/> in <paramref name="workingDirectory"/> with the repo-local git variables and
-    /// <c>WORKTREE_SWEEP_LOG</c> cleared, killing it when it outlives <see cref="RunTimeout"/> or the test run is cancelled.
-    /// </summary>
-    private static async Task<Run> RunInAsync(string workingDirectory, string program, params string[] args)
-    {
-        var startInfo = new ProcessStartInfo(program)
-        {
-            WorkingDirectory = workingDirectory,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8,
-        };
-        foreach (string arg in args)
-        {
-            startInfo.ArgumentList.Add(arg);
-        }
-        GitRunner.ClearRepoEnv(startInfo);
-        startInfo.Environment.Remove(LogVariable);
-        using Process process = Process.Start(startInfo) ?? throw new InvalidOperationException($"{program} did not start");
-        process.StandardInput.Close();
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
-        timeout.CancelAfter(RunTimeout);
-        try
-        {
-            Task<string> stdout = process.StandardOutput.ReadToEndAsync(timeout.Token);
-            Task<string> stderr = process.StandardError.ReadToEndAsync(timeout.Token);
-            await process.WaitForExitAsync(timeout.Token);
-            return new Run(process.ExitCode, await stdout, await stderr);
-        }
-        catch (OperationCanceledException)
-        {
-            KillIfRunning(process, program);
-            if (TestContext.Current.CancellationToken.IsCancellationRequested)
-            {
-                throw;
-            }
-            throw new TimeoutException($"{program} {string.Join(' ', args)} did not exit within {RunTimeout}");
-        }
-    }
-
-    private static void KillIfRunning(Process process, string program)
-    {
-        try
-        {
-            process.Kill(entireProcessTree: true);
-        }
-        catch (InvalidOperationException error)
-        {
-            TestContext.Current.SendDiagnosticMessage($"{program} had already exited when it was to be killed: {error.Message}");
-        }
-    }
-
-    /// <summary>One run's exit code and output; <see cref="Json"/> parses standard output as the report.</summary>
-    private sealed record Run(int Code, string Stdout, string Stderr)
-    {
-        public JsonNode Json => JsonNode.Parse(Stdout) ?? throw new InvalidOperationException($"stdout is JSON null; stderr: {Stderr}");
-
-        public string? Text(string key) => Json[key]?.GetValue<string>();
-
-        public List<int> Pids(string key) => RemoveCommandTests.Pids(Json[key]);
-    }
+    private static Task<Run> RemoveAsync(string path, string workingDirectory) =>
+        ExeRunner.RunInAsync(workingDirectory, RunTimeout, "remove", path, "--json");
 }

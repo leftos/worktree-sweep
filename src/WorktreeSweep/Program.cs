@@ -1,4 +1,5 @@
 using System.CommandLine;
+using System.CommandLine.Help;
 using System.CommandLine.Parsing;
 using System.Diagnostics;
 using System.Globalization;
@@ -53,6 +54,9 @@ internal static class Program
         command.SetAction(parsed => Run(parsed.GetRequiredValue(root), parsed.GetValue(json), parsed.GetValue(list)));
         command.Subcommands.Add(UnlockCommand());
         command.Subcommands.Add(RemoveCommand());
+        // The help copies the root's ROOT argument into a subcommand's usage and Arguments section, so hide it while one runs.
+        HelpOption help = command.Options.OfType<HelpOption>().Single();
+        help.Action = new SubcommandHelpAction((HelpAction)help.Action!, root);
 
         ParseResult parsed = command.Parse(args);
         if (parsed.Errors.Count > 0)

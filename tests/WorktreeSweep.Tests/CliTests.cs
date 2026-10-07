@@ -1,8 +1,5 @@
-using System.Diagnostics;
-using System.Text;
 using System.Text.Json;
 using WorktreeSweep.Discovery;
-using WorktreeSweep.Git;
 using WorktreeSweep.Report;
 
 namespace WorktreeSweep.Tests;
@@ -14,8 +11,6 @@ public sealed class CliTests
 
     private static readonly TimeSpan RunTimeout = TimeSpan.FromSeconds(60);
 
-    private static readonly string Exe = Path.Join(AppContext.BaseDirectory, "worktree-sweep.exe");
-
     /// <summary><c>--list</c> prints the table: its header, then one numbered row per candidate.</summary>
     [Fact]
     public async Task ListPrintsTheTable()
@@ -25,7 +20,7 @@ public sealed class CliTests
         Fixture.AddWorktree(repo, fx.PathTo("repo.wt/feat"), "feat");
         Directory.CreateDirectory(fx.PathTo("repo.wt/stray"));
 
-        Run run = await RunAsync(fx.Root, "--list");
+        Run run = await ExeRunner.RunAsync(RunTimeout, fx.Root, "--list");
 
         Assert.Equal(0, run.Code);
         string[] lines = run.Stdout.Split('\n');
@@ -46,7 +41,7 @@ public sealed class CliTests
         Fixture.AddWorktree(repo, fx.PathTo("repo.wt/feat"), "feat");
         Directory.CreateDirectory(fx.PathTo("repo.wt/stray"));
 
-        Run run = await RunAsync(fx.Root, "--json");
+        Run run = await ExeRunner.RunAsync(RunTimeout, fx.Root, "--json");
 
         Assert.Equal(0, run.Code);
         Assert.Equal(["orphan", "registered"], Kinds(run.Stdout).Order(StringComparer.Ordinal));
@@ -61,7 +56,7 @@ public sealed class CliTests
         Fixture.AddWorktree(repo, fx.PathTo("repo.wt/feat"), "feat");
         Directory.CreateDirectory(fx.PathTo("repo.wt/δοκιμή"));
 
-        Run run = await RunAsync(fx.Root, "--list");
+        Run run = await ExeRunner.RunAsync(RunTimeout, fx.Root, "--list");
 
         Assert.Equal(0, run.Code);
         Assert.Contains("δοκιμή", run.Stdout, StringComparison.Ordinal);
@@ -76,7 +71,7 @@ public sealed class CliTests
         Fixture.AddWorktree(repo, fx.PathTo("repo.wt/feat"), "feat");
         Directory.CreateDirectory(fx.PathTo("repo.wt/δοκιμή"));
 
-        Run run = await RunAsync(fx.Root, "--json");
+        Run run = await ExeRunner.RunAsync(RunTimeout, fx.Root, "--json");
 
         Assert.Equal(0, run.Code);
         using var document = JsonDocument.Parse(run.Stdout);
@@ -89,7 +84,7 @@ public sealed class CliTests
     {
         using var fx = new Fixture();
 
-        Run run = await RunAsync(fx.Root, "--list", "--json");
+        Run run = await ExeRunner.RunAsync(RunTimeout, fx.Root, "--list", "--json");
 
         Assert.Equal(2, run.Code);
         Assert.Equal("", run.Stdout);
@@ -101,7 +96,7 @@ public sealed class CliTests
     {
         using var fx = new Fixture();
 
-        Run run = await RunAsync(fx.Root, "--list", "--bogus");
+        Run run = await ExeRunner.RunAsync(RunTimeout, fx.Root, "--list", "--bogus");
 
         Assert.Equal(2, run.Code);
         Assert.Contains("--bogus", run.Stderr, StringComparison.Ordinal);
@@ -113,7 +108,7 @@ public sealed class CliTests
     {
         using var fx = new Fixture();
 
-        Run run = await RunAsync(fx.PathTo("missing"), "--list");
+        Run run = await ExeRunner.RunAsync(RunTimeout, fx.PathTo("missing"), "--list");
 
         Assert.Equal(1, run.Code);
         Assert.StartsWith("Error: ", run.Stderr, StringComparison.Ordinal);
@@ -124,7 +119,7 @@ public sealed class CliTests
     [Fact]
     public async Task EmptyRootFails()
     {
-        Run run = await RunAsync("", "--list");
+        Run run = await ExeRunner.RunAsync(RunTimeout, "", "--list");
 
         Assert.Equal(1, run.Code);
         Assert.StartsWith("Error: ", run.Stderr, StringComparison.Ordinal);
@@ -140,8 +135,8 @@ public sealed class CliTests
         Directory.CreateDirectory(fx.PathTo("repo.wt"));
         File.WriteAllText(fx.PathTo("repo.wt/notes.txt"), "");
 
-        Run quiet = await RunAsync(fx.Root, "--list");
-        Run debug = await RunWithEnvAsync(new Dictionary<string, string> { [LogVariable] = "debug" }, fx.Root, "--list");
+        Run quiet = await ExeRunner.RunAsync(RunTimeout, fx.Root, "--list");
+        Run debug = await ExeRunner.RunWithEnvAsync(RunTimeout, new Dictionary<string, string> { [LogVariable] = "debug" }, fx.Root, "--list");
 
         Assert.Equal(0, quiet.Code);
         Assert.DoesNotContain("debug:", quiet.Stderr, StringComparison.Ordinal);
@@ -161,7 +156,7 @@ public sealed class CliTests
         string admin = Discoverer.ReadGitdirFile(worktree) ?? throw new InvalidOperationException($"{worktree} has no admin dir");
         File.WriteAllText(Path.Join(admin, ReleasedMarker.FileName), "{not json");
 
-        Run run = await RunAsync(fx.Root, "--json");
+        Run run = await ExeRunner.RunAsync(RunTimeout, fx.Root, "--json");
 
         Assert.Equal(0, run.Code);
         Assert.StartsWith("warning: ignoring the released marker", run.Stderr, StringComparison.Ordinal);
@@ -172,7 +167,7 @@ public sealed class CliTests
     [Fact]
     public async Task UnlockWithNoPathsIsAUsageError()
     {
-        Run run = await RunAsync("unlock");
+        Run run = await ExeRunner.RunAsync(RunTimeout, "unlock");
 
         Assert.Equal(2, run.Code);
         Assert.StartsWith("error: ", run.Stderr, StringComparison.Ordinal);
@@ -183,7 +178,7 @@ public sealed class CliTests
     [Fact]
     public async Task HelpDoesNotListUnlock()
     {
-        Run run = await RunAsync("--help");
+        Run run = await ExeRunner.RunAsync(RunTimeout, "--help");
 
         Assert.Equal(0, run.Code);
         Assert.Contains("--list", run.Stdout, StringComparison.Ordinal);
@@ -195,7 +190,7 @@ public sealed class CliTests
     [Fact]
     public async Task UnlockAcceptsCallerStarted()
     {
-        Run run = await RunAsync("unlock", "--caller-started", "133700000000000000");
+        Run run = await ExeRunner.RunAsync(RunTimeout, "unlock", "--caller-started", "133700000000000000");
 
         Assert.Equal(2, run.Code);
         Assert.Equal("error: Required argument missing for command: 'unlock'.\n", run.Stderr);
@@ -206,11 +201,35 @@ public sealed class CliTests
     [Fact]
     public async Task HelpDoesNotListCallerStarted()
     {
-        Run run = await RunAsync("--help");
+        Run run = await ExeRunner.RunAsync(RunTimeout, "--help");
 
         Assert.Equal(0, run.Code);
         Assert.DoesNotContain("--caller-started", run.Stdout, StringComparison.Ordinal);
         Assert.DoesNotContain("--sweep-pid", run.Stdout, StringComparison.Ordinal);
+    }
+
+    /// <summary>A subcommand's help leaves out the scan's ROOT argument, which <c>remove</c> does not take.</summary>
+    [Fact]
+    public async Task RemoveHelpLeavesOutRoot()
+    {
+        Run run = await ExeRunner.RunAsync(RunTimeout, "remove", "--help");
+
+        Assert.Equal(0, run.Code);
+        Assert.Contains("worktree-sweep remove <PATH> [options]", run.Stdout, StringComparison.Ordinal);
+        Assert.DoesNotContain("ROOT", run.Stdout, StringComparison.Ordinal);
+    }
+
+    /// <summary>The root command's own help still shows ROOT, in the usage and under Arguments.</summary>
+    [Fact]
+    public async Task RootHelpStillShowsRoot()
+    {
+        Run run = await ExeRunner.RunAsync(RunTimeout, "--help");
+
+        Assert.Equal(0, run.Code);
+        Assert.Contains("[<ROOT>]", run.Stdout, StringComparison.Ordinal);
+        int arguments = run.Stdout.IndexOf("Arguments:", StringComparison.Ordinal);
+        Assert.True(arguments >= 0, run.Stdout);
+        Assert.Contains("ROOT", run.Stdout[arguments..], StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -223,7 +242,7 @@ public sealed class CliTests
         using var fx = new Fixture();
         Directory.CreateDirectory(fx.PathTo("unlock"));
 
-        Run run = await RunInAsync(fx.Root, "unlock");
+        Run run = await ExeRunner.RunInAsync(fx.Root, RunTimeout, "unlock");
 
         Assert.Equal(2, run.Code);
         Assert.Equal("error: Required argument missing for command: 'unlock'.\n", run.Stderr);
@@ -235,73 +254,4 @@ public sealed class CliTests
         using var document = JsonDocument.Parse(json);
         return [.. document.RootElement.GetProperty("candidates").EnumerateArray().Select(candidate => candidate.GetProperty("kind").GetString())];
     }
-
-    private static Task<Run> RunAsync(params string[] args) => RunWithEnvAsync(new Dictionary<string, string>(), args);
-
-    private static Task<Run> RunWithEnvAsync(IReadOnlyDictionary<string, string> env, params string[] args) =>
-        RunInWithEnvAsync(Environment.CurrentDirectory, env, args);
-
-    private static Task<Run> RunInAsync(string workingDirectory, params string[] args) =>
-        RunInWithEnvAsync(workingDirectory, new Dictionary<string, string>(), args);
-
-    /// <summary>
-    /// Runs the exe in <paramref name="workingDirectory"/> with the repo-local git variables and <c>WORKTREE_SWEEP_LOG</c> cleared,
-    /// then <paramref name="env"/> set, killing it when it outlives <see cref="RunTimeout"/> or the test run is cancelled.
-    /// </summary>
-    private static async Task<Run> RunInWithEnvAsync(string workingDirectory, IReadOnlyDictionary<string, string> env, params string[] args)
-    {
-        var startInfo = new ProcessStartInfo(Exe)
-        {
-            WorkingDirectory = workingDirectory,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8,
-        };
-        foreach (string arg in args)
-        {
-            startInfo.ArgumentList.Add(arg);
-        }
-        GitRunner.ClearRepoEnv(startInfo);
-        startInfo.Environment.Remove(LogVariable);
-        foreach (KeyValuePair<string, string> pair in env)
-        {
-            startInfo.Environment[pair.Key] = pair.Value;
-        }
-        using Process process = Process.Start(startInfo) ?? throw new InvalidOperationException($"{Exe} did not start");
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
-        timeout.CancelAfter(RunTimeout);
-        try
-        {
-            Task<string> stdout = process.StandardOutput.ReadToEndAsync(timeout.Token);
-            Task<string> stderr = process.StandardError.ReadToEndAsync(timeout.Token);
-            await process.WaitForExitAsync(timeout.Token);
-            return new Run(process.ExitCode, await stdout, await stderr);
-        }
-        catch (OperationCanceledException)
-        {
-            KillIfRunning(process);
-            if (TestContext.Current.CancellationToken.IsCancellationRequested)
-            {
-                throw;
-            }
-            throw new TimeoutException($"{Exe} {string.Join(' ', args)} did not exit within {RunTimeout}");
-        }
-    }
-
-    private static void KillIfRunning(Process process)
-    {
-        try
-        {
-            process.Kill(entireProcessTree: true);
-        }
-        catch (InvalidOperationException error)
-        {
-            TestContext.Current.SendDiagnosticMessage($"{Exe} had already exited when it was to be killed: {error.Message}");
-        }
-    }
-
-    private sealed record Run(int Code, string Stdout, string Stderr);
 }
