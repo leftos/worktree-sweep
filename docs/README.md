@@ -8,6 +8,7 @@ Start here. Plans live in [plans/MAIN.md](./plans/MAIN.md).
 
 - **Brief**: a written, self-contained implementation step (files, change, proving commands) handed to an implementer agent; open briefs live in `docs/plans/`.
 - **Candidate**: a folder the tool offers to remove, either a registered worktree or an orphan.
+- **Scan JSON**: the document `--json` prints: the root, each repo's default branches, and every candidate with its signals. The C# tool's shape (snake_case keys, a `kind` tag, ISO 8601 UTC times) is set in [plans/csharp-rewrite.md](./plans/csharp-rewrite.md), "Scan JSON (C4)".
 - **Registered worktree**: a linked worktree that `git worktree list` in some repo under the root reports. The repo's main worktree is never a candidate.
 - **Container dir**: a folder that holds worktrees: a depth-1 folder of the root named `*.wt`, `*-wt` or `*worktrees`, or a repo's `.claude/worktrees`.
 - **Orphan**: a folder inside a container dir that no repo registers as a worktree, such as the leftover of a failed `git worktree remove`.
