@@ -207,22 +207,37 @@ public sealed class MergeStateTests
         Assert.Empty(signals.Errors);
     }
 
-    /// <summary>A detached HEAD is still measured against the local main when origin/HEAD names a branch that does not exist.</summary>
+    /// <summary>A detached HEAD is still measured against the local main when the origin default names a branch that does not exist.</summary>
     [Fact]
     public void DetachedFailureOnOriginStillMeasuresLocal()
     {
         using var fx = new Fixture();
         string repo = fx.Repo("repo");
-        _ = fx.Origin(repo);
-        _ = Fixture.Git(repo, ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/gone"]);
         string wt = fx.PathTo("repo.wt/moved-on");
         _ = Fixture.Git(repo, ["worktree", "add", "-q", "--detach", wt, "HEAD"]);
         _ = Fixture.CommitFile(wt, "b.txt", "b\n", "b");
+        DiscoveryResult found = Discoverer.Discover(fx.Root);
+        WorktreeRecord record = Assert.Single(found.Registered, candidate => Fixture.SamePath(candidate.Record.Path, wt)).Record;
+        var defaults = new DefaultBranches { Local = "main", Origin = "origin/gone" };
 
-        WorktreeSignals signals = fx.Registered(wt).Signals;
+        WorktreeSignals signals = SignalReader.ReadWorktreeSignals(defaults, record);
         Assert.Equal(MergeState.Detached(contained: false), signals.MergeState);
         Assert.Equal("main", signals.MergeStateAgainst);
         Assert.Empty(signals.Errors);
+    }
+
+    /// <summary>An origin/HEAD that points to a branch that does not exist is dropped, and the local default falls back to main.</summary>
+    [Fact]
+    public void DanglingOriginHeadIsDropped()
+    {
+        using var fx = new Fixture();
+        string repo = fx.Repo("repo");
+        _ = fx.Origin(repo);
+        _ = Fixture.Git(repo, ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/gone"]);
+
+        DefaultBranches defaults = SignalReader.ReadDefaultBranches(repo);
+        Assert.Null(defaults.Origin);
+        Assert.Equal("main", defaults.Local);
     }
 }
 
