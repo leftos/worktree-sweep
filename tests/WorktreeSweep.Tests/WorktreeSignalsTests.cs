@@ -1,4 +1,5 @@
 using WorktreeSweep.Discovery;
+using WorktreeSweep.Git;
 using WorktreeSweep.Signals;
 
 namespace WorktreeSweep.Tests;
@@ -18,7 +19,7 @@ public sealed class WorktreeSignalsTests
         using var fx = new Fixture();
         var record = new WorktreeRecord { Path = fx.PathTo("bad") + "\0name", Branch = "feat" };
 
-        WorktreeSignals signals = SignalReader.ReadWorktreeSignals(new DefaultBranches { Local = "main" }, record);
+        WorktreeSignals signals = SignalReader.ReadWorktreeSignals(new DefaultBranches { Local = "main" }, record, new VolumeStalls());
 
         Assert.Null(signals.MergeState);
         Assert.Null(signals.Dirty);

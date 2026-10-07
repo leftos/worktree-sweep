@@ -96,10 +96,11 @@ public sealed class Fixture : IDisposable
     /// <returns>Its record and its signals.</returns>
     public (WorktreeRecord Record, WorktreeSignals Signals) Registered(string path)
     {
-        DiscoveryResult found = Discoverer.Discover(Root);
+        var stalls = new VolumeStalls();
+        DiscoveryResult found = Discoverer.Discover(Root, stalls);
         (Repo Repo, WorktreeRecord Record) pair = RegisteredOnly(found, path);
-        DefaultBranches defaults = SignalReader.ReadDefaultBranches(pair.Repo.Path);
-        return (pair.Record, SignalReader.ReadWorktreeSignals(defaults, pair.Record));
+        DefaultBranches defaults = SignalReader.ReadDefaultBranches(pair.Repo.Path, stalls);
+        return (pair.Record, SignalReader.ReadWorktreeSignals(defaults, pair.Record, stalls));
     }
 
     /// <summary>

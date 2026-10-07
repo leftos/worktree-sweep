@@ -30,7 +30,8 @@ public static class Discoverer
     /// <remarks>
     /// A child that cannot be read (such as <c>System Volume Information</c>) is skipped with a trace line, and a repo whose
     /// worktrees git cannot list is skipped with a trace warning; a failed list, an unreadable worktrees folder and a worktree
-    /// git's list leaves out are all reported in the result's errors. A walked folder matches a registered worktree when its path
+    /// git's list leaves out are all reported in the result's errors. A repo on a volume <paramref name="stalls"/> already holds is
+    /// skipped the same way, without git being started. A walked folder matches a registered worktree when its path
     /// below
     /// <paramref name="root"/>, put below the resolved root, names the registered path with its parent resolved; so a substed,
     /// 8.3-spelled or <c>\\?\</c>-prefixed root matches the paths git prints, while a link inside a container never matches through
@@ -39,18 +40,21 @@ public static class Discoverer
     /// Every path in the result keeps the spelling of <paramref name="root"/> made absolute.
     /// </remarks>
     /// <param name="root">The folder to scan; made absolute.</param>
+    /// <param name="stalls">The volumes an earlier git call has stalled, shared with the scan's signal reads.</param>
     /// <returns>What was found.</returns>
     /// <exception cref="IOException"><paramref name="root"/> itself cannot be listed; the message names it.</exception>
-    public static DiscoveryResult Discover(string root) => Discover(root, PathResolver.Resolve);
+    public static DiscoveryResult Discover(string root, VolumeStalls stalls) => Discover(root, PathResolver.Resolve, stalls);
 
-    /// <summary>Finds what <see cref="Discover(string)"/> finds, resolving paths with <paramref name="resolve"/>.</summary>
+    /// <summary>Finds what <see cref="Discover(string, VolumeStalls)"/> finds, resolving paths with <paramref name="resolve"/>.</summary>
     /// <param name="root">The folder to scan; made absolute.</param>
     /// <param name="resolve">Resolves the root and each registered worktree's parent folder, as <see cref="PathResolver.Resolve"/> does.</param>
+    /// <param name="stalls">The volumes an earlier git call has stalled, shared with the scan's signal reads.</param>
     /// <returns>What was found.</returns>
     /// <exception cref="IOException"><paramref name="root"/> itself cannot be listed; the message names it.</exception>
-    internal static DiscoveryResult Discover(string root, Func<string, string> resolve)
+    internal static DiscoveryResult Discover(string root, Func<string, string> resolve, VolumeStalls stalls)
     {
         ArgumentNullException.ThrowIfNull(root);
+        ArgumentNullException.ThrowIfNull(stalls);
         string full = Path.GetFullPath(root);
         List<FileSystemInfo> children;
         try
@@ -69,7 +73,7 @@ public static class Discoverer
         {
             if (IsPlainDir(child.Attributes))
             {
-                Classify(child.FullName, repos, containers, errors);
+                Classify(child.FullName, repos, containers, errors, stalls);
             }
         }
 
@@ -240,7 +244,7 @@ public static class Discoverer
         return record;
     }
 
-    private static void Classify(string child, List<Repo> repos, List<string> containers, List<DiscoveryError> errors)
+    private static void Classify(string child, List<Repo> repos, List<string> containers, List<DiscoveryError> errors, VolumeStalls stalls)
     {
         if (!IsPlainDir(AttributesOrSkip(Path.Join(child, ".git"))))
         {
@@ -253,6 +257,7 @@ public static class Discoverer
         IReadOnlyList<WorktreeRecord> worktrees;
         try
         {
+            stalls.ThrowIfStalled(child);
             worktrees = ListWorktrees(child);
         }
         catch (GitException error)
