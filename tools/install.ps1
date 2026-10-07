@@ -53,17 +53,50 @@ if ($PSCmdlet.ShouldProcess($destination, 'Publish worktree-sweep')) {
     if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed with exit code $LASTEXITCODE." }
 }
 
-# 4. The user PATH, once: an entry equal to the destination, case-insensitively and with a trailing backslash ignored, is left alone.
+# The user PATH lives in HKCU\Environment as a raw value whose entries may hold %VAR% references. The environment API
+# expands those on read and writes the expanded strings back, which would replace an owner's %USERPROFILE%\.dotnet\tools
+# with a fixed path for good, so the value is read and written through the registry instead.
+Add-Type -Namespace WorktreeSweep -Name NativeMethods -MemberDefinition @'
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern IntPtr SendMessageTimeout(
+        IntPtr hWnd, uint msg, IntPtr wParam, string lParam, uint flags, uint timeout, out IntPtr result);
+'@
+
+# Adds $Entry to the raw user environment variable $Name exactly once, keeping the %VAR% references of the entries it does
+# not touch, and tells every window to re-read the environment; a value that is already there is reported and left alone.
+function Add-UserPathEntry {
+    param([string]$Name, [string]$Entry)
+
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+    try {
+        # A value that is not there yet reads as empty and is written as ExpandString, the kind a %VAR% entry needs.
+        $kind = [Microsoft.Win32.RegistryValueKind]::ExpandString
+        if ($key.GetValueNames() -contains $Name) { $kind = $key.GetValueKind($Name) }
+        $raw = [string]$key.GetValue($Name, '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+        $entries = @($raw -split ';' | Where-Object { $_ })
+        # An entry already on the PATH may name $Entry as %LOCALAPPDATA%\worktree-sweep, so it is expanded for the comparison.
+        $wanted = $Entry.TrimEnd('\')
+        if ($entries | Where-Object { [Environment]::ExpandEnvironmentVariables($_).TrimEnd('\') -ieq $wanted }) {
+            Write-Host "$Entry is already on your user PATH."
+            return
+        }
+        $write = $kind
+        if ($kind -eq [Microsoft.Win32.RegistryValueKind]::String) { $write = [Microsoft.Win32.RegistryValueKind]::ExpandString }
+        $key.SetValue($Name, (@($entries) + $Entry) -join ';', $write)
+    }
+    finally {
+        $key.Dispose()
+    }
+    Write-Host "Added $Entry to your user PATH. Open a new terminal to use worktree-sweep."
+    # A registry write tells no running program that the environment changed, so a terminal started from Explorer would not
+    # see the entry: HWND_BROADCAST, WM_SETTINGCHANGE and SMTO_ABORTIFHUNG tell every top-level window to re-read it.
+    $ignored = [IntPtr]::Zero
+    [void][WorktreeSweep.NativeMethods]::SendMessageTimeout([IntPtr]0xffff, 0x1a, [IntPtr]::Zero, 'Environment', 0x2, 5000, [ref]$ignored)
+}
+
+# 4. The user PATH, once; the function leaves the value alone when the destination is on it already.
 if ($PSCmdlet.ShouldProcess($destination, 'Add to the user PATH')) {
-    $entries = @([Environment]::GetEnvironmentVariable('Path', 'User') -split ';' | Where-Object { $_ })
-    $wanted = $destination.TrimEnd('\')
-    if ($entries | Where-Object { $_.TrimEnd('\') -ieq $wanted }) {
-        Write-Host "$destination is already on your user PATH."
-    }
-    else {
-        [Environment]::SetEnvironmentVariable('Path', (@($entries) + $destination) -join ';', 'User')
-        Write-Host "Added $destination to your user PATH. Open a new terminal to use worktree-sweep."
-    }
+    Add-UserPathEntry -Name 'Path' -Entry $destination
 }
 
 # 5. An older Rust build on the PATH would win over this one; it is reported, never removed.
