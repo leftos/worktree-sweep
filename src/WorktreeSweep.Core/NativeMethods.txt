@@ -20,3 +20,13 @@ PROCESS_BASIC_INFORMATION
 NtQueryInformationProcess
 CreateFile
 GetFinalPathNameByHandle
+GetVolumePathNameW
+GetVolumeNameForVolumeMountPointW
+CoCreateInstance
+CLSCTX
+SHCreateItemFromParsingName
+FileOperation
+FILEOPERATION_FLAGS
+COPYENGINE_E_SHARING_VIOLATION_SRC
+COPYENGINE_E_SHARING_VIOLATION_DEST
+COPYENGINE_E_ACCESS_DENIED_SRC

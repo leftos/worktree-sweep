@@ -78,7 +78,7 @@ worktree-sweep unlock <PATH>...  # internal: runs elevated via sudo
      - Measured 2026-09-27. A permanent delete uses `std::fs::remove_dir_all` after clearing read-only attributes, which git object files carry.
   3. On a sharing violation or access denied (Win32 32/5), hand off to the unlock flow and retry once.
   4. For a registered worktree: `git worktree unlock` if it was git-locked, then `git worktree prune`. If the branch is `Ancestor`, `NoCommits`, `PatchesApplied` or `ContentContained`, offer `git branch -d`. For the last two, git may refuse `-d`, so offer `-D` with the reason shown.
-- **Recycle Bin capacity** (inside `remove.rs` unless it grows): `GetVolumeNameForVolumeMountPointW` gives the volume GUID, and `HKCU\...\BitBucket\Volume\{GUID}` holds `MaxCapacity` in MB and `NukeOnDelete`.
+- **Recycle Bin capacity** (`recycle.rs`; C#: `Recycle/BinCapacityReader.cs`): `GetVolumeNameForVolumeMountPointW` gives the volume GUID, and `HKCU\...\BitBucket\Volume\{GUID}` holds `MaxCapacity` in MB and `NukeOnDelete`.
 - **`unlock.rs`:** the lock flow.
   - **One elevation per run.** Removal is two passes. Every pick that hits a lock is collected, and `unlock::offer(&[paths])` is called once for all of them. On `Unlocked` or `PartlyUnlocked`, each locked pick is retried once.
   - **Parent side:** lists the locked folders, asks, then runs `sudo <self> unlock --caller-pid <shell> --sweep-pid <self> <paths>` and waits. If sudo is missing, disabled or not in Inline mode, it prints the elevated command to run by hand and returns `Skipped`.
