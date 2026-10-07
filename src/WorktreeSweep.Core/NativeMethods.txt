@@ -1,0 +1,10 @@
+CreateToolhelp32Snapshot
+Process32FirstW
+Process32NextW
+PROCESSENTRY32W
+OpenProcess
+TerminateProcess
+WaitForSingleObject
+CloseHandle
+QueryFullProcessImageNameW
+WIN32_ERROR
