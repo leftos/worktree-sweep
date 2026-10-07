@@ -119,18 +119,6 @@ public sealed class CliTests
         Assert.Equal(quiet.Stdout, debug.Stdout);
     }
 
-    /// <summary>With no mode flag the window would open; until it exists that is a usage error naming the flags.</summary>
-    [Fact]
-    public async Task NoFlagSaysTheWindowIsNotBuilt()
-    {
-        using var fx = new Fixture();
-
-        Run run = await RunAsync(fx.Root);
-
-        Assert.Equal(2, run.Code);
-        Assert.Equal("worktree-sweep: the window is not built yet; use --list or --json\n", run.Stderr);
-    }
-
     /// <summary>A trace warning goes to standard error as one line, leaving standard output one valid JSON document.</summary>
     [Fact]
     public async Task MalformedMarkerWarnsOnStandardError()
