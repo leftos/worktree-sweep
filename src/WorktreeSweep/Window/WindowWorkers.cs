@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using WorktreeSweep.Recycle;
 using WorktreeSweep.Removal;
 using WorktreeSweep.Report;
@@ -19,9 +20,6 @@ public sealed class WindowWorkers
     /// <summary>What the jobs run with.</summary>
     private readonly WindowSeams seams;
 
-    /// <summary>Whether the unlock step runs in the terminal; read and written on the UI thread only.</summary>
-    private bool unlocking;
-
     /// <summary>Initializes a new instance of the <see cref="WindowWorkers"/> class, which starts each job as its screen is entered.</summary>
     /// <param name="main">The window's view model.</param>
     /// <param name="seams">What the jobs run with.</param>
@@ -39,8 +37,8 @@ public sealed class WindowWorkers
     public void Start(string root) => seams.RunInBackground(() => Scan(root));
 
     /// <summary>
-    /// Decides whether the window may close now: not while the unlock step runs, and not while removing, where it cancels the removal
-    /// after the current item instead; on every other screen it may.
+    /// Decides whether the window may close now: not while removing, where it presses Cancel instead, which stops the removal after
+    /// the current item and does nothing while the unlock step runs; on every other screen it may.
     /// </summary>
     /// <returns><see langword="true"/> when the window may close.</returns>
     public bool RequestClose()
@@ -49,12 +47,43 @@ public sealed class WindowWorkers
         {
             return true;
         }
-        if (!unlocking)
-        {
-            main.Removing?.CancelCommand.Execute(null);
-        }
+        main.Removing?.CancelCommand.Execute(null);
         return false;
     }
+
+    /// <summary>
+    /// Wraps a window callback so that what it throws is shown on the window by <paramref name="fail"/>, with the exception's message,
+    /// instead of ending the UI thread.
+    /// </summary>
+    /// <param name="action">The callback.</param>
+    /// <param name="fail">Shows the failure's message.</param>
+    /// <returns>The wrapped callback.</returns>
+    private static Action Guarded(Action action, Action<string> fail) =>
+        () =>
+        {
+            try
+            {
+                action();
+            }
+#pragma warning disable CA1031 // A window callback's failure must reach the window as a screen, not end the process.
+            catch (Exception error)
+#pragma warning restore CA1031
+            {
+                fail(error.Message);
+            }
+        };
+
+    /// <summary>Shows the Failed screen for a scan that failed.</summary>
+    /// <param name="message">Why.</param>
+    private void ScanFailure(string message) => main.ScanFailed($"Scan failed: {message}");
+
+    /// <summary>Shows the Failed screen for capacities that could not be shown.</summary>
+    /// <param name="message">Why.</param>
+    private void CapacityFailure(string message) => main.RemovalFailed($"Reading the Recycle Bin sizes failed: {message}");
+
+    /// <summary>Shows the Failed screen for a removal that failed.</summary>
+    /// <param name="message">Why.</param>
+    private void RemovalFailure(string message) => main.RemovalFailed($"Removal failed: {message}");
 
     /// <summary>Runs the scan and posts its report, or its failure, to the window.</summary>
     /// <param name="root">The folder to scan.</param>
@@ -71,10 +100,10 @@ public sealed class WindowWorkers
         catch (Exception error)
 #pragma warning restore CA1031
         {
-            string message = $"Scan failed: {error.Message}";
-            show = () => main.ScanFailed(message);
+            string message = error.Message;
+            show = () => ScanFailure(message);
         }
-        seams.Dispatcher.Post(show);
+        seams.Dispatcher.Post(Guarded(show, ScanFailure));
     }
 
     /// <summary>Starts the job of the screen just entered.</summary>
@@ -106,10 +135,29 @@ public sealed class WindowWorkers
             var capacities = new Dictionary<string, BinCapacity?>();
             foreach (string path in paths)
             {
-                capacities[path] = seams.ReadCapacity(path);
+                capacities[path] = ReadCapacity(path);
             }
-            seams.Dispatcher.Post(() => review.CapacitiesRead(capacities));
+            seams.Dispatcher.Post(Guarded(() => review.CapacitiesRead(capacities), CapacityFailure));
         });
+    }
+
+    /// <summary>The Recycle Bin settings of the volume <paramref name="path"/> is on; <see langword="null"/>, with a warning, when the
+    /// read throws.</summary>
+    /// <param name="path">A path on the volume.</param>
+    /// <returns>The settings, or <see langword="null"/>.</returns>
+    private BinCapacity? ReadCapacity(string path)
+    {
+        try
+        {
+            return seams.ReadCapacity(path);
+        }
+#pragma warning disable CA1031 // A capacity that cannot be read is unknown, as RemovalPlanner.ReadCapacity counts an I/O failure.
+        catch (Exception error)
+#pragma warning restore CA1031
+        {
+            Trace.TraceWarning($"cannot read the Recycle Bin size for {path}: {error.Message}");
+            return null;
+        }
     }
 
     /// <summary>Starts <paramref name="removing"/>'s removal on its own STA thread.</summary>
@@ -130,7 +178,7 @@ public sealed class WindowWorkers
         {
             IReadOnlyList<Swept> swept = seams.RemovePicks(
                 removing.Decisions,
-                progress => seams.Dispatcher.Post(() => removing.OnProgress(progress)),
+                progress => seams.Dispatcher.Post(Guarded(() => removing.OnProgress(progress), RemovalFailure)),
                 paths => OfferUnlock(removing, paths),
                 token
             );
@@ -140,10 +188,10 @@ public sealed class WindowWorkers
         catch (Exception error)
 #pragma warning restore CA1031
         {
-            string message = $"Removal failed: {error.Message}";
-            show = () => main.RemovalFailed(message);
+            string message = error.Message;
+            show = () => RemovalFailure(message);
         }
-        seams.Dispatcher.Post(show);
+        seams.Dispatcher.Post(Guarded(show, RemovalFailure));
     }
 
     /// <summary>
@@ -155,11 +203,7 @@ public sealed class WindowWorkers
     /// <returns>What the unlock step did.</returns>
     private UnlockOutcome OfferUnlock(RemovingViewModel removing, IReadOnlyList<string> paths)
     {
-        seams.Dispatcher.Invoke(() =>
-        {
-            unlocking = true;
-            removing.UnlockStarted(paths.Count);
-        });
+        seams.Dispatcher.Invoke(Guarded(() => removing.UnlockStarted(paths.Count), RemovalFailure));
         UnlockOutcome outcome = UnlockOutcome.Skipped;
         try
         {
@@ -168,11 +212,7 @@ public sealed class WindowWorkers
         }
         finally
         {
-            seams.Dispatcher.Invoke(() =>
-            {
-                unlocking = false;
-                removing.UnlockDone(outcome);
-            });
+            seams.Dispatcher.Invoke(Guarded(() => removing.UnlockDone(outcome), RemovalFailure));
         }
     }
 }
