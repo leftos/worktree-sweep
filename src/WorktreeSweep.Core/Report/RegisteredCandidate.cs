@@ -18,8 +18,12 @@ public sealed record RegisteredCandidate : Candidate
     /// <summary>Gets the merge state, dirty counts, upstream, last activity and size.</summary>
     public required WorktreeSignals Signals { get; init; }
 
-    /// <inheritdoc/>
-    public override string Path => Record.Path;
+    /// <summary>
+    /// Gets the worktree folder, spelled as a drive path when git recorded it through a loopback admin share of this machine
+    /// (<c>\\localhost\X$\dev\x</c> is <c>X:\dev\x</c>), so the display, the removal and the holder search name the local folder.
+    /// <see cref="WorktreeRecord.Path"/> keeps git's own spelling, which a git argument naming the worktree must use.
+    /// </summary>
+    public override string Path => LoopbackShare.ToLocalDrive(Record.Path, LoopbackShare.LocalHosts()) ?? Record.Path;
 
     /// <inheritdoc/>
     public override long? SizeBytes => Signals.Size?.Bytes;

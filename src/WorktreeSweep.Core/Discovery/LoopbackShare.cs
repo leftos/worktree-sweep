@@ -96,12 +96,22 @@ internal static class LoopbackShare
     /// <returns><see langword="true"/> for <c>a</c>-<c>z</c> and <c>A</c>-<c>Z</c>.</returns>
     private static bool IsAsciiLetter(char value) => (value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z');
 
-    /// <summary>The loopback names and this machine's own names; a name that cannot be read is traced and left out.</summary>
+    /// <summary>
+    /// The loopback names and this machine's own names; a name that cannot be read is traced and left out, so building the set never
+    /// throws and the loopback names are always in it.
+    /// </summary>
     /// <returns>A case-insensitive set.</returns>
     private static HashSet<string> ReadLocalHosts()
     {
         var hosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "localhost", "127.0.0.1" };
-        AddHost(hosts, Environment.MachineName);
+        try
+        {
+            AddHost(hosts, Environment.MachineName);
+        }
+        catch (InvalidOperationException error)
+        {
+            Trace.TraceWarning($"cannot read this machine's name: {error.Message}");
+        }
         try
         {
             AddHost(hosts, Dns.GetHostName());
