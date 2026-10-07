@@ -151,6 +151,13 @@ public static class ReportTable
         return string.Create(CultureInfo.InvariantCulture, $"{tenths / 10}.{tenths % 10} {unit}");
     }
 
+    /// <summary>A byte count as the removal lines read it: <c>{text}</c>, or <c>at least {text}</c> when the real size may be more.</summary>
+    /// <param name="bytes">The byte count; not negative.</param>
+    /// <param name="atLeast">Whether the real size may be more than <paramref name="bytes"/>.</param>
+    /// <returns>The text.</returns>
+    public static string SizeText(long bytes, bool atLeast) =>
+        atLeast ? string.Create(CultureInfo.InvariantCulture, $"at least {HumanBytes(bytes)}") : HumanBytes(bytes);
+
     /// <summary>
     /// How long ago <paramref name="thenUnix"/> was, in the largest fitting unit: <c>5m</c>, <c>7h</c>, <c>3d</c>, <c>5w</c>, <c>2y</c>.
     /// </summary>

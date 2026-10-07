@@ -23,4 +23,7 @@ public sealed record RegisteredCandidate : Candidate
 
     /// <inheritdoc/>
     public override long? SizeBytes => Signals.Size?.Bytes;
+
+    /// <inheritdoc/>
+    protected override int Unreadable => Signals.Size?.Unreadable ?? 0;
 }

@@ -99,8 +99,7 @@ public sealed class ReviewSession
             {
                 totals = totals with { Branches = totals.Branches + 1 };
             }
-            long? size = entry.Candidate.SizeBytes;
-            totals = Count(totals, plan, size is null || size < 0 ? null : size);
+            totals = Count(totals, plan, entry.Candidate.KnownSize);
         }
         return totals;
     }
@@ -172,22 +171,24 @@ public sealed class ReviewSession
     /// <summary><paramref name="totals"/> with one more pick planned as <paramref name="plan"/>.</summary>
     /// <param name="totals">The totals so far.</param>
     /// <param name="plan">The pick's plan.</param>
-    /// <param name="bytes">The pick's size; <see langword="null"/> when it is unknown.</param>
+    /// <param name="size">The pick's size; <see langword="null"/> when it is unknown.</param>
     /// <returns>The new totals.</returns>
-    private static ReviewTotals Count(ReviewTotals totals, Plan plan, long? bytes) =>
+    private static ReviewTotals Count(ReviewTotals totals, Plan plan, KnownSize? size) =>
         plan switch
         {
             Plan.Run { Action: RemoveAction.Delete { Method: DeleteMethod.Recycle } } => totals with
             {
                 Recycle = totals.Recycle + 1,
-                RecycleBytes = totals.RecycleBytes + (bytes ?? 0),
-                RecycleUnknown = totals.RecycleUnknown + (bytes is null ? 1 : 0),
+                RecycleBytes = totals.RecycleBytes + (size?.Bytes ?? 0),
+                RecycleUnknown = totals.RecycleUnknown + (size is null ? 1 : 0),
+                RecyclePartial = totals.RecyclePartial + (size is { Partial: true } ? 1 : 0),
             },
             Plan.Run { Action: RemoveAction.Delete { Method: DeleteMethod.Permanent } } => totals with
             {
                 Permanent = totals.Permanent + 1,
-                PermanentBytes = totals.PermanentBytes + (bytes ?? 0),
-                PermanentUnknown = totals.PermanentUnknown + (bytes is null ? 1 : 0),
+                PermanentBytes = totals.PermanentBytes + (size?.Bytes ?? 0),
+                PermanentUnknown = totals.PermanentUnknown + (size is null ? 1 : 0),
+                PermanentPartial = totals.PermanentPartial + (size is { Partial: true } ? 1 : 0),
             },
             Plan.Run { Action: RemoveAction.RemoveLink } => totals with { Links = totals.Links + 1 },
             Plan.Run { Action: RemoveAction.PruneRegistration } => totals with { Prunes = totals.Prunes + 1 },
