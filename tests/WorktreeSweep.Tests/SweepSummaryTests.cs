@@ -51,6 +51,35 @@ public sealed class SweepSummaryTests
         );
     }
 
+    /// <summary>A removed folder whose size is unknown makes the total read "at least" and count it, and the bin share too.</summary>
+    [Fact]
+    public void UnknownSizeReadsAsAtLeastAndIsCounted()
+    {
+        Swept[] swept = [Entry(@"yaat.wt\recycled", new Outcome.Recycled(Mib)), Entry(@"yaat.wt\unknown", new Outcome.Recycled(null))];
+
+        IReadOnlyList<string> lines = SweepSummary.Lines(swept, ReportSamples.Root);
+
+        Assert.Equal(
+            [
+                @"yaat.wt\recycled: removed (recycled)",
+                @"yaat.wt\unknown: removed (recycled)",
+                "2 removed, 0 skipped, 0 failed; at least 1.0 MB freed (1 of unknown size) (at least 1.0 MB of it in the Recycle Bin)",
+            ],
+            lines
+        );
+    }
+
+    /// <summary>A permanent delete of unknown size alone reads as at least zero bytes freed, with the count.</summary>
+    [Fact]
+    public void PermanentDeleteOfUnknownSizeAloneReadsAsAtLeastZero()
+    {
+        Swept[] swept = [Entry(@"yaat.wt\unknown", new Outcome.Permanent(null))];
+
+        IReadOnlyList<string> lines = SweepSummary.Lines(swept, ReportSamples.Root);
+
+        Assert.Equal([@"yaat.wt\unknown: removed (permanent)", "1 removed, 0 skipped, 0 failed; at least 0 B freed (1 of unknown size)"], lines);
+    }
+
     /// <summary>One pick under the sample root with its outcome and notes.</summary>
     /// <param name="path">The pick's path relative to the root.</param>
     /// <param name="outcome">What happened to it.</param>

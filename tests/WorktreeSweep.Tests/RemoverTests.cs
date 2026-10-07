@@ -256,6 +256,26 @@ public sealed class RemoverTests
         Assert.Equal([new Progress.Started(0), new Progress.Done(0)], run.Progress);
     }
 
+    /// <summary>A pick whose size the scan could not read is removed and reports no bytes at all.</summary>
+    [Fact]
+    public void RemovingAPickOfUnknownSizeReportsNoBytes()
+    {
+        using var fx = new Fixture();
+        string repo = fx.Repo("repo");
+        string wt = fx.PathTo(@"repo.wt\feat");
+        Fixture.AddWorktree(repo, wt, "feat");
+        RegisteredCandidate unsized = Assert.IsType<RegisteredCandidate>(CandidateAt(fx, wt));
+        unsized = unsized with { Signals = unsized.Signals with { Size = null } };
+        Assert.Null(unsized.SizeBytes);
+
+        IReadOnlyList<Swept> swept = new Recorder().Remove(
+            [PermanentDecision(unsized, new BranchChoice.NotOffered())],
+            TestContext.Current.CancellationToken
+        );
+
+        Assert.Equal(new Outcome.Permanent(null), swept[0].Outcome);
+    }
+
     /// <summary>A worktree on <c>feat</c> at <c>repo.wt\feat</c>, git-locked with the reason <c>keep me</c>, holding <c>held.txt</c>.</summary>
     /// <param name="fx">The fixture.</param>
     /// <returns>The repo, the worktree and the file to hold open.</returns>

@@ -76,13 +76,14 @@ public static class Remover
             _ => throw new UnreachableException($"unknown sweep result {result}"),
         };
 
-    /// <summary>The outcome of a pick removed by <paramref name="action"/>; an unknown size counts as zero bytes.</summary>
+    /// <summary>The outcome of a pick removed by <paramref name="action"/>; a size that is unknown or negative reports no bytes.</summary>
     /// <param name="action">How it was removed.</param>
     /// <param name="candidate">The pick.</param>
     /// <returns>Its outcome.</returns>
     private static Outcome Removed(RemoveAction action, Candidate candidate)
     {
-        long bytes = Math.Max(candidate.SizeBytes ?? 0, 0);
+        long? size = candidate.SizeBytes;
+        long? bytes = size is null || size < 0 ? null : size;
         return action switch
         {
             RemoveAction.RemoveLink => new Outcome.LinkRemoved(),

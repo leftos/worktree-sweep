@@ -231,6 +231,37 @@ public sealed class ReviewSessionTests
         Assert.Equal("Remove 1 item: 1 link.", new ReviewTotals { Links = 1 }.FinalSentence());
     }
 
+    /// <summary>A sized part with one unknown size reads "at least" and counts it; a known size keeps the plain wording.</summary>
+    [Fact]
+    public void FinalSentenceNamesUnknownSizes()
+    {
+        ReviewTotals recycled = new()
+        {
+            Recycle = 2,
+            RecycleBytes = Mb,
+            RecycleUnknown = 1,
+        };
+        Assert.Equal($"Remove 2 items: 2 to the Recycle Bin (at least {ReportTable.HumanBytes(Mb)}; 1 of unknown size).", recycled.FinalSentence());
+
+        ReviewTotals permanent = new() { Permanent = 1, PermanentUnknown = 1 };
+        Assert.Equal($"Remove 1 item: 1 permanently (at least {ReportTable.HumanBytes(0)}; 1 of unknown size).", permanent.FinalSentence());
+    }
+
+    /// <summary>A pick whose size the scan could not read counts in its part's unknown total and reads "at least" in the sentence.</summary>
+    [Fact]
+    public void ReviewUnknownSizeIsCounted()
+    {
+        ReviewSession review = Session([Worktree(MergeState.Ancestor, bytes: null)], _ => Roomy);
+
+        Assert.Equal(StepKind.Permanent, review.Current?.Kind);
+        review.Answer(true);
+        Assert.Equal(StepKind.Branch, review.Current?.Kind);
+        review.Answer(false);
+        ReviewTotals totals = review.Totals() ?? throw new InvalidOperationException("every question is answered");
+        Assert.Equal(new ReviewTotals { Permanent = 1, PermanentUnknown = 1 }, totals);
+        Assert.Equal("Remove 1 item: 1 permanently (at least 0 B; 1 of unknown size).", totals.FinalSentence());
+    }
+
     /// <summary>A failed worktree list in the orphan's repo plans it as skipped and asks nothing about it.</summary>
     [Fact]
     public void DiscoveryErrorListFailedSkipsOrphan() => AssertGuarded(new DiscoveryError(@"D:\yaat", @"D:\yaat", "git worktree list failed: boom"));
@@ -353,9 +384,9 @@ public sealed class ReviewSessionTests
 
     /// <summary>The worktree <c>D:\repo.wt\feat</c> on <c>feat</c>, clean against <c>main</c>.</summary>
     /// <param name="mergeState">Its merge state.</param>
-    /// <param name="bytes">Its size.</param>
+    /// <param name="bytes">Its size; <see langword="null"/> when the scan could not read it.</param>
     /// <returns>The candidate.</returns>
-    private static RegisteredCandidate Worktree(MergeState mergeState, long bytes) =>
+    private static RegisteredCandidate Worktree(MergeState mergeState, long? bytes) =>
         ReportSamples.Registered(
             @"repo.wt\feat",
             "feat",
@@ -365,7 +396,7 @@ public sealed class ReviewSessionTests
                 MergeStateAgainst = "main",
                 Dirty = new Dirty(),
                 Upstream = Upstream.Tracking(0),
-                Size = new SizeInfo { Bytes = bytes },
+                Size = bytes is { } size ? new SizeInfo { Bytes = size } : null,
             }
         ) with
         {

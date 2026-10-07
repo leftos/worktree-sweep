@@ -6,12 +6,12 @@ public abstract record Outcome
     private protected Outcome() { }
 
     /// <summary>Moved to the Recycle Bin.</summary>
-    /// <param name="Bytes">Its size.</param>
-    public sealed record Recycled(long Bytes) : Outcome;
+    /// <param name="Bytes">Its size; <see langword="null"/> when unknown.</param>
+    public sealed record Recycled(long? Bytes) : Outcome;
 
     /// <summary>Deleted for good.</summary>
-    /// <param name="Bytes">Its size.</param>
-    public sealed record Permanent(long Bytes) : Outcome;
+    /// <param name="Bytes">Its size; <see langword="null"/> when unknown.</param>
+    public sealed record Permanent(long? Bytes) : Outcome;
 
     /// <summary>The link was deleted; its target was not touched.</summary>
     public sealed record LinkRemoved : Outcome;
