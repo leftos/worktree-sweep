@@ -24,7 +24,7 @@
 - [x] WTS-19 C13: port agent removal (remove PATH --json) with a redesigned report
 - [x] WTS-20 C14: build the window's view models
 - [x] WTS-21 C15: build the WPF window and wire the interactive mode
-- [ ] WTS-22 C16: cut over to the C# tool and delete the Rust crate
+- [/] WTS-22 C16: cut over to the C# tool and delete the Rust crate
 - [x] WTS-25 Report a failed merge-tree as a signal error instead of 'not contained'
 - [x] WTS-27 Create one merge-tree scratch folder per worktree, not per default ref
 - [x] WTS-28 Surface a repo whose worktree list fails, and fix the discovery test flake
@@ -37,12 +37,15 @@
 - [x] WTS-37 Drop a caller pid that a newer process reused
 - [x] WTS-38 Re-check the caller and parent chain by creation time on the elevated side
 - [x] WTS-39 Confirm a locker by start time before stopping it or closing its handles
-- [ ] WTS-42 Show the unlock step's terminal text without mojibake
+- [x] WTS-42 Show the unlock step's terminal text without mojibake
 - [x] WTS-43 Keep the agent removal's report and marker true on the released path
-- [ ] WTS-44 Measure what an abandoned agent recycle does when the process exits
-- [ ] WTS-45 Keep the scan's ROOT argument out of the subcommands' help
-- [ ] WTS-46 Report a removal that fails after its folder is gone as removed, with a note
-- [ ] WTS-47 Own the Shell's recycle prompts by the window
+- [x] WTS-44 Measure what an abandoned agent recycle does when the process exits
+- [x] WTS-45 Keep the scan's ROOT argument out of the subcommands' help
+- [x] WTS-46 Report a removal that fails after its folder is gone as removed, with a note
+- [x] WTS-47 Own the Shell's recycle prompts by the window
+- [ ] WTS-48 Decide what a removed agent report says about holders found before a retry
+- [ ] WTS-49 Run the explicit Shell recycle test on a volume whose Recycle Bin recycles
+- [ ] WTS-50 Take the dotnet-format-wrapper pass loop from the C# conventions
 
 ## Backlog
 
