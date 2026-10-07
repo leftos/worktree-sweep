@@ -22,7 +22,7 @@ The whole tool is rewritten in C# on .NET 10 with a WPF window for the interacti
   - A git failure against one default branch is traced while another default still answers.
   - An unexpected `merge-tree` exit is a signal error, not a silent "not contained" (WTS-25).
   - Each worktree uses one scratch object folder for all its defaults (WTS-27).
-- **Scan JSON (C4):** snake_case keys (`JsonNamingPolicy.SnakeCaseLower`); one flat `candidates` array tagged by `"kind": "registered"|"orphan"`; every timestamp an ISO 8601 UTC string whose key drops the `_unix` suffix (`last_activity`, `size.last_write`, `released.released_at`).
+- **Scan JSON (C4):** snake_case keys (`JsonNamingPolicy.SnakeCaseLower`); one flat `candidates` array tagged by `"kind": "registered"|"orphan"`; every timestamp an ISO 8601 UTC string whose key drops the `_unix` suffix (`last_activity`, `size.last_write`, `released.released_at`); a top-level `discovery_errors` array (`[{repo, path, message}]`, between `repos` and `candidates`, `[]` when empty) lists the discovery errors (WTS-28).
 
 Carried over from the full-screen picker's design (`archive/tui-picker.md`, "Rulings from the review"): every question is asked up front in Review (loss, then permanent delete, then branch, per pick in list order), and a branch answer applies only if its removal succeeds.
 

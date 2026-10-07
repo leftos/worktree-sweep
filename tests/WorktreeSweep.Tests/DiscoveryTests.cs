@@ -22,6 +22,7 @@ public sealed class DiscoveryTests
         Assert.Contains(paths, path => Fixture.SamePath(path, wt));
         Assert.DoesNotContain(paths, path => Fixture.SamePath(path, repo));
         Assert.Single(found.Repos);
+        Assert.Empty(found.Errors);
     }
 
     /// <summary>Worktrees of two repos nested one level inside a container folder are registered, not orphans.</summary>
@@ -539,6 +540,108 @@ public sealed class DiscoveryTests
 
         Repo repo = Assert.Single(found.Repos);
         Assert.True(Fixture.SamePath(repo.Path, good), repo.ToString());
+    }
+
+    /// <summary>A repo git cannot list is skipped and reported with git's own message for a config that does not parse.</summary>
+    [Fact]
+    public void RepoGitCannotListIsReportedWithGitsError()
+    {
+        using var fx = new Fixture();
+        string broken = fx.Repo("broken");
+        File.WriteAllText(Path.Join(broken, ".git", "config"), "[core\n bad");
+
+        DiscoveryResult found = Discoverer.Discover(fx.Root);
+
+        Assert.Empty(found.Repos);
+        DiscoveryError error = Assert.Single(found.Errors);
+        Assert.True(Fixture.SamePath(error.Repo, broken), error.ToString());
+        Assert.True(Fixture.SamePath(error.Path, broken), error.ToString());
+        Assert.StartsWith("git worktree list failed:", error.Message, StringComparison.Ordinal);
+        Assert.Contains("bad config", error.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A linked worktree git's list leaves out (its <c>gitdir</c> file is empty) is not registered, and is reported by its
+    /// <c>gitdir</c> file; the repo stays with what git listed.
+    /// </summary>
+    [Fact]
+    public void WorktreeGitLeavesOutIsReported()
+    {
+        using var fx = new Fixture();
+        string repo = fx.Repo("repo");
+        string wt = fx.PathTo("repo.wt/feat");
+        Fixture.AddWorktree(repo, wt, "feat");
+        string id = Assert.Single(Directory.GetDirectories(Path.Join(repo, ".git", "worktrees")));
+        string gitdir = Path.Join(id, "gitdir");
+        File.WriteAllText(gitdir, "");
+
+        DiscoveryResult found = Discoverer.Discover(fx.Root);
+
+        _ = Assert.Single(found.Repos);
+        Assert.DoesNotContain(found.Registered, pair => Fixture.SamePath(pair.Record.Path, wt));
+        DiscoveryError error = Assert.Single(found.Errors);
+        Assert.True(Fixture.SamePath(error.Repo, repo), error.ToString());
+        Assert.True(Fixture.SamePath(error.Path, gitdir), error.ToString());
+        Assert.Equal("git's worktree list leaves this worktree out: its gitdir file is empty", error.Message);
+    }
+
+    /// <summary>A worktree whose <c>gitdir</c> file was deleted is reported, with the hint that prune clears the record.</summary>
+    [Fact]
+    public void MissingGitdirIsReportedWithPruneHint()
+    {
+        using var fx = new Fixture();
+        string repo = fx.Repo("repo");
+        string wt = fx.PathTo("repo.wt/feat");
+        Fixture.AddWorktree(repo, wt, "feat");
+        string id = Assert.Single(Directory.GetDirectories(Path.Join(repo, ".git", "worktrees")));
+        string gitdir = Path.Join(id, "gitdir");
+        File.Delete(gitdir);
+
+        DiscoveryResult found = Discoverer.Discover(fx.Root);
+
+        _ = Assert.Single(found.Repos);
+        DiscoveryError error = Assert.Single(found.Errors);
+        Assert.True(Fixture.SamePath(error.Repo, repo), error.ToString());
+        Assert.True(Fixture.SamePath(error.Path, gitdir), error.ToString());
+        Assert.Contains("git worktree prune", error.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>A <c>gitdir</c> file naming a worktree git's list does not hold is reported by the comparison alone.</summary>
+    [Fact]
+    public void GitdirNamingAnUnlistedWorktreeIsReported()
+    {
+        using var fx = new Fixture();
+        string repo = fx.Repo("repo");
+        string wt = fx.PathTo("repo.wt/feat");
+        Fixture.AddWorktree(repo, wt, "feat");
+        IReadOnlyList<WorktreeRecord> listed = Discoverer.ListWorktrees(repo);
+        string id = Assert.Single(Directory.GetDirectories(Path.Join(repo, ".git", "worktrees")));
+        string gitdir = Path.Join(id, "gitdir");
+        string elsewhere = fx.PathTo("elsewhere");
+        Directory.CreateDirectory(elsewhere);
+        File.WriteAllText(gitdir, Path.Join(elsewhere, ".git"));
+
+        List<DiscoveryError> errors = Discoverer.LeftOutWorktrees(repo, listed);
+
+        DiscoveryError error = Assert.Single(errors);
+        Assert.True(Fixture.SamePath(error.Repo, repo), error.ToString());
+        Assert.True(Fixture.SamePath(error.Path, gitdir), error.ToString());
+        Assert.Equal($"git's worktree list leaves out the worktree its gitdir file names: {elsewhere}", error.Message);
+    }
+
+    /// <summary>A worktree git registered with relative paths (git 2.48+) is matched, not reported as left out.</summary>
+    [Fact]
+    public void RelativeGitdirIsMatched()
+    {
+        using var fx = new Fixture();
+        string repo = fx.Repo("repo");
+        string wt = fx.PathTo("repo.wt/feat");
+        Fixture.Git(repo, ["-c", "worktree.useRelativePaths=true", "worktree", "add", "-q", "-b", "feat", wt]);
+
+        DiscoveryResult found = Discoverer.Discover(fx.Root);
+
+        Assert.Empty(found.Errors);
+        _ = RegisteredAt(found, wt);
     }
 
     /// <summary>A <c>\\?\</c> or <c>\??\</c> prefix is removed, except before <c>UNC\</c>; a plain path is unchanged.</summary>

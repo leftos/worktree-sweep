@@ -31,14 +31,17 @@ public static class ReportTable
     /// </summary>
     /// <param name="report">The report.</param>
     /// <param name="nowUnix">The time ages are measured from, in Unix seconds.</param>
-    /// <returns>The table, or a one-line message when there are no candidates.</returns>
+    /// <returns>
+    /// The table, or a one-line message when there are no candidates, followed by one <c>discovery error: {path}: {message}</c> line
+    /// per <see cref="ScanReport.DiscoveryErrors"/> entry, in its order and each on one line.
+    /// </returns>
     public static string Render(ScanReport report, long nowUnix)
     {
         ArgumentNullException.ThrowIfNull(report);
         IReadOnlyList<Candidate> candidates = report.Ordered();
         if (candidates.Count == 0)
         {
-            return $"No worktrees or orphan folders found under {report.Root}.\n";
+            return WithDiscoveryErrors($"No worktrees or orphan folders found under {report.Root}.\n", report);
         }
         Row[] rows = [.. candidates.Select(candidate => RowOf(candidate, report.Root, nowUnix))];
         Column[] columns =
@@ -59,8 +62,28 @@ public static class ReportTable
         {
             table.Append(line).Append('\n');
         }
-        return table.ToString();
+        return WithDiscoveryErrors(table.ToString(), report);
     }
+
+    /// <summary>Appends one <c>discovery error: {path}: {message}</c> line per <see cref="ScanReport.DiscoveryErrors"/> entry.</summary>
+    /// <param name="text">What <see cref="Render"/> printed.</param>
+    /// <param name="report">The report.</param>
+    /// <returns>The text with the discovery error lines after it.</returns>
+    private static string WithDiscoveryErrors(string text, ScanReport report)
+    {
+        var lines = new StringBuilder(text);
+        foreach (DiscoveryError error in report.DiscoveryErrors)
+        {
+            lines.Append("discovery error: ").Append(RelativePath(error.Path, report.Root)).Append(": ").Append(OneLine(error.Message)).Append('\n');
+        }
+        return lines.ToString();
+    }
+
+    /// <summary><paramref name="message"/> with its line breaks, <c>\r\n</c> then <c>\n</c>, replaced by <c>; </c>.</summary>
+    /// <param name="message">The message.</param>
+    /// <returns>The message on one line.</returns>
+    private static string OneLine(string message) =>
+        message.Replace("\r\n", "; ", StringComparison.Ordinal).Replace("\n", "; ", StringComparison.Ordinal);
 
     /// <summary>
     /// <paramref name="path"/> relative to <paramref name="root"/> when it lies under it, the two compared by

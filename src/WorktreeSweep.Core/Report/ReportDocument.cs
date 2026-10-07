@@ -11,6 +11,8 @@ internal sealed record ReportDocument
 
     public required IReadOnlyList<RepoReport> Repos { get; init; }
 
+    public required IReadOnlyList<DiscoveryError> DiscoveryErrors { get; init; }
+
     public required IReadOnlyList<CandidateDocument> Candidates { get; init; }
 
     /// <summary>The document of a report.</summary>
@@ -21,6 +23,7 @@ internal sealed record ReportDocument
         {
             Root = report.Root,
             Repos = report.Repos,
+            DiscoveryErrors = report.DiscoveryErrors,
             Candidates = [.. report.Candidates.Select(CandidateDocument.From)],
         };
 }

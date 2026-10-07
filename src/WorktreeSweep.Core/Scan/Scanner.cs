@@ -37,6 +37,7 @@ public static class Scanner
         {
             Root = discovery.Root,
             Repos = [.. repos.Select(repo => new RepoReport { Path = repo.Repo.Path, DefaultBranches = repo.Defaults })],
+            DiscoveryErrors = discovery.Errors,
             Candidates = SignalReader.ParallelMap(jobs, ReadCandidate),
         };
     }

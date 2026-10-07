@@ -11,6 +11,12 @@ public sealed record ScanReport
     /// <summary>Gets the repos at depth 1 of the root.</summary>
     public required IReadOnlyList<RepoReport> Repos { get; init; }
 
+    /// <summary>
+    /// Gets the problems discovery met while listing the repos' worktrees, one per failed list, unreadable folder or left-out
+    /// worktree; see <see cref="DiscoveryError"/>.
+    /// </summary>
+    public required IReadOnlyList<DiscoveryError> DiscoveryErrors { get; init; }
+
     /// <summary>Gets the folders the tool offers to remove, in the order the scan found them.</summary>
     public required IReadOnlyList<Candidate> Candidates { get; init; }
 
