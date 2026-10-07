@@ -73,6 +73,24 @@ public static class PermanentDelete
         Unlink(path, path, entry);
     }
 
+    /// <summary>
+    /// Fails when <paramref name="path"/>, a folder at scan time, is now a junction or symbolic link: recycling or deleting it as a
+    /// folder would act on a link the user never picked.
+    /// </summary>
+    /// <param name="path">The folder about to be recycled or deleted.</param>
+    /// <exception cref="LockedException">Reading it hit a sharing violation or was denied.</exception>
+    /// <exception cref="IOException">
+    /// It is a link now (<c>&lt;path&gt; became a link since the scan; left in place</c>), or it cannot be read.
+    /// </exception>
+    internal static void RejectLink(string path)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(path);
+        if (Discoverer.IsLink(Metadata(path, path)))
+        {
+            throw new IOException($"{path} became a link since the scan; left in place");
+        }
+    }
+
     /// <summary>Empties <paramref name="dir"/> child by child, then clears its read-only attribute and removes the folder itself.</summary>
     /// <param name="root">The path the caller asked to delete, named by a lock.</param>
     /// <param name="dir">The folder being emptied.</param>
