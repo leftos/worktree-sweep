@@ -1,5 +1,7 @@
 using System.Runtime.ExceptionServices;
+using System.Windows.Interop;
 using System.Windows.Threading;
+using WorktreeSweep.Recycle;
 using WorktreeSweep.Report;
 using WorktreeSweep.Unlock;
 using WorktreeSweep.ViewModels;
@@ -49,6 +51,49 @@ public sealed class MainWindowTests
 
         failure?.Throw();
         Assert.Equal(@"worktree-sweep — C:\fixture", title);
+    }
+
+    /// <summary>
+    /// Creating the window's handle points <see cref="WindowWorkers.OwnerWindow"/> at it, so the Shell's prompts are owned by the window
+    /// without ever showing it.
+    /// </summary>
+    [Fact]
+    public void CreatingTheWindowHandleSetsTheOwnerWindow()
+    {
+        ExceptionDispatchInfo? failure = null;
+        nint owner = ShellRecycler.NoOwner;
+        nint? handle = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                var main = new MainViewModel(_ => TimeSpan.Zero);
+                var workers = new WindowWorkers(main, IdleSeams());
+                var window = new MainWindow(main, workers, @"C:\fixture");
+                handle = new WindowInteropHelper(window).EnsureHandle();
+                owner = workers.OwnerWindow;
+                window.Close();
+            }
+#pragma warning disable CA1031 // The failure is rethrown on the test's thread below.
+            catch (Exception error)
+#pragma warning restore CA1031
+            {
+                failure = ExceptionDispatchInfo.Capture(error);
+            }
+            finally
+            {
+                Dispatcher.CurrentDispatcher.InvokeShutdown();
+            }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+
+        thread.Start();
+        Assert.True(thread.Join(LoadTimeout), $"the window did not load within {LoadTimeout}");
+
+        failure?.Throw();
+        Assert.NotNull(handle);
+        Assert.NotEqual(ShellRecycler.NoOwner, owner);
+        Assert.Equal(handle.Value, owner);
     }
 
     /// <summary>Seams that start no job and touch no disk: a scan that finds nothing, never run.</summary>
