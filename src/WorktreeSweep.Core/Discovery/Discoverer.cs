@@ -23,7 +23,8 @@ public static class Discoverer
     private const char Separator = '\\';
     private const string GitdirPrefix = "gitdir:";
 
-    private static readonly EnumerationOptions AllEntries = new() { AttributesToSkip = 0, IgnoreInaccessible = false };
+    /// <summary>Lists every entry, hidden and system ones included, and fails on a folder it cannot read rather than skipping it.</summary>
+    internal static EnumerationOptions AllEntries { get; } = new() { AttributesToSkip = 0, IgnoreInaccessible = false };
 
     /// <summary>Finds the repos, registered worktrees, container dirs and orphans under <paramref name="root"/>.</summary>
     /// <remarks>
