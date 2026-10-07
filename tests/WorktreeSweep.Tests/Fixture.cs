@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using WorktreeSweep.Discovery;
 using WorktreeSweep.Git;
 
 namespace WorktreeSweep.Tests;
@@ -117,7 +118,7 @@ public sealed class Fixture : IDisposable
     /// <param name="b">The other path.</param>
     /// <returns><see langword="true"/> when their keys are equal.</returns>
     public static bool SamePath(string a, string b) =>
-        string.Equals(PathKey(NativeMethods.LongPath(a)), PathKey(NativeMethods.LongPath(b)), StringComparison.Ordinal);
+        string.Equals(Discoverer.PathKey(NativeMethods.LongPath(a)), Discoverer.PathKey(NativeMethods.LongPath(b)), StringComparison.Ordinal);
 
     /// <summary>
     /// Deletes the root folder. A failure is reported as a diagnostic message naming the folder, and the folder is left, so it never
@@ -146,16 +147,6 @@ public sealed class Fixture : IDisposable
         Environment.SetEnvironmentVariable("GIT_CONFIG_NOSYSTEM", "1");
         Environment.SetEnvironmentVariable("GIT_CONFIG_GLOBAL", empty);
         return empty;
-    }
-
-    private static string PathKey(string path)
-    {
-        string key = path.Replace('/', '\\').ToLowerInvariant();
-        while (key.Length > 1 && key.EndsWith('\\') && !key.EndsWith(":\\", StringComparison.Ordinal))
-        {
-            key = key[..^1];
-        }
-        return key;
     }
 
     private static void DeleteTree(DirectoryInfo dir)
