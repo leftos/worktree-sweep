@@ -22,7 +22,8 @@ public static partial class SignalReader
 
     /// <summary>
     /// Finds a repo's default branches: <c>refs/remotes/origin/HEAD</c> for the origin default; for the local default, the local
-    /// branch of the same name, else <c>main</c>, else <c>master</c>.
+    /// branch of the same name, else <c>main</c>, else <c>master</c>. An <c>origin/HEAD</c> that points to a branch that does not
+    /// exist is dropped, with a traced warning, and the local default falls back to <c>main</c>, else <c>master</c>.
     /// </summary>
     /// <param name="repo">A folder inside the repo.</param>
     /// <returns>The defaults that exist.</returns>
@@ -32,6 +33,11 @@ public static partial class SignalReader
         ArgumentNullException.ThrowIfNull(repo);
         GitStatus symref = GitRunner.RunStatus(repo, ["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"]);
         string? origin = symref.Success ? StripPrefix(symref.Stdout.Trim(), "refs/remotes/") : null;
+        if (origin is not null && !RefExists(repo, "refs/remotes/" + origin))
+        {
+            Trace.TraceWarning($"repo {repo}: origin/HEAD points to {origin}, which does not exist; fix it with git remote set-head origin --auto");
+            origin = null;
+        }
         var names = new List<string>();
         if (origin is not null && StripPrefix(origin, "origin/") is { } originName)
         {
