@@ -39,8 +39,8 @@ public static class ReleasedMarker
     /// </summary>
     /// <param name="commonDir">The repo's common git dir (<c>git rev-parse --git-common-dir</c>); <see langword="null"/> when unknown.</param>
     /// <param name="worktree">
-    /// The worktree folder; compared after <see cref="PathResolver.Resolve"/>, so any spelling of the folder (<c>.</c> and <c>..</c>
-    /// folded, a subst drive, an 8.3 name, a <c>\\?\</c> prefix and a junction included) matches.
+    /// The worktree folder; its parent is resolved (<c>.</c> and <c>..</c> folded, a subst drive, an 8.3 name, a <c>\\?\</c> prefix
+    /// and a junction included) and its leaf compares in long form when it exists, as spelled when it does not.
     /// </param>
     /// <returns>The admin dir; <see langword="null"/> when none is found.</returns>
     /// <exception cref="ArgumentException"><paramref name="commonDir"/> is not a full path, as git prints it relative to where it ran.</exception>
@@ -56,8 +56,9 @@ public static class ReleasedMarker
         {
             return admin;
         }
-        string wanted = Discoverer.PathKey(PathResolver.Resolve(worktree));
-        return AdminEntries(Path.Join(commonDir, "worktrees")).FirstOrDefault(entry => PointsAt(entry, wanted));
+        var parents = new Dictionary<string, string>(StringComparer.Ordinal);
+        string wanted = Discoverer.PathKey(PathResolver.ResolveParent(worktree, parents));
+        return AdminEntries(Path.Join(commonDir, "worktrees")).FirstOrDefault(entry => PointsAt(entry, wanted, parents));
     }
 
     /// <summary>Reads the marker in an admin dir.</summary>
@@ -114,9 +115,14 @@ public static class ReleasedMarker
     /// <summary>
     /// Whether the <c>gitdir</c> file of an admin entry points at the <c>.git</c> of the worktree keyed <paramref name="wanted"/>. The
     /// entry is a full path (the common dir is), so a relative target joined to it is one too, and <see cref="Path.GetFullPath(string)"/>
-    /// only folds its <c>.</c> and <c>..</c>, never consulting the current directory.
+    /// only folds its <c>.</c> and <c>..</c>, never consulting the current directory. The worktree is keyed with its parent resolved
+    /// (<c>PathResolver.ResolveParent</c>), sharing <paramref name="parents"/> so a parent folder is resolved once per call.
     /// </summary>
-    private static bool PointsAt(string entry, string wanted)
+    /// <param name="entry">The admin entry, <c>{commonDir}\worktrees\{id}</c>.</param>
+    /// <param name="wanted">The key of the worktree looked for.</param>
+    /// <param name="parents">The cache of resolved parents shared by the call.</param>
+    /// <returns><see langword="true"/> when the entry points at the worktree.</returns>
+    private static bool PointsAt(string entry, string wanted, Dictionary<string, string> parents)
     {
         string gitdirFile = Path.Join(entry, "gitdir");
         string text;
@@ -132,6 +138,7 @@ public static class ReleasedMarker
         string target = Discoverer.FromGitPath(text.Trim());
         string dotGit = Path.GetFullPath(Path.IsPathFullyQualified(target) ? target : Path.Join(entry, target));
         string? worktree = Path.GetDirectoryName(dotGit);
-        return worktree is not null && string.Equals(Discoverer.PathKey(PathResolver.Resolve(worktree)), wanted, StringComparison.Ordinal);
+        return worktree is not null
+            && string.Equals(Discoverer.PathKey(PathResolver.ResolveParent(worktree, parents)), wanted, StringComparison.Ordinal);
     }
 }

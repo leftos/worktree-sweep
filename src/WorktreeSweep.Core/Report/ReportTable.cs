@@ -39,11 +39,12 @@ public static class ReportTable
     {
         ArgumentNullException.ThrowIfNull(report);
         IReadOnlyList<Candidate> candidates = report.Ordered();
+        string rootKey = Discoverer.PathKey(PathResolver.Resolve(report.Root));
         if (candidates.Count == 0)
         {
-            return WithDiscoveryErrors($"No worktrees or orphan folders found under {report.Root}.\n", report);
+            return WithDiscoveryErrors($"No worktrees or orphan folders found under {report.Root}.\n", report, rootKey);
         }
-        Row[] rows = [.. candidates.Select(candidate => RowOf(candidate, report.Root, nowUnix))];
+        Row[] rows = [.. candidates.Select(candidate => RowOf(candidate, rootKey, nowUnix))];
         Column[] columns =
         [
             new("#", true, [.. Enumerable.Range(1, rows.Length).Select(index => index.ToString(CultureInfo.InvariantCulture))]),
@@ -62,19 +63,25 @@ public static class ReportTable
         {
             table.Append(line).Append('\n');
         }
-        return WithDiscoveryErrors(table.ToString(), report);
+        return WithDiscoveryErrors(table.ToString(), report, rootKey);
     }
 
     /// <summary>Appends one <c>discovery error: {path}: {message}</c> line per <see cref="ScanReport.DiscoveryErrors"/> entry.</summary>
     /// <param name="text">What <see cref="Render"/> printed.</param>
     /// <param name="report">The report.</param>
+    /// <param name="rootKey">The scanned root's resolved <see cref="Discoverer.PathKey"/>.</param>
     /// <returns>The text with the discovery error lines after it.</returns>
-    private static string WithDiscoveryErrors(string text, ScanReport report)
+    private static string WithDiscoveryErrors(string text, ScanReport report, string rootKey)
     {
         var lines = new StringBuilder(text);
         foreach (DiscoveryError error in report.DiscoveryErrors)
         {
-            lines.Append("discovery error: ").Append(RelativePath(error.Path, report.Root)).Append(": ").Append(OneLine(error.Message)).Append('\n');
+            lines
+                .Append("discovery error: ")
+                .Append(RelativePathToRootKey(error.Path, rootKey))
+                .Append(": ")
+                .Append(OneLine(error.Message))
+                .Append('\n');
         }
         return lines.ToString();
     }
@@ -86,24 +93,35 @@ public static class ReportTable
         message.Replace("\r\n", "; ", StringComparison.Ordinal).Replace("\n", "; ", StringComparison.Ordinal);
 
     /// <summary>
-    /// <paramref name="path"/> relative to <paramref name="root"/> when it lies under it, the two compared resolved by
-    /// <see cref="PathResolver.Resolve"/> and keyed by <see cref="Discoverer.PathKey"/>; else <paramref name="path"/> whole, as it is
-    /// when it is the root itself. The relative part is the resolved path's tail, so it shows the same spelling whichever way
-    /// <paramref name="path"/> came in, without a trailing separator.
+    /// <paramref name="path"/> relative to <paramref name="root"/> when it lies under it, the two compared by
+    /// <see cref="Discoverer.PathKey"/> over <see cref="PathResolver.Resolve"/>d spellings; else <paramref name="path"/> whole, in
+    /// the same resolved-parent spelling. The path's own leaf is never resolved through, so a folder that is a junction shows its
+    /// own name rather than its target's, and the relative part drops a trailing separator.
     /// </summary>
     /// <param name="path">The path to show.</param>
     /// <param name="root">The scanned root.</param>
     /// <returns>The path to show.</returns>
     public static string RelativePath(string path, string root)
     {
-        ArgumentNullException.ThrowIfNull(path);
         ArgumentNullException.ThrowIfNull(root);
-        string rootKey = Discoverer.PathKey(PathResolver.Resolve(root));
+        return RelativePathToRootKey(path, Discoverer.PathKey(PathResolver.Resolve(root)));
+    }
+
+    /// <summary>
+    /// <see cref="RelativePath(string, string)"/> with the resolved root's <see cref="Discoverer.PathKey"/> already in hand, so a
+    /// table of many paths resolves the root once.
+    /// </summary>
+    /// <param name="path">The path to show.</param>
+    /// <param name="rootKey">The resolved root's <see cref="Discoverer.PathKey"/>.</param>
+    /// <returns>The path to show.</returns>
+    internal static string RelativePathToRootKey(string path, string rootKey)
+    {
+        ArgumentNullException.ThrowIfNull(path);
         string prefix = rootKey.EndsWith('\\') ? rootKey : rootKey + '\\';
-        string resolved = PathResolver.Resolve(path);
+        string resolved = PathResolver.ResolveParent(path);
         string pathKey = Discoverer.PathKey(resolved);
         bool under = pathKey.Length > prefix.Length && pathKey.StartsWith(prefix, StringComparison.Ordinal);
-        return under ? resolved[prefix.Length..pathKey.Length] : path;
+        return under ? resolved[prefix.Length..pathKey.Length] : resolved;
     }
 
     /// <summary>A byte count with one decimal in binary units (<c>512 B</c>, <c>1.5 KB</c>, <c>28.9 GB</c>), rounded half up.</summary>
@@ -165,20 +183,20 @@ public static class ReportTable
         return difference < 0 ? long.MaxValue : difference;
     }
 
-    private static Row RowOf(Candidate candidate, string root, long nowUnix) =>
+    private static Row RowOf(Candidate candidate, string rootKey, long nowUnix) =>
         candidate switch
         {
-            RegisteredCandidate registered => RegisteredRow(registered, root, nowUnix),
-            OrphanCandidate orphan => OrphanRow(orphan, root, nowUnix),
+            RegisteredCandidate registered => RegisteredRow(registered, rootKey, nowUnix),
+            OrphanCandidate orphan => OrphanRow(orphan, rootKey, nowUnix),
             _ => throw new ArgumentException($"unknown candidate type {candidate.GetType().Name}", nameof(candidate)),
         };
 
-    private static Row RegisteredRow(RegisteredCandidate registered, string root, long nowUnix)
+    private static Row RegisteredRow(RegisteredCandidate registered, string rootKey, long nowUnix)
     {
         WorktreeSignals signals = registered.Signals;
         return new Row
         {
-            Path = RelativePath(registered.Path, root),
+            Path = RelativePathToRootKey(registered.Path, rootKey),
             Kind = "worktree",
             Branch = TruncateEnd(registered.Record.Branch ?? "", MaxBranchWidth),
             Merge = signals.MergeState is null ? "" : MergeWord(signals.MergeState),
@@ -208,7 +226,7 @@ public static class ReportTable
         return string.Join(", ", flags);
     }
 
-    private static Row OrphanRow(OrphanCandidate candidate, string root, long nowUnix)
+    private static Row OrphanRow(OrphanCandidate candidate, string rootKey, long nowUnix)
     {
         Orphan orphan = candidate.Orphan;
         bool isLink = orphan.Kind == OrphanKind.Link;
@@ -223,7 +241,7 @@ public static class ReportTable
         }
         return new Row
         {
-            Path = RelativePath(orphan.Path, root),
+            Path = RelativePathToRootKey(orphan.Path, rootKey),
             Kind = isLink ? "link" : "orphan",
             Active = candidate.Size.LastWriteUnix is long then ? Age(then, nowUnix) : "",
             Size = isLink ? "" : HumanBytes(candidate.Size.Bytes),
