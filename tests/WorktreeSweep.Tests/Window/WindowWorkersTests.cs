@@ -240,6 +240,85 @@ public sealed class WindowWorkersTests
         Assert.True(workers.RequestClose());
     }
 
+    /// <summary>A capacity read that throws counts as an unknown capacity, and Review still leaves Preparing.</summary>
+    [Fact]
+    public void CapacityReadThatThrowsCountsAsUnknown()
+    {
+        var main = new MainViewModel(_ => TimeSpan.Zero);
+        RegisteredCandidate b = ViewModelSamples.Worktree("b", MergeState.Ancestor, 20);
+        WindowSeams seams = Seams(A, b) with
+        {
+            ReadCapacity = path => path == A.Path ? throw new ArgumentException("bad path") : ViewModelSamples.Roomy,
+        };
+        new WindowWorkers(main, seams).Start(ReportSamples.Root);
+
+        ListViewModel list = ViewModelSamples.ListOf(main);
+        list.TickAllCommand.Execute(null);
+        list.ReviewCommand.Execute(null);
+
+        Assert.Equal(Screen.Review, main.Screen);
+        Assert.NotEqual(ReviewState.Preparing, main.Review?.State);
+    }
+
+    /// <summary>A completed scan the window cannot show is shown as a failed scan.</summary>
+    [Fact]
+    public void ScanCompletedThatThrowsShowsScanFailed()
+    {
+        var main = new MainViewModel(_ => TimeSpan.Zero);
+        WindowSeams seams = Seams() with { Scan = _ => null! };
+
+        new WindowWorkers(main, seams).Start(ReportSamples.Root);
+
+        Assert.Equal(Screen.Failed, main.Screen);
+        Assert.StartsWith("Scan failed: ", main.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>A finished removal the window cannot show is shown as a failed removal.</summary>
+    [Fact]
+    public void FinishedThatThrowsShowsRemovalFailed()
+    {
+        var main = new MainViewModel(_ => TimeSpan.Zero);
+        WindowSeams seams = Seams(A) with { RemovePicks = (_, _, _, _) => null! };
+        new WindowWorkers(main, seams).Start(ReportSamples.Root);
+
+        Confirm(main);
+
+        Assert.Equal(Screen.Failed, main.Screen);
+        Assert.StartsWith("Removal failed: ", main.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>An unlock offer that throws is shown as skipped, and the removal it ends as failed.</summary>
+    [Fact]
+    public void OfferUnlockThatThrowsShowsSkippedThenRemovalFailed()
+    {
+        var main = new MainViewModel(_ => TimeSpan.Zero);
+        RemovingViewModel? removing = null;
+        main.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(MainViewModel.Removing) && main.Removing is { } started)
+            {
+                removing = started;
+            }
+        };
+        WindowSeams seams = Seams(A) with
+        {
+            RemovePicks = (decisions, _, offerUnlock, _) =>
+            {
+                offerUnlock([A.Path]);
+                return Recycled(decisions);
+            },
+            OfferUnlock = _ => throw new InvalidOperationException("boom"),
+        };
+        new WindowWorkers(main, seams).Start(ReportSamples.Root);
+
+        Confirm(main);
+
+        Assert.Equal("Unlock: Skipped", removing?.Banner);
+        Assert.Null(removing?.Notice);
+        Assert.Equal(Screen.Failed, main.Screen);
+        Assert.Equal("Removal failed: boom", main.Message);
+    }
+
     /// <summary>
     /// Seams whose scan finds <paramref name="candidates"/>, whose every volume has a roomy bin, whose removal recycles every pick,
     /// whose unlock step is skipped, and which run every job and every dispatch at once on the calling thread.

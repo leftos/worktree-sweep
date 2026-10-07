@@ -19,7 +19,9 @@ namespace WorktreeSweep;
 internal static class Program
 {
     private const int Success = 0;
-    private const int Failure = 1;
+
+    /// <summary>The exit code of a run that failed.</summary>
+    internal const int Failure = 1;
     private const int UsageError = 2;
 
     /// <summary>The environment variable that, set to <c>debug</c>, shows debug traces on standard error.</summary>

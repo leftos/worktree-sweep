@@ -46,7 +46,7 @@ public sealed record WindowSeams
             ReadCapacity = RemovalPlanner.ReadCapacity,
             RemovePicks = Remover.RemovePicks,
             OfferUnlock = paths => new UnlockOffer(Console.In, Console.Out, new SudoRunner(), SweepProcess.Current()).Offer(paths),
-            RunInBackground = action => new Thread(() => action()) { IsBackground = true }.Start(),
+            RunInBackground = action => new Thread(new ThreadStart(action)) { IsBackground = true }.Start(),
             RunOnStaThread = StartStaThread,
             Dispatcher = dispatcher,
         };
@@ -55,7 +55,7 @@ public sealed record WindowSeams
     /// <param name="action">The job.</param>
     private static void StartStaThread(Action action)
     {
-        var thread = new Thread(() => action());
+        var thread = new Thread(new ThreadStart(action));
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
     }

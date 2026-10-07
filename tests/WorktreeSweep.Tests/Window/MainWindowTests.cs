@@ -10,6 +10,7 @@ namespace WorktreeSweep.Tests.Window;
 /// <summary>The window's XAML, loaded without showing the window.</summary>
 public sealed class MainWindowTests
 {
+    /// <summary>How long the window may take to build and close on its thread before the test fails.</summary>
     private static readonly TimeSpan LoadTimeout = TimeSpan.FromSeconds(30);
 
     /// <summary>

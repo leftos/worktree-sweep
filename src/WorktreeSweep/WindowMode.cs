@@ -5,11 +5,12 @@ using WorktreeSweep.Window;
 namespace WorktreeSweep;
 
 /// <summary>The default mode: the window, which scans the root, lets the user pick and removes the picks.</summary>
-internal static class WindowMode
+public static class WindowMode
 {
     /// <summary>Shows the window on this thread, which must be STA, and waits for it to close.</summary>
     /// <param name="root">The folder to scan, as given on the command line.</param>
-    /// <returns>0, once the window has closed; 1, with the reason on standard error, when <paramref name="root"/> is not a path.</returns>
+    /// <returns>0, once the window has closed; 1, with the reason on standard error and no window, when <paramref name="root"/> is
+    /// not a usable path.</returns>
     public static int Run(string root)
     {
         string fullRoot;
@@ -17,10 +18,10 @@ internal static class WindowMode
         {
             fullRoot = Path.GetFullPath(root);
         }
-        catch (ArgumentException error)
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
         {
             Console.Error.WriteLine($"Error: {error.Message}");
-            return 1;
+            return Program.Failure;
         }
         var app = new App();
         var main = new MainViewModel(LocalOffset);
