@@ -5,6 +5,8 @@
     <UseWPF>true</UseWPF>
     <AssemblyName>worktree-sweep</AssemblyName>
     <RootNamespace>WorktreeSweep</RootNamespace>
+    <Version>0.1.0</Version>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>
 
   <ItemGroup>
