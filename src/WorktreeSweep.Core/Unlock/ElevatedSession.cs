@@ -13,7 +13,14 @@ namespace WorktreeSweep.Unlock;
 /// <param name="output">Where the session prints, flushed before every read.</param>
 /// <param name="handleExe">The <c>handle.exe</c> the session dumps and closes handles through.</param>
 /// <param name="processes">The process table and the stop operation.</param>
-public sealed class ElevatedSession(TextReader input, TextWriter output, IHandleExe handleExe, IProcessControl processes)
+/// <param name="handleExeCanName">Whether <c>handle.exe</c> can print a path at all; one it cannot is never reported clear.</param>
+public sealed class ElevatedSession(
+    TextReader input,
+    TextWriter output,
+    IHandleExe handleExe,
+    IProcessControl processes,
+    Func<string, bool> handleExeCanName
+)
 {
     /// <summary>How many of a locker's handles the description shows before it says how many it left out.</summary>
     private const int ShownHandles = 5;
@@ -24,7 +31,11 @@ public sealed class ElevatedSession(TextReader input, TextWriter output, IHandle
     /// <summary>The caller verdict for each locker PID offered so far, so a PID is judged, and its warning written, once.</summary>
     private readonly Dictionary<int, bool> callerVerdicts = [];
 
-    /// <summary>Runs the session, scanning, offering and acting until nothing holds the files or the user ends it.</summary>
+    /// <summary>
+    /// Runs the session, scanning, offering and acting until nothing holds the files or the user ends it. A path
+    /// <c>handle.exe</c> cannot name is warned about before the first scan, and the session never reports clear while one is in
+    /// play: nothing it can see holding the others is no proof about that path.
+    /// </summary>
     /// <param name="paths">The folders whose open handles are cleared.</param>
     /// <param name="callerPid">The process that started the unelevated run, usually the user's shell, whose stopping is not the
     /// default; <see langword="null"/> when it is not known.</param>
@@ -32,13 +43,21 @@ public sealed class ElevatedSession(TextReader input, TextWriter output, IHandle
     /// when it is not known.</param>
     /// <param name="sweepPid">The unelevated worktree-sweep, which with its children is never offered; <see langword="null"/>
     /// when it is not known.</param>
-    /// <returns><see cref="UnlockExit.AllClear"/> when nothing holds the files, <see cref="UnlockExit.SomeLeft"/> when something
-    /// still does after an action, otherwise <see cref="UnlockExit.NothingDone"/>.</returns>
+    /// <returns><see cref="UnlockExit.AllClear"/> when nothing holds the files and <c>handle.exe</c> can name every path,
+    /// <see cref="UnlockExit.SomeLeft"/> when something still does after an action, otherwise
+    /// <see cref="UnlockExit.NothingDone"/>.</returns>
     /// <exception cref="UnlockException"><c>handle.exe</c> is missing or fails.</exception>
     /// <exception cref="Win32Exception">The process table cannot be read.</exception>
     public int Run(IReadOnlyList<string> paths, int? callerPid, ulong? callerStarted, int? sweepPid)
     {
         ArgumentNullException.ThrowIfNull(paths);
+        IReadOnlyList<string> unnameable = [.. paths.Where(path => !handleExeCanName(path))];
+        foreach (string path in unnameable)
+        {
+            Say(
+                $"handle.exe cannot name files under {path}: its path holds characters outside this machine's code pages; close what holds it by hand."
+            );
+        }
         IReadOnlySet<int> excluded = ProcessTable.ExcludedPids(Environment.ProcessId, sweepPid, processes.Snapshot(), processes.StartedAt);
         bool acted = false;
         bool finished = false;
@@ -48,8 +67,10 @@ public sealed class ElevatedSession(TextReader input, TextWriter output, IHandle
             IReadOnlyList<Locker> lockers = LockerFinder.Find(handleExe.Dump(), paths, excluded, processes.StartedAt);
             if (lockers.Count == 0)
             {
-                Say("Nothing holds files under those folders.");
-                return UnlockExit.For(true, acted);
+                Say(
+                    unnameable.Count == 0 ? "Nothing holds files under those folders." : "Nothing handle.exe can see holds files under those folders."
+                );
+                return UnlockExit.For(unnameable.Count == 0, acted);
             }
             if (finished)
             {
