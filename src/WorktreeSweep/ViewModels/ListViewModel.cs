@@ -21,6 +21,9 @@ public sealed partial class ListViewModel : ObservableObject
     /// <summary>Enters Review with the ticked rows' indexes.</summary>
     private readonly Action<IReadOnlyList<int>> review;
 
+    /// <summary>Whether Tick all or Tick none is setting every row, so the header is announced once after the loop.</summary>
+    private bool settingTicks;
+
     /// <summary>Initializes a new instance of the <see cref="ListViewModel"/> class.</summary>
     /// <param name="rows">The table rows, in table order.</param>
     /// <param name="nowUnix">The time ages are measured from, in Unix seconds.</param>
@@ -94,22 +97,37 @@ public sealed partial class ListViewModel : ObservableObject
         review(ticked);
     }
 
-    /// <summary>Sets every row's tick.</summary>
+    /// <summary>Sets every row's tick, clears the message and announces the header once.</summary>
     /// <param name="ticked">The tick to set.</param>
     private void SetTicks(bool ticked)
     {
-        foreach (CandidateRowViewModel row in Rows)
+        settingTicks = true;
+        try
         {
-            row.IsTicked = ticked;
+            foreach (CandidateRowViewModel row in Rows)
+            {
+                row.IsTicked = ticked;
+            }
         }
+        finally
+        {
+            settingTicks = false;
+        }
+        Message = null;
+        OnPropertyChanged(nameof(Header));
     }
 
-    /// <summary>Refreshes the header when a row's tick changes.</summary>
+    /// <summary>Clears the message and refreshes the header when a row's tick changes.</summary>
     /// <param name="sender">The row.</param>
     /// <param name="e">Which property changed.</param>
     private void OnRowChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(CandidateRowViewModel.IsTicked))
+        if (e.PropertyName != nameof(CandidateRowViewModel.IsTicked))
+        {
+            return;
+        }
+        Message = null;
+        if (!settingTicks)
         {
             OnPropertyChanged(nameof(Header));
         }

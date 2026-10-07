@@ -21,8 +21,8 @@ public sealed partial class ReviewViewModel : ObservableObject
     /// <summary>Returns to the List.</summary>
     private readonly Action back;
 
-    /// <summary>Starts removing the decisions.</summary>
-    private readonly Action<IReadOnlyList<Decision>> startRemoval;
+    /// <summary>Starts removing the decisions, given with each one's path relative to the scanned root.</summary>
+    private readonly Action<IReadOnlyList<Decision>, IReadOnlyList<string>> startRemoval;
 
     /// <summary>The answers given for <see cref="answeredFor"/>, in the order asked.</summary>
     private readonly List<StoredAnswer> answers = [];
@@ -33,20 +33,23 @@ public sealed partial class ReviewViewModel : ObservableObject
     /// <summary>The ticked candidates, in table order.</summary>
     private IReadOnlyList<Candidate> picks = [];
 
+    /// <summary>The ticked candidates' paths as the List shows them, relative to the scanned root, in table order.</summary>
+    private IReadOnlyList<string> pickPaths = [];
+
     /// <summary>The questions, once the capacities are read.</summary>
     private ReviewSession? session;
 
-    /// <summary>The decisions awaiting Confirm.</summary>
+    /// <summary>The decisions awaiting Confirm; <see langword="null"/> outside Confirming.</summary>
     private IReadOnlyList<Decision>? decisions;
 
-    /// <summary>Whether the screen is showing, so a capacity reply is still wanted.</summary>
+    /// <summary>Whether the screen is showing, so a capacity reply and the screen's commands are still wanted.</summary>
     private bool open;
 
     /// <summary>Initializes a new instance of the <see cref="ReviewViewModel"/> class.</summary>
     /// <param name="report">The scan the picks come from.</param>
     /// <param name="back">Returns to the List.</param>
-    /// <param name="startRemoval">Starts removing the decisions.</param>
-    public ReviewViewModel(ScanReport report, Action back, Action<IReadOnlyList<Decision>> startRemoval)
+    /// <param name="startRemoval">Starts removing the decisions, given with each one's path relative to the scanned root.</param>
+    public ReviewViewModel(ScanReport report, Action back, Action<IReadOnlyList<Decision>, IReadOnlyList<string>> startRemoval)
     {
         ArgumentNullException.ThrowIfNull(report);
         ArgumentNullException.ThrowIfNull(back);
@@ -133,12 +136,14 @@ public sealed partial class ReviewViewModel : ObservableObject
         Advance(review);
     }
 
-    /// <summary>Answers the current question and moves to the next one, or past the last one. Does nothing unless asking.</summary>
+    /// <summary>
+    /// Answers the current question and moves to the next one, or past the last one. Does nothing unless asking, and once Review was
+    /// left.
+    /// </summary>
     /// <param name="yes">The answer.</param>
-    [RelayCommand]
     public void Answer(bool yes)
     {
-        if (State != ReviewState.Asking || session?.Current is not { } step)
+        if (!open || State != ReviewState.Asking || session?.Current is not { } step)
         {
             return;
         }
@@ -147,21 +152,22 @@ public sealed partial class ReviewViewModel : ObservableObject
         Advance(session);
     }
 
-    /// <summary>Starts waiting for the capacities of <paramref name="tickedPicks"/>, clearing the kept answers when the ticks changed.</summary>
+    /// <summary>Starts waiting for the capacities of the ticked candidates, clearing the kept answers when the ticks changed.</summary>
     /// <param name="tickedRows">The ticked rows' indexes, in table order.</param>
-    /// <param name="tickedPicks">The ticked candidates, in the same order.</param>
-    internal void Enter(IReadOnlyList<int> tickedRows, IReadOnlyList<Candidate> tickedPicks)
+    /// <param name="ticked">The ticked rows, in the same order.</param>
+    internal void Enter(IReadOnlyList<int> tickedRows, IReadOnlyList<CandidateRowViewModel> ticked)
     {
         if (!tickedRows.SequenceEqual(answeredFor))
         {
             answers.Clear();
             answeredFor = [.. tickedRows];
         }
-        picks = tickedPicks;
+        picks = [.. ticked.Select(row => row.Candidate)];
+        pickPaths = [.. ticked.Select(row => row.Path)];
         session = null;
         decisions = null;
         open = true;
-        CapacityPaths = [.. tickedPicks.Where(RemovalPlanner.NeedsCapacity).Select(pick => pick.Path)];
+        CapacityPaths = [.. picks.Where(RemovalPlanner.NeedsCapacity).Select(pick => pick.Path)];
         State = ReviewState.Preparing;
     }
 
@@ -178,29 +184,48 @@ public sealed partial class ReviewViewModel : ObservableObject
             _ => throw new UnreachableException($"unknown step kind {kind}"),
         };
 
-    /// <summary>Returns to the List, keeping the ticks and the answers.</summary>
+    /// <summary>Answers yes to the current question. Does nothing unless asking.</summary>
+    [RelayCommand]
+    private void AnswerYes() => Answer(true);
+
+    /// <summary>Answers no to the current question. Does nothing unless asking.</summary>
+    [RelayCommand]
+    private void AnswerNo() => Answer(false);
+
+    /// <summary>Returns to the List, keeping the ticks and the answers. Does nothing once Review was left.</summary>
     [RelayCommand]
     private void Back()
     {
-        open = false;
-        back();
-    }
-
-    /// <summary>Starts the removal the final sentence describes. Does nothing unless confirming.</summary>
-    [RelayCommand]
-    private void Confirm()
-    {
-        if (State != ReviewState.Confirming || decisions is null)
+        if (!open)
         {
             return;
         }
-        open = false;
-        startRemoval(decisions);
+        Leave();
+        back();
     }
 
-    /// <summary>Declines the final confirmation: returns to the List, keeping the ticks and the answers.</summary>
+    /// <summary>Starts the removal the final sentence describes. Does nothing unless confirming, and once Review was left.</summary>
+    [RelayCommand]
+    private void Confirm()
+    {
+        if (!open || State != ReviewState.Confirming || decisions is not { } confirmed)
+        {
+            return;
+        }
+        Leave();
+        startRemoval(confirmed, pickPaths);
+    }
+
+    /// <summary>Declines the final confirmation: returns to the List as <see cref="Back"/> does, keeping the ticks and the answers.</summary>
     [RelayCommand]
     private void Cancel() => Back();
+
+    /// <summary>Marks the screen as left and drops the decisions awaiting Confirm, so no command reuses them.</summary>
+    private void Leave()
+    {
+        open = false;
+        decisions = null;
+    }
 
     /// <summary>
     /// Shows <paramref name="review"/>'s next question, or once it is answered the final confirmation; with nothing to remove, starts
@@ -215,7 +240,7 @@ public sealed partial class ReviewViewModel : ObservableObject
             Title = labels.Title;
             YesLabel = labels.Yes;
             NoLabel = labels.No;
-            PickPath = ReportTable.RelativePath(picks[step.Pick].Path, report.Root);
+            PickPath = pickPaths[step.Pick];
             Body = step.Body;
             Question = step.Question;
             DefaultAnswer = step.DefaultAnswer;
@@ -226,8 +251,8 @@ public sealed partial class ReviewViewModel : ObservableObject
         IReadOnlyList<Decision> answered = review.Decisions() ?? throw new UnreachableException("an answered review has decisions");
         if (totals.Recycle + totals.Permanent + totals.Links + totals.Prunes == 0)
         {
-            open = false;
-            startRemoval(answered);
+            Leave();
+            startRemoval(answered, pickPaths);
             return;
         }
         decisions = answered;
