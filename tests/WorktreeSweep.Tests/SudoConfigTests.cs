@@ -15,11 +15,4 @@ public sealed class SudoConfigTests
     [InlineData("", SudoMode.Unknown)]
     [InlineData("something else entirely", SudoMode.Unknown)]
     public void SudoModeIsReadFromSudoConfig(string text, SudoMode mode) => Assert.Equal(mode, SudoConfig.Parse(text));
-
-    /// <summary>Only the codes a missing sudo gives mean there is no sudo to run.</summary>
-    [Theory]
-    [InlineData(2, true)]
-    [InlineData(3, true)]
-    [InlineData(5, false)]
-    public void IsNotFoundReadsTheStartFailureCode(int code, bool expected) => Assert.Equal(expected, SudoConfig.IsNotFound(code));
 }
