@@ -79,7 +79,7 @@ worktree-sweep unlock <PATH>...  # internal: runs elevated via sudo
      - The Shell moves the folder in one step or not at all; it was never seen to recycle part of a locked tree.
      - Measured 2026-09-27. A permanent delete uses `std::fs::remove_dir_all` after clearing read-only attributes, which git object files carry.
   3. On a sharing violation or access denied (Win32 32/5), hand off to the unlock flow and retry once.
-  4. For a registered worktree: `git worktree unlock` if it was git-locked, then `git worktree prune`. If the branch is `Ancestor`, `NoCommits`, `PatchesApplied` or `ContentContained`, offer `git branch -d`. For the last two, git may refuse `-d`, so offer `-D` with the reason shown.
+  4. For a registered worktree: `git worktree unlock` if it was git-locked, then `git worktree prune`. In the C# build, a git-locked worktree whose removal ends locked, failed or cancelled gets its lock and reason back (`CandidateRemover.GitRelock`). If the branch is `Ancestor`, `NoCommits`, `PatchesApplied` or `ContentContained`, offer `git branch -d`. For the last two, git may refuse `-d`, so offer `-D` with the reason shown.
 - **Recycle Bin capacity** (`recycle.rs`; C#: `Recycle/BinCapacityReader.cs`): `GetVolumeNameForVolumeMountPointW` gives the volume GUID, and `HKCU\...\BitBucket\Volume\{GUID}` holds `MaxCapacity` in MB and `NukeOnDelete`.
 - **`unlock.rs`:** the lock flow.
   - **One elevation per run.** Removal is two passes. Every pick that hits a lock is collected, and `unlock::offer(&[paths])` is called once for all of them. On `Unlocked` or `PartlyUnlocked`, each locked pick is retried once.
