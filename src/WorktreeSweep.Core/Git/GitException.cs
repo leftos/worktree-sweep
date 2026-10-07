@@ -1,7 +1,8 @@
 namespace WorktreeSweep.Git;
 
-/// <summary>A git command that could not be started, or that exited with a code its caller does not accept.</summary>
-public sealed class GitException : Exception
+/// <summary>A git command that could not be started, that exited with a code its caller does not accept, or that did not exit in
+/// time (<see cref="GitTimeoutException"/>).</summary>
+public class GitException : Exception
 {
     /// <summary>Initializes a new instance of the <see cref="GitException"/> class.</summary>
     public GitException() { }

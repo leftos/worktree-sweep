@@ -50,7 +50,9 @@ public static partial class SignalReader
 
     /// <summary>
     /// Reads every signal of a registered worktree. A signal that fails is left <see langword="null"/> and its error recorded in
-    /// <see cref="WorktreeSignals.Errors"/> and traced, so one broken worktree never hides the others.
+    /// <see cref="WorktreeSignals.Errors"/> and traced, so one broken worktree never hides the others. A git read that times out
+    /// (<see cref="GitTimeoutException"/>) means the worktree's volume is stalled, so its remaining signals are skipped, the size
+    /// walk included, with one notice recorded after the timeout's message.
     /// </summary>
     /// <param name="defaults">The default branches of the worktree's repo.</param>
     /// <param name="record">The worktree's record.</param>
@@ -64,12 +66,13 @@ public static partial class SignalReader
             return new WorktreeSignals();
         }
         string dir = record.Path;
-        var errors = new List<string>();
-        (MergeState State, string Against)? merge = Keep(errors, () => ReadMergeState(dir, defaults, record));
-        Dirty? dirty = Keep(errors, () => ReadDirty(dir));
-        Upstream? upstream = record.Branch is { } branch ? Keep(errors, () => ReadUpstream(dir, branch)) : null;
-        long? lastActivity = Keep(errors, () => LastActivity(dir));
-        foreach (string error in errors)
+        var reads = new SignalReads();
+        (MergeState State, string Against)? merge = reads.Read(() => ReadMergeState(dir, defaults, record));
+        Dirty? dirty = reads.Read(() => ReadDirty(dir));
+        Upstream? upstream = record.Branch is { } branch ? reads.Read(() => ReadUpstream(dir, branch)) : null;
+        long? lastActivity = reads.Read(() => LastActivity(dir));
+        SizeInfo? size = reads.Read(() => WalkSize(dir));
+        foreach (string error in reads.Errors)
         {
             Trace.TraceWarning($"worktree {dir}: {error}");
         }
@@ -80,8 +83,8 @@ public static partial class SignalReader
             Dirty = dirty,
             Upstream = upstream,
             LastActivityUnix = lastActivity,
-            Size = WalkSize(dir),
-            Errors = errors,
+            Size = size,
+            Errors = reads.Errors,
         };
     }
 
@@ -204,21 +207,6 @@ public static partial class SignalReader
             : throw new GitException($"`git rev-list --count {range}` in {dir} printed \"{text}\"");
     }
 
-    private static T? Keep<T>(List<string> errors, Func<T> read)
-    {
-        try
-        {
-            return read();
-        }
-#pragma warning disable CA1031 // Every failure of one signal is recorded, so one broken worktree never hides the others.
-        catch (Exception error)
-#pragma warning restore CA1031
-        {
-            errors.Add(error.Message);
-            return default;
-        }
-    }
-
     private static string? StripPrefix(string text, string prefix) =>
         text.StartsWith(prefix, StringComparison.Ordinal) ? text[prefix.Length..] : null;
 
@@ -245,5 +233,54 @@ public static partial class SignalReader
     {
         long seconds = new DateTimeOffset(utc).ToUnixTimeSeconds();
         return seconds >= 0 ? seconds : null;
+    }
+}
+
+/// <summary>
+/// Reads one worktree's signals in order, recording each failure's message. A read that fails with
+/// <see cref="GitTimeoutException"/> means the worktree's volume is stalled, where every later git call would wait the full time
+/// limit too: the remaining reads are skipped, each reporting <see langword="default"/>, and one notice is recorded after the
+/// timeout's own message instead.
+/// </summary>
+internal sealed class SignalReads
+{
+    /// <summary>The notice recorded once after the message of the read that timed out.</summary>
+    public const string TimeoutNotice = "git timed out; remaining signals skipped";
+
+    private readonly List<string> _errors = [];
+    private bool _timedOut;
+
+    /// <summary>The failures' messages, in order, plus the one skip notice a timeout adds.</summary>
+    public IReadOnlyList<string> Errors => _errors;
+
+    /// <summary>Runs <paramref name="read"/> and returns its result.</summary>
+    /// <typeparam name="T">The signal's type.</typeparam>
+    /// <param name="read">The read; not called once an earlier read has timed out.</param>
+    /// <returns>The signal; <see langword="default"/> when the read fails or is skipped after a timeout.</returns>
+    public T? Read<T>(Func<T> read)
+    {
+        ArgumentNullException.ThrowIfNull(read);
+        if (_timedOut)
+        {
+            return default;
+        }
+        try
+        {
+            return read();
+        }
+        catch (GitTimeoutException error)
+        {
+            _errors.Add(error.Message);
+            _errors.Add(TimeoutNotice);
+            _timedOut = true;
+            return default;
+        }
+#pragma warning disable CA1031 // Every failure of one signal is recorded, so one broken worktree never hides the others.
+        catch (Exception error)
+#pragma warning restore CA1031
+        {
+            _errors.Add(error.Message);
+            return default;
+        }
     }
 }

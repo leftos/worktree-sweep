@@ -57,9 +57,10 @@ public static class GitRunner
     /// <param name="dir">The directory git runs in.</param>
     /// <param name="args">The git arguments, after <c>-C {dir}</c>.</param>
     /// <returns>Standard output, trimmed.</returns>
-    /// <exception cref="GitException">Git cannot be started, does not exit within <see cref="CallTimeout"/>, leaves its output open,
-    /// or exits with a non-zero code; the message names the command, and the exit code and git's standard error or the time limit.
-    /// </exception>
+    /// <exception cref="GitTimeoutException">Git does not exit within <see cref="CallTimeout"/>; the message names the command and the
+    /// time limit.</exception>
+    /// <exception cref="GitException">Git cannot be started, leaves its output open, or exits with a non-zero code; the message names
+    /// the command, and the exit code and git's standard error.</exception>
     public static string Run(string dir, IReadOnlyList<string> args) => RunRaw(dir, args).Trim();
 
     /// <summary>
@@ -69,9 +70,10 @@ public static class GitRunner
     /// <param name="dir">The directory git runs in.</param>
     /// <param name="args">The git arguments, after <c>-C {dir}</c>.</param>
     /// <returns>Standard output, untrimmed.</returns>
-    /// <exception cref="GitException">Git cannot be started, does not exit within <see cref="CallTimeout"/>, leaves its output open,
-    /// or exits with a non-zero code; the message names the command, and the exit code and git's standard error or the time limit.
-    /// </exception>
+    /// <exception cref="GitTimeoutException">Git does not exit within <see cref="CallTimeout"/>; the message names the command and the
+    /// time limit.</exception>
+    /// <exception cref="GitException">Git cannot be started, leaves its output open, or exits with a non-zero code; the message names
+    /// the command, and the exit code and git's standard error.</exception>
     public static string RunRaw(string dir, IReadOnlyList<string> args)
     {
         GitStatus status = RunStatus(dir, args);
@@ -82,8 +84,8 @@ public static class GitRunner
     /// <param name="dir">The directory git runs in.</param>
     /// <param name="args">The git arguments, after <c>-C {dir}</c>.</param>
     /// <returns>The exit code and both streams.</returns>
-    /// <exception cref="GitException">Only when git cannot be started, does not exit within <see cref="CallTimeout"/>, or leaves its
-    /// output open.</exception>
+    /// <exception cref="GitTimeoutException">Only when git does not exit within <see cref="CallTimeout"/>.</exception>
+    /// <exception cref="GitException">Only when git cannot be started or leaves its output open.</exception>
     public static GitStatus RunStatus(string dir, IReadOnlyList<string> args) =>
         RunStatusWithEnv(dir, args, ImmutableDictionary<string, string>.Empty);
 
@@ -92,8 +94,8 @@ public static class GitRunner
     /// <param name="args">The git arguments, after <c>-C {dir}</c>.</param>
     /// <param name="env">Variables to set for the child.</param>
     /// <returns>The exit code and both streams.</returns>
-    /// <exception cref="GitException">Only when git cannot be started, does not exit within <see cref="CallTimeout"/>, or leaves its
-    /// output open.</exception>
+    /// <exception cref="GitTimeoutException">Only when git does not exit within <see cref="CallTimeout"/>.</exception>
+    /// <exception cref="GitException">Only when git cannot be started or leaves its output open.</exception>
     public static GitStatus RunStatusWithEnv(string dir, IReadOnlyList<string> args, IReadOnlyDictionary<string, string> env) =>
         RunStatusWithEnv(dir, args, env, CallTimeout, ReadGrace);
 
@@ -105,8 +107,9 @@ public static class GitRunner
     /// <param name="timeout">How long git may run before its process tree is killed.</param>
     /// <param name="grace">How long each wait for git's output pipes to close may take, after it exits or is killed.</param>
     /// <returns>The exit code and both streams.</returns>
-    /// <exception cref="GitException">Only when git cannot be started, does not exit within <paramref name="timeout"/>, or exits
-    /// with its output still held open after <paramref name="grace"/>.</exception>
+    /// <exception cref="GitTimeoutException">Only when git does not exit within <paramref name="timeout"/>.</exception>
+    /// <exception cref="GitException">Only when git cannot be started, or exits with its output still held open after
+    /// <paramref name="grace"/>.</exception>
     internal static GitStatus RunStatusWithEnv(
         string dir,
         IReadOnlyList<string> args,
@@ -137,9 +140,10 @@ public static class GitRunner
     /// <summary>The common git dir of the repo <paramref name="dir"/> lies in, as a full path with <c>\</c> separators.</summary>
     /// <param name="dir">A folder inside the repo or one of its worktrees.</param>
     /// <returns>The common git dir; for a bare repo, the repo itself.</returns>
+    /// <exception cref="GitTimeoutException">Git does not exit within <see cref="CallTimeout"/>; the message names the command and the
+    /// time limit.</exception>
     /// <exception cref="GitException">
-    /// Git cannot be started, fails, does not exit within <see cref="CallTimeout"/>, or prints a path that is not fully qualified, as a
-    /// git without <c>--path-format</c> does.
+    /// Git cannot be started, fails, or prints a path that is not fully qualified, as a git without <c>--path-format</c> does.
     /// </exception>
     public static string CommonDir(string dir)
     {
@@ -226,7 +230,7 @@ public static class GitRunner
     /// output pipes open, so killing git alone would leave the reads waiting. Its exit and the reads are each waited for up to
     /// <paramref name="grace"/>; the timeout is reported either way.
     /// </summary>
-    private static GitException Killed(Process process, Task reads, string command, TimeSpan timeout, TimeSpan grace)
+    private static GitTimeoutException Killed(Process process, Task reads, string command, TimeSpan timeout, TimeSpan grace)
     {
         string limit = $"{command} did not exit within {Seconds(timeout)} s";
         try
@@ -235,11 +239,11 @@ public static class GitRunner
         }
         catch (Exception error) when (error is Win32Exception or InvalidOperationException or AggregateException)
         {
-            return new GitException($"{limit}; killing it failed: {error.Message}", error);
+            return new GitTimeoutException($"{limit}; killing it failed: {error.Message}", error);
         }
         _ = process.WaitForExit(grace);
         _ = reads.Wait(grace);
-        return new GitException($"{limit} and was killed");
+        return new GitTimeoutException($"{limit} and was killed");
     }
 
     /// <summary>
