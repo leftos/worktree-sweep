@@ -52,6 +52,37 @@ public sealed class CliTests
         Assert.Equal(["orphan", "registered"], Kinds(run.Stdout).Order(StringComparer.Ordinal));
     }
 
+    /// <summary>A non-ASCII candidate path in the table stays UTF-8 on a redirected standard output.</summary>
+    [Fact]
+    public async Task ListTableKeepsANonAsciiPathAsUtf8()
+    {
+        using var fx = Fixture.InRepoTmp();
+        string repo = fx.Repo("repo");
+        Fixture.AddWorktree(repo, fx.PathTo("repo.wt/feat"), "feat");
+        Directory.CreateDirectory(fx.PathTo("repo.wt/δοκιμή"));
+
+        Run run = await RunAsync(fx.Root, "--list");
+
+        Assert.Equal(0, run.Code);
+        Assert.Contains("δοκιμή", run.Stdout, StringComparison.Ordinal);
+    }
+
+    /// <summary>A non-ASCII candidate path in the report stays UTF-8 on a redirected standard output, and parses.</summary>
+    [Fact]
+    public async Task JsonKeepsANonAsciiPathAsUtf8()
+    {
+        using var fx = Fixture.InRepoTmp();
+        string repo = fx.Repo("repo");
+        Fixture.AddWorktree(repo, fx.PathTo("repo.wt/feat"), "feat");
+        Directory.CreateDirectory(fx.PathTo("repo.wt/δοκιμή"));
+
+        Run run = await RunAsync(fx.Root, "--json");
+
+        Assert.Equal(0, run.Code);
+        using var document = JsonDocument.Parse(run.Stdout);
+        Assert.Contains("δοκιμή", run.Stdout, StringComparison.Ordinal);
+    }
+
     /// <summary><c>--list</c> with <c>--json</c> is a usage error.</summary>
     [Fact]
     public async Task ListWithJsonIsAUsageError()
