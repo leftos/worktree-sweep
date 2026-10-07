@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using WorktreeSweep.Discovery;
 
@@ -20,6 +21,14 @@ public static class ReleasedMarker
     {
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
         RespectNullableAnnotations = true,
+    };
+
+    private static readonly JsonSerializerOptions WriteOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+        WriteIndented = true,
+        NewLine = "\n",
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
     };
 
     /// <summary>The released marker of a worktree: <see cref="AdminDir"/>, then <see cref="Read"/>.</summary>
@@ -92,6 +101,38 @@ public static class ReleasedMarker
         {
             Trace.TraceWarning($"ignoring the released marker: {path} is not a released marker: {error.Message}");
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Writes <paramref name="released"/> into an admin dir in the marker's file shape, times in Unix seconds, through a temporary file
+    /// in the same dir renamed over any marker already there.
+    /// </summary>
+    /// <param name="adminDir">The worktree's admin dir.</param>
+    /// <param name="released">The marker.</param>
+    /// <exception cref="IOException">The temporary file cannot be written or renamed into place; the message names the file.</exception>
+    public static void Write(string adminDir, Released released)
+    {
+        ArgumentNullException.ThrowIfNull(adminDir);
+        ArgumentNullException.ThrowIfNull(released);
+        string target = Path.Join(adminDir, FileName);
+        string temp = target + ".tmp";
+        string text = JsonSerializer.Serialize(released, WriteOptions) + "\n";
+        try
+        {
+            File.WriteAllText(temp, text);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            throw new IOException($"cannot write {temp}: {error.Message}", error);
+        }
+        try
+        {
+            File.Move(temp, target, overwrite: true);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            throw new IOException($"cannot rename {temp} to {target}: {error.Message}", error);
         }
     }
 
