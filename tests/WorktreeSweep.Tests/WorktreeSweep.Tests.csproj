@@ -17,5 +17,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\WorktreeSweep.Core\WorktreeSweep.Core.csproj" />
+    <ProjectReference Include="..\..\src\WorktreeSweep\WorktreeSweep.csproj" />
   </ItemGroup>
 </Project>
