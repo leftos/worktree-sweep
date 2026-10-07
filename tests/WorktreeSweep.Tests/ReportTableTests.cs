@@ -168,23 +168,57 @@ public sealed class ReportTableTests
     [Fact]
     public void AgeSaturatesAnOverflowingGap() => Assert.Equal("292471208677y", ReportTable.Age(long.MinValue, Now));
 
+    /// <summary>The root itself shows whole, whether or not the root is written with a trailing separator.</summary>
+    [Fact]
+    public void RelativePathShowsTheRootWhole()
+    {
+        using var fx = new Fixture();
+        string root = fx.PathTo("root");
+        Directory.CreateDirectory(root);
+
+        Assert.Equal(root, ReportTable.RelativePath(root, root));
+        Assert.Equal(root, ReportTable.RelativePath(root, root + "\\"));
+    }
+
     /// <summary>
-    /// A path under the root shows relative to it, the two compared resolved and case folded; the root itself, a path elsewhere and
-    /// a sibling sharing the root's name as a prefix show whole. The relative part is the resolved spelling, so a path given with
-    /// forward slashes shows backslashes.
+    /// A path under the root shows relative to it, the two compared resolved and case folded, either separator folded to <c>\</c>
+    /// and a trailing one dropped.
     /// </summary>
-    /// <param name="path">The path.</param>
-    /// <param name="root">The root.</param>
-    /// <param name="expected">What the table shows.</param>
-    [Theory]
-    [InlineData(@"D:\", @"D:\", @"D:\")]
-    [InlineData(@"D:\yaat", @"D:\yaat\", @"D:\yaat")]
-    [InlineData(@"d:\YAAT.wt\Feat", @"D:\yaat.WT", "Feat")]
-    [InlineData("D:/yaat.wt/feat/", @"D:\", @"yaat.wt\feat")]
-    [InlineData(@"E:\yaat.wt\feat", @"D:\", @"E:\yaat.wt\feat")]
-    [InlineData(@"D:\yaat-server\feat", @"D:\yaat", @"D:\yaat-server\feat")]
-    public void RelativePathIsRelativeOnlyUnderTheRoot(string path, string root, string expected) =>
-        Assert.Equal(expected, ReportTable.RelativePath(path, root));
+    [Fact]
+    public void RelativePathShowsAPathUnderTheRootRelative()
+    {
+        using var fx = new Fixture();
+        string root = fx.PathTo("root");
+        Directory.CreateDirectory(root);
+
+        Assert.Equal(@"a.wt\feat", ReportTable.RelativePath(Path.Join(root, "a.wt", "feat"), root));
+        Assert.Equal(@"a.wt\feat", ReportTable.RelativePath(root.ToUpperInvariant() + @"\a.wt\feat", root));
+        Assert.Equal(@"a.wt\feat", ReportTable.RelativePath(root + "/a.wt/feat/", root));
+    }
+
+    /// <summary>A path elsewhere than the root shows whole, in the resolved-parent spelling.</summary>
+    [Fact]
+    public void RelativePathShowsAPathElsewhereWhole()
+    {
+        using var fx = new Fixture();
+        string root = fx.PathTo("root");
+        Directory.CreateDirectory(root);
+        string elsewhere = fx.PathTo("elsewhere/feat");
+
+        Assert.Equal(elsewhere, ReportTable.RelativePath(elsewhere, root));
+    }
+
+    /// <summary>A sibling sharing the root's name as a prefix shows whole rather than relative.</summary>
+    [Fact]
+    public void RelativePathKeepsASiblingWithTheRootsNameAsPrefixWhole()
+    {
+        using var fx = new Fixture();
+        string root = fx.PathTo("yaat");
+        Directory.CreateDirectory(root);
+        string sibling = fx.PathTo("yaat-server/feat");
+
+        Assert.Equal(sibling, ReportTable.RelativePath(sibling, root));
+    }
 
     /// <summary>A path spelled as git spells it shows relative under a root given with a <c>\\?\</c> prefix.</summary>
     [Fact]
@@ -208,5 +242,19 @@ public sealed class ReportTableTests
         Assert.SkipUnless(Fixture.MakeJunction(link, fx.Root), "mklink /J is unavailable");
 
         Assert.Equal(@"repo.wt\feat", ReportTable.RelativePath(path, link));
+    }
+
+    /// <summary>A junction under the root shows as its own relative path, never its target's.</summary>
+    [Fact]
+    public void RelativePathKeepsAJunctionLeafAsItsOwnName()
+    {
+        using var fx = new Fixture();
+        string moved = fx.PathTo("moved");
+        Directory.CreateDirectory(moved);
+        string link = fx.PathTo("repo.wt/feat");
+        Directory.CreateDirectory(Path.GetDirectoryName(link)!);
+        Assert.SkipUnless(Fixture.MakeJunction(link, moved), "mklink /J is unavailable");
+
+        Assert.Equal(@"repo.wt\feat", ReportTable.RelativePath(link, fx.Root));
     }
 }

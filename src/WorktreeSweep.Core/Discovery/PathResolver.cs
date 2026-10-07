@@ -62,6 +62,52 @@ internal static class PathResolver
         }
     }
 
+    /// <summary>
+    /// <paramref name="path"/> with its parent folder resolved and its own leaf left unresolved, so a folder that is itself a
+    /// junction keeps its own name rather than reporting its target's.
+    /// </summary>
+    /// <remarks>
+    /// The trailing separator is trimmed and the parent is <see cref="Resolve"/>d (junctions, symbolic links, subst drives, 8.3
+    /// names and a <c>\\?\</c> prefix included); the leaf is joined in long form (<see cref="LongPath"/>), as spelled when it does
+    /// not exist. A path with no parent folder is <see cref="Resolve"/>d whole. It never throws.
+    /// </remarks>
+    /// <param name="path">A path.</param>
+    /// <returns>The path with its parent resolved.</returns>
+    internal static string ResolveParent(string path) => ResolveParent(path, null);
+
+    /// <summary>
+    /// The same as <see cref="ResolveParent(string)"/>, caching each parent folder's resolution in <paramref name="parents"/> (keyed
+    /// by <see cref="Discoverer.PathKey"/>), so many paths under one parent resolve it once.
+    /// </summary>
+    /// <param name="path">A path.</param>
+    /// <param name="parents">The cache of resolved parents, or <see langword="null"/> for none.</param>
+    /// <returns>The path with its parent resolved.</returns>
+    internal static string ResolveParent(string path, Dictionary<string, string>? parents)
+    {
+        string trimmed = Path.TrimEndingDirectorySeparator(path);
+        string? parent = Path.GetDirectoryName(trimmed);
+        return parent is null ? Resolve(path) : Path.Join(ResolvedParent(parent, parents), Path.GetFileName(LongPath(trimmed)));
+    }
+
+    /// <summary><paramref name="parent"/> resolved, read from <paramref name="parents"/> when it is already there.</summary>
+    /// <param name="parent">The parent folder.</param>
+    /// <param name="parents">The cache of resolved parents, or <see langword="null"/> for none.</param>
+    /// <returns>The resolved parent.</returns>
+    private static string ResolvedParent(string parent, Dictionary<string, string>? parents)
+    {
+        if (parents is null)
+        {
+            return Resolve(parent);
+        }
+        string key = Discoverer.PathKey(parent);
+        if (!parents.TryGetValue(key, out string? resolved))
+        {
+            resolved = Resolve(parent);
+            parents.Add(key, resolved);
+        }
+        return resolved;
+    }
+
     /// <summary><paramref name="path"/> with 8.3 names expanded, or as given when that fails.</summary>
     /// <param name="path">A path.</param>
     /// <returns>The long form.</returns>
