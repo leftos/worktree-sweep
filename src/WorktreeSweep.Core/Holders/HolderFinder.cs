@@ -66,7 +66,9 @@ public static class HolderFinder
 
     /// <summary>
     /// The chain of processes from <paramref name="pid"/> up through its parents, <paramref name="pid"/> first. A parent is followed
-    /// only when it was created before its child, so a reused PID ends the chain, as do a missing entry and a cycle.
+    /// only when it was created before its child, so a reused PID ends the chain, as do a missing entry and a cycle. Unlike
+    /// <see cref="ProcessTable.ParentChain"/>, which only excludes PIDs and so stops on proof of reuse alone, this claims an ancestry
+    /// and so keeps a link only on proof that the parent is the older one.
     /// </summary>
     /// <param name="pid">The PID the chain starts from.</param>
     /// <param name="table">The processes, from <see cref="ProcessTimes"/>.</param>

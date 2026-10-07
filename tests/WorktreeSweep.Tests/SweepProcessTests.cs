@@ -22,13 +22,14 @@ public sealed class SweepProcessTests
         Assert.True(self.CallerPid is null || self.CallerPid == parent, $"caller {self.CallerPid} is not the parent {parent}");
     }
 
-    /// <summary>The caller's creation time is read with its PID: whenever the caller is kept, its time travels with it.</summary>
+    /// <summary>A kept caller's creation time travels with it; a caller whose time could not be read (the parent has exited or
+    /// cannot be opened) is left with none, so only the implication that a time never travels alone is asserted.</summary>
     [Fact]
     public void CurrentNamesTheCallersCreationTime()
     {
         var self = SweepProcess.Current();
 
-        Assert.True(self.CallerPid is null || self.CallerStarted is not null, $"caller {self.CallerPid} has no start time");
+        Assert.True(self.CallerStarted is null || self.CallerPid is not null, $"start time {self.CallerStarted} without a caller");
     }
 
     /// <summary>A parent that started before this process is kept.</summary>

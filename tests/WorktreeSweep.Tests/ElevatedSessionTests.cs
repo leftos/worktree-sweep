@@ -268,6 +268,33 @@ public sealed class ElevatedSessionTests
         Assert.DoesNotContain("pid 900", output.ToString(), StringComparison.Ordinal);
     }
 
+    /// <summary>An ancestor's PID that was reused is not excluded, so a locker that now holds it is still offered.</summary>
+    [Fact]
+    public void ReusedAncestorPidIsStillOffered()
+    {
+        StringWriter output = Writer();
+        int own = Environment.ProcessId;
+        var table = new Dictionary<int, ProcessEntry>
+        {
+            [own] = new(600, "worktree-sweep.exe"),
+            [600] = new(500, "conhost.exe"),
+            [500] = new(400, "sudo.exe"),
+            [400] = new(1, "services.exe"),
+        };
+        var processes = new ScriptedProcessControl(table);
+        processes.StartedTimes[own] = 100;
+        processes.StartedTimes[600] = 60;
+        processes.StartedTimes[500] = 200; // newer than its child 600: the PID no longer names the sudo.exe
+        processes.StartedTimes[400] = 50;
+        var session = new ElevatedSession(new StringReader("3\n"), output, new FakeHandleExe(OneLockerFor("code.exe", 500)), processes);
+
+        int exit = session.Run([Locked], null, null, null);
+
+        string text = output.ToString();
+        Assert.Equal(UnlockExit.NothingDone, exit);
+        Assert.Contains("code.exe (pid 500)", text, StringComparison.Ordinal);
+    }
+
     /// <summary>A stop that fails is reported, nothing is acted on, and the session ends as nothing done.</summary>
     [Fact]
     public void StopFailureIsReportedAndNothingIsActed()
