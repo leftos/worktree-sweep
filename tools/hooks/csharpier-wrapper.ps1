@@ -12,7 +12,7 @@
     prek's parent process finds, which from pwsh can be the WSL stub that has no dotnet on its path.
 
 .EXAMPLE
-    pwsh tools/hooks/csharpier-wrapper.ps1 src/Delve.Rules/RulesVersion.cs
+    pwsh tools/hooks/csharpier-wrapper.ps1 src/Foo/Bar.cs
 #>
 [CmdletBinding()]
 param(
