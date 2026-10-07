@@ -10,7 +10,7 @@ The whole tool is rewritten in C# on .NET 10 with a WPF window for the interacti
 - **Launch:** from a terminal only. One console-subsystem exe (`OutputType` `Exe` with `UseWPF`): `--list`, `--json`, `remove` and `unlock` print to stdout and never open a window; the default mode opens the window. No double-click mode.
 - **Git:** shell out to `git.exe` exactly as `src/git.rs` does: the 15 repo-local `GIT_*` variables removed, `GIT_OPTIONAL_LOCKS=0`, `-c core.fsmonitor=false`, stdin null, both streams read concurrently, `merge-tree --write-tree` into a scratch object directory with the repo's objects as an alternate. No LibGit2Sharp.
 - **JSON:** both reports are redesigned, the scan report (`--json`) and the agent contract (`remove {path} --json` and its exit codes). Each shape is settled in its item's decision round; README and `docs/agent-path.md` are rewritten at the cutover.
-- **Win32:** the CsWin32 source generator (`NativeMethods.txt`). An API its metadata lacks (some `Nt*` information classes, the PEB offsets) is declared by hand with `[LibraryImport]` in one file, with a comment naming why.
+- **Win32:** the CsWin32 source generator (`NativeMethods.txt`). An API its metadata lacks (some `Nt*` information classes, the PEB offsets) is declared by hand with `[LibraryImport]` in one file, with a comment naming why. COM interfaces are hand-declared with `[GeneratedComInterface]` for readability, since CsWin32 with `allowMarshaling:false` emits pointer-based COM structs.
 - **Window:** CommunityToolkit.Mvvm view models, testable without a window.
 - **Command line:** System.CommandLine 2.0; usage errors exit 2 as clap's do.
 - **Tests:** xUnit v3.
