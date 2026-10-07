@@ -23,7 +23,7 @@ public sealed class ElevatedSessionTests
             new ScriptedProcessControl(Running())
         );
 
-        int exit = session.Run([Locked], null, null);
+        int exit = session.Run([Locked], null, null, null);
 
         Assert.Equal(UnlockExit.AllClear, exit);
         Assert.Contains("Scanning open handles…\nNothing holds files under those folders.\n", output.ToString(), StringComparison.Ordinal);
@@ -38,7 +38,7 @@ public sealed class ElevatedSessionTests
         var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
         var session = new ElevatedSession(new StringReader("\n"), output, new FakeHandleExe(OneLocker(), ""), processes);
 
-        int exit = session.Run([Locked], null, null);
+        int exit = session.Run([Locked], null, null, null);
 
         Assert.Equal(UnlockExit.AllClear, exit);
         Assert.Equal<int[]>([642], [.. processes.Stopped]);
@@ -53,13 +53,66 @@ public sealed class ElevatedSessionTests
         var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
         var session = new ElevatedSession(new StringReader("\n"), output, new FakeHandleExe(OneLocker(), OneLocker()), processes);
 
-        int exit = session.Run([Locked], callerPid: 642, sweepPid: null);
+        int exit = session.Run([Locked], callerPid: 642, callerStarted: null, sweepPid: null);
 
         string text = output.ToString();
         Assert.Equal(UnlockExit.NothingDone, exit);
         Assert.Empty(processes.Stopped);
         Assert.Contains("  This is the shell you started worktree-sweep from; stopping it closes that shell.\n", text, StringComparison.Ordinal);
         Assert.Contains("1) Stop process (closes your shell)  2) Close its handles  3) Skip  4) Done [3]: ", text, StringComparison.Ordinal);
+        Assert.Contains("Skipped pwsh.exe (pid 642).\n", text, StringComparison.Ordinal);
+    }
+
+    /// <summary>A locker with the caller's PID and its creation time is the caller, so its default is Skip.</summary>
+    [Fact]
+    public void CallerWithAMatchingStartTimeDefaultsToSkip()
+    {
+        StringWriter output = Writer();
+        var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
+        processes.StartedTimes[642] = 1000;
+        var session = new ElevatedSession(new StringReader("\n"), output, new FakeHandleExe(OneLocker(), OneLocker()), processes);
+
+        int exit = session.Run([Locked], callerPid: 642, callerStarted: 1000, sweepPid: null);
+
+        string text = output.ToString();
+        Assert.Equal(UnlockExit.NothingDone, exit);
+        Assert.Empty(processes.Stopped);
+        Assert.Contains("  This is the shell you started worktree-sweep from; stopping it closes that shell.\n", text, StringComparison.Ordinal);
+        Assert.Contains("Skipped pwsh.exe (pid 642).\n", text, StringComparison.Ordinal);
+    }
+
+    /// <summary>A PID that now names a newer process than the caller is an ordinary locker, so its default is Stop.</summary>
+    [Fact]
+    public void CallerPidReusedByANewerProcessIsAnOrdinaryLocker()
+    {
+        StringWriter output = Writer();
+        var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
+        processes.StartedTimes[642] = 2000;
+        var session = new ElevatedSession(new StringReader("\n"), output, new FakeHandleExe(OneLocker(), ""), processes);
+
+        int exit = session.Run([Locked], callerPid: 642, callerStarted: 1000, sweepPid: null);
+
+        string text = output.ToString();
+        Assert.Equal(UnlockExit.AllClear, exit);
+        Assert.Equal<int[]>([642], [.. processes.Stopped]);
+        Assert.Contains("Stopped pwsh.exe (pid 642).\n", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("closes your shell", text, StringComparison.Ordinal);
+    }
+
+    /// <summary>A locker whose creation time cannot be read keeps counting as the caller, whose default is the safe one.</summary>
+    [Fact]
+    public void CallerWithAnUnreadableStartTimeKeepsItsDefault()
+    {
+        StringWriter output = Writer();
+        var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
+        var session = new ElevatedSession(new StringReader("\n"), output, new FakeHandleExe(OneLocker(), OneLocker()), processes);
+
+        int exit = session.Run([Locked], callerPid: 642, callerStarted: 1000, sweepPid: null);
+
+        string text = output.ToString();
+        Assert.Equal(UnlockExit.NothingDone, exit);
+        Assert.Empty(processes.Stopped);
+        Assert.Contains("  This is the shell you started worktree-sweep from; stopping it closes that shell.\n", text, StringComparison.Ordinal);
         Assert.Contains("Skipped pwsh.exe (pid 642).\n", text, StringComparison.Ordinal);
     }
 
@@ -75,7 +128,7 @@ public sealed class ElevatedSessionTests
             new ScriptedProcessControl(Running(("pwsh.exe", 642)))
         );
 
-        int exit = session.Run([Locked], null, null);
+        int exit = session.Run([Locked], null, null, null);
 
         string text = output.ToString();
         Assert.Equal(UnlockExit.NothingDone, exit);
@@ -96,7 +149,7 @@ public sealed class ElevatedSessionTests
             processes
         );
 
-        int exit = session.Run([Locked], null, null);
+        int exit = session.Run([Locked], null, null, null);
 
         string text = output.ToString();
         Assert.Equal(UnlockExit.SomeLeft, exit);
@@ -118,7 +171,7 @@ public sealed class ElevatedSessionTests
             new ScriptedProcessControl(Running(("pwsh.exe", 642)))
         );
 
-        int exit = session.Run([Locked], null, null);
+        int exit = session.Run([Locked], null, null, null);
 
         Assert.Equal(UnlockExit.NothingDone, exit);
         Assert.Contains("Done; leaving the rest alone.\n", output.ToString(), StringComparison.Ordinal);
@@ -132,7 +185,7 @@ public sealed class ElevatedSessionTests
         var processes = new ScriptedProcessControl(Running());
         var session = new ElevatedSession(new StringReader("\n"), output, new FakeHandleExe(OneLocker()), processes);
 
-        int exit = session.Run([Locked], null, null);
+        int exit = session.Run([Locked], null, null, null);
 
         Assert.Equal(UnlockExit.NothingDone, exit);
         Assert.Empty(processes.Stopped);
@@ -148,7 +201,7 @@ public sealed class ElevatedSessionTests
         var handleExe = new FakeHandleExe(TwoHandles(), "");
         var session = new ElevatedSession(new StringReader("2\ny\n"), output, handleExe, new ScriptedProcessControl(Running(("pwsh.exe", 642))));
 
-        int exit = session.Run([Locked], null, null);
+        int exit = session.Run([Locked], null, null, null);
 
         string text = output.ToString();
         Assert.Equal(UnlockExit.AllClear, exit);
@@ -166,7 +219,7 @@ public sealed class ElevatedSessionTests
         var handleExe = new FakeHandleExe(TwoHandles());
         var session = new ElevatedSession(new StringReader("2\n\n"), output, handleExe, new ScriptedProcessControl(Running(("pwsh.exe", 642))));
 
-        int exit = session.Run([Locked], null, null);
+        int exit = session.Run([Locked], null, null, null);
 
         Assert.Equal(UnlockExit.NothingDone, exit);
         Assert.Empty(handleExe.Closed);
@@ -189,7 +242,7 @@ public sealed class ElevatedSessionTests
             new ScriptedProcessControl(Running(("pwsh.exe", 642)))
         );
 
-        int exit = session.Run([Locked], null, null);
+        int exit = session.Run([Locked], null, null, null);
 
         string text = output.ToString();
         Assert.Equal(UnlockExit.NothingDone, exit);
@@ -208,7 +261,7 @@ public sealed class ElevatedSessionTests
         var processes = new ScriptedProcessControl(Running(("code.exe", 800), ("worktree-sweep.exe", 900)));
         var session = new ElevatedSession(new StringReader("\n"), output, new FakeHandleExe(ExcludedAndKept(), ""), processes);
 
-        int exit = session.Run([Locked], callerPid: null, sweepPid: 900);
+        int exit = session.Run([Locked], callerPid: null, callerStarted: null, sweepPid: 900);
 
         Assert.Equal(UnlockExit.AllClear, exit);
         Assert.Equal<int[]>([800], [.. processes.Stopped]);
@@ -223,7 +276,7 @@ public sealed class ElevatedSessionTests
         var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642))) { StopThrows = new Win32Exception("cannot open process 642") };
         var session = new ElevatedSession(new StringReader("\n"), output, new FakeHandleExe(OneLocker()), processes);
 
-        int exit = session.Run([Locked], null, null);
+        int exit = session.Run([Locked], null, null, null);
 
         Assert.Equal(UnlockExit.NothingDone, exit);
         Assert.Empty(processes.Stopped);
@@ -241,7 +294,7 @@ public sealed class ElevatedSessionTests
         };
         var session = new ElevatedSession(new StringReader("\n"), output, new FakeHandleExe(OneLocker()), processes);
 
-        int exit = session.Run([Locked], null, null);
+        int exit = session.Run([Locked], null, null, null);
 
         Assert.Equal(UnlockExit.NothingDone, exit);
         Assert.Empty(processes.Stopped);
@@ -261,7 +314,7 @@ public sealed class ElevatedSessionTests
         handleExe.Failing.Add(0x58);
         var session = new ElevatedSession(new StringReader("2\ny\n"), output, handleExe, new ScriptedProcessControl(Running(("pwsh.exe", 642))));
 
-        int exit = session.Run([Locked], null, null);
+        int exit = session.Run([Locked], null, null, null);
 
         Assert.Equal(UnlockExit.AllClear, exit);
         Assert.Equal<ulong[]>([0x1A0], [.. handleExe.Closed.Select(entry => entry.Handle)]);
@@ -276,7 +329,7 @@ public sealed class ElevatedSessionTests
         var handleExe = new FakeHandleExe(TwoHandles()) { CloseThrows = new UnlockException("cannot run handle.exe: it went missing") };
         var session = new ElevatedSession(new StringReader("2\ny\n"), output, handleExe, new ScriptedProcessControl(Running(("pwsh.exe", 642))));
 
-        int exit = session.Run([Locked], null, null);
+        int exit = session.Run([Locked], null, null, null);
 
         Assert.Equal(UnlockExit.NothingDone, exit);
         Assert.Empty(handleExe.Closed);
@@ -294,7 +347,7 @@ public sealed class ElevatedSessionTests
         };
         var session = new ElevatedSession(new StringReader("2\ny\n"), output, handleExe, new ScriptedProcessControl(Running(("pwsh.exe", 642))));
 
-        int exit = session.Run([Locked], null, null);
+        int exit = session.Run([Locked], null, null, null);
 
         Assert.Equal(UnlockExit.AllClear, exit);
         Assert.Equal<ulong[]>([0x58], [.. handleExe.Closed.Select(entry => entry.Handle)]);
@@ -309,7 +362,7 @@ public sealed class ElevatedSessionTests
         var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642))) { SnapshotThrowsOn = 2 };
         var session = new ElevatedSession(new StringReader("\n"), output, new FakeHandleExe(OneLocker()), processes);
 
-        int exit = session.Run([Locked], null, null);
+        int exit = session.Run([Locked], null, null, null);
 
         Assert.Equal(UnlockExit.NothingDone, exit);
         Assert.Empty(processes.Stopped);
@@ -410,7 +463,8 @@ public sealed class ElevatedSessionTests
         }
     }
 
-    /// <summary>A process control with a scripted table, a record of the stops and scripted failures.</summary>
+    /// <summary>A process control with a scripted table, a scripted start-time reader, a record of the stops and scripted
+    /// failures.</summary>
     private sealed class ScriptedProcessControl(IReadOnlyDictionary<int, ProcessEntry> table) : IProcessControl
     {
         private readonly List<int> stopped = [];
@@ -425,6 +479,9 @@ public sealed class ElevatedSessionTests
         /// <summary>Gets or sets the 1-based snapshot call that throws, or 0 so that none does.</summary>
         public int SnapshotThrowsOn { get; set; }
 
+        /// <summary>Gets the creation times <see cref="StartedAt"/> answers with; a PID it does not name reads as unknown.</summary>
+        public Dictionary<int, ulong?> StartedTimes { get; } = [];
+
         public IReadOnlyDictionary<int, ProcessEntry> Snapshot()
         {
             snapshots++;
@@ -434,6 +491,8 @@ public sealed class ElevatedSessionTests
             }
             return table;
         }
+
+        public ulong? StartedAt(int pid) => StartedTimes.TryGetValue(pid, out ulong? started) ? started : null;
 
         public void Stop(int pid, string exe)
         {

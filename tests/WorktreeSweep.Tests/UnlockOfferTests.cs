@@ -171,7 +171,12 @@ public sealed class UnlockOfferTests
     public void OfferFitsTheCallback()
     {
         var sudo = new FakeSudo(SudoMode.Inline, 3);
-        var offer = new UnlockOffer(new StringReader("y\n"), new StringWriter { NewLine = "\n" }, sudo, new SweepProcess(Exe, CallerPid, SweepPid));
+        var offer = new UnlockOffer(
+            new StringReader("y\n"),
+            new StringWriter { NewLine = "\n" },
+            sudo,
+            new SweepProcess(Exe, CallerPid, null, SweepPid)
+        );
 
         Func<IReadOnlyList<string>, UnlockOutcome> callback = offer.Offer;
 
@@ -182,7 +187,7 @@ public sealed class UnlockOfferTests
     {
         using var writer = new StringWriter { NewLine = "\n" };
         using var reader = new StringReader(input);
-        var offer = new UnlockOffer(reader, writer, sudo, new SweepProcess(processPath, CallerPid, SweepPid));
+        var offer = new UnlockOffer(reader, writer, sudo, new SweepProcess(processPath, CallerPid, null, SweepPid));
         UnlockOutcome outcome = offer.Offer(Paths);
         return (outcome, writer.ToString());
     }

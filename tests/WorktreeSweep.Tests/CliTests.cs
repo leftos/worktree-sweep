@@ -171,6 +171,29 @@ public sealed class CliTests
         Assert.DoesNotContain("unlock", run.Stdout, StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>The hidden <c>unlock</c> subcommand accepts <c>--caller-started</c>: with no paths, only the missing paths are
+    /// an error, not an unrecognised option.</summary>
+    [Fact]
+    public async Task UnlockAcceptsCallerStarted()
+    {
+        Run run = await RunAsync("unlock", "--caller-started", "133700000000000000");
+
+        Assert.Equal(2, run.Code);
+        Assert.Equal("error: Required argument missing for command: 'unlock'.\n", run.Stderr);
+        Assert.Equal("", run.Stdout);
+    }
+
+    /// <summary><c>--help</c> does not list the hidden <c>--caller-started</c> either.</summary>
+    [Fact]
+    public async Task HelpDoesNotListCallerStarted()
+    {
+        Run run = await RunAsync("--help");
+
+        Assert.Equal(0, run.Code);
+        Assert.DoesNotContain("--caller-started", run.Stdout, StringComparison.Ordinal);
+        Assert.DoesNotContain("--sweep-pid", run.Stdout, StringComparison.Ordinal);
+    }
+
     /// <summary>
     /// <c>unlock</c> is the subcommand even when the current directory holds a folder named <c>unlock</c>: the error is the
     /// subcommand's missing paths, not the root's missing mode flag.

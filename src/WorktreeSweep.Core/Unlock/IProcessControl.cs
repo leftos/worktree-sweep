@@ -6,13 +6,18 @@ namespace WorktreeSweep.Unlock;
 // "Stop" is a reserved word in VB (the rule's own reason to rename); every caller of this seam is C#, and the name mirrors
 // ProcessStopper.Stop, the operation it wraps.
 #pragma warning disable CA1716
-/// <summary>The process operations the unlock session makes: a snapshot, and stopping a process.</summary>
+/// <summary>The process operations the unlock session makes: a snapshot, a process's creation time, and stopping a process.</summary>
 public interface IProcessControl
 {
     /// <summary>Every running process's parent and image name, by PID.</summary>
     /// <returns>The table; a PID seen twice keeps its last entry.</returns>
     /// <exception cref="Win32Exception">The process snapshot cannot be taken.</exception>
     IReadOnlyDictionary<int, ProcessEntry> Snapshot();
+
+    /// <summary>The process's creation time, which tells a live PID from a newer process that has taken it.</summary>
+    /// <param name="pid">The process.</param>
+    /// <returns>The creation time as a <c>FILETIME</c> count, or <see langword="null"/> when it cannot be read.</returns>
+    ulong? StartedAt(int pid);
 
     /// <summary>Stops a process by PID, after checking it is still the program the scan saw, and waits for it to exit.</summary>
     /// <param name="pid">The process to stop.</param>

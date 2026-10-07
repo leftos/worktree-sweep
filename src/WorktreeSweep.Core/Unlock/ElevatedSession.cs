@@ -25,16 +25,18 @@ public sealed class ElevatedSession(TextReader input, TextWriter output, IHandle
     /// <param name="paths">The folders whose open handles are cleared.</param>
     /// <param name="callerPid">The process that started the unelevated run, usually the user's shell, whose stopping is not the
     /// default; <see langword="null"/> when it is not known.</param>
+    /// <param name="callerStarted">That process's creation time, which proves a PID match is still it; <see langword="null"/>
+    /// when it is not known.</param>
     /// <param name="sweepPid">The unelevated worktree-sweep, which with its children is never offered; <see langword="null"/>
     /// when it is not known.</param>
     /// <returns><see cref="UnlockExit.AllClear"/> when nothing holds the files, <see cref="UnlockExit.SomeLeft"/> when something
     /// still does after an action, otherwise <see cref="UnlockExit.NothingDone"/>.</returns>
     /// <exception cref="UnlockException"><c>handle.exe</c> is missing or fails.</exception>
     /// <exception cref="Win32Exception">The process table cannot be read.</exception>
-    public int Run(IReadOnlyList<string> paths, int? callerPid, int? sweepPid)
+    public int Run(IReadOnlyList<string> paths, int? callerPid, ulong? callerStarted, int? sweepPid)
     {
         ArgumentNullException.ThrowIfNull(paths);
-        IReadOnlySet<int> excluded = ProcessTable.ExcludedPids(Environment.ProcessId, sweepPid, processes.Snapshot());
+        IReadOnlySet<int> excluded = ProcessTable.ExcludedPids(Environment.ProcessId, sweepPid, processes.Snapshot(), processes.StartedAt);
         bool acted = false;
         bool finished = false;
         while (true)
@@ -51,7 +53,7 @@ public sealed class ElevatedSession(TextReader input, TextWriter output, IHandle
                 Say($"{lockers.Count} process(es) still hold files under those folders.");
                 return UnlockExit.For(false, acted);
             }
-            Round round = OfferRound(lockers, callerPid, paths);
+            Round round = OfferRound(lockers, callerPid, callerStarted, paths);
             acted |= round.Acted;
             finished = round.Done || !round.Acted;
         }
@@ -60,14 +62,15 @@ public sealed class ElevatedSession(TextReader input, TextWriter output, IHandle
     /// <summary>Offers every locker in turn and applies the answer.</summary>
     /// <param name="lockers">The processes holding files, in the order they are offered.</param>
     /// <param name="callerPid">The PID of the process that started the unelevated run, or <see langword="null"/>.</param>
+    /// <param name="callerStarted">That process's creation time, or <see langword="null"/> when it is not known.</param>
     /// <param name="paths">The folders whose open handles are cleared.</param>
     /// <returns>Whether anything was acted on, and whether the user ended the session.</returns>
-    private Round OfferRound(IReadOnlyList<Locker> lockers, int? callerPid, IReadOnlyList<string> paths)
+    private Round OfferRound(IReadOnlyList<Locker> lockers, int? callerPid, ulong? callerStarted, IReadOnlyList<string> paths)
     {
         bool acted = false;
         foreach (Locker locker in lockers)
         {
-            bool isCaller = callerPid == locker.Pid;
+            bool isCaller = IsCaller(locker.Pid, callerPid, callerStarted);
             string label = $"{locker.Process} (pid {locker.Pid})";
             Describe(locker, label, isCaller);
             LockerAction action = Choose(label, isCaller);
@@ -81,6 +84,33 @@ public sealed class ElevatedSession(TextReader input, TextWriter output, IHandle
             Say(outcome.Line);
         }
         return new Round(acted, false);
+    }
+
+    /// <summary>
+    /// Whether the locker is the caller: the PIDs must match, and when the caller's creation time is known so must the locker's.
+    /// A known different time means the PID was reused by another process, and the locker is an ordinary one; an unreadable time
+    /// keeps it the caller, whose default of Skip is the safe one.
+    /// </summary>
+    /// <param name="pid">The locker's PID.</param>
+    /// <param name="callerPid">The PID of the process that started the unelevated run, or <see langword="null"/>.</param>
+    /// <param name="callerStarted">That process's creation time, or <see langword="null"/> when it is not known.</param>
+    /// <returns><see langword="true"/> when the locker is the process that started the unelevated run.</returns>
+    private bool IsCaller(int pid, int? callerPid, ulong? callerStarted)
+    {
+        if (callerPid != pid)
+        {
+            return false;
+        }
+        if (callerStarted is not ulong expected)
+        {
+            return true;
+        }
+        if (processes.StartedAt(pid) is ulong started && started != expected)
+        {
+            Trace.TraceWarning($"pid {pid} is no longer the process that started worktree-sweep");
+            return false;
+        }
+        return true;
     }
 
     /// <summary>Prints what a locker holds: at most <see cref="ShownHandles"/> handle lines, and a note when the caller's

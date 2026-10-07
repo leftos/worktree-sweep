@@ -11,13 +11,18 @@ namespace WorktreeSweep.Unlock;
 /// <param name="ExePath">The path of the running program, or <see langword="null"/> when it is not known.</param>
 /// <param name="CallerPid">The process that started this one, usually the user's shell, or <see langword="null"/> when it is not
 /// known.</param>
+/// <param name="CallerStarted">The caller's creation time, or <see langword="null"/> when it is not known.</param>
 /// <param name="Pid">This process.</param>
-public sealed record SweepProcess(string? ExePath, int? CallerPid, int Pid)
+public sealed record SweepProcess(string? ExePath, int? CallerPid, ulong? CallerStarted, int Pid)
 {
-    /// <summary>The running process: its program path, its caller and its PID.</summary>
+    /// <summary>The running process: its program path, its caller, that caller's creation time and its PID.</summary>
     /// <returns>This process; the caller is left out only when a newer process has provably taken the parent's PID, and each
     /// creation time that cannot be read is traced as a warning and the caller kept.</returns>
-    public static SweepProcess Current() => new(Environment.ProcessPath, OwnParentPid(), Environment.ProcessId);
+    public static SweepProcess Current()
+    {
+        (int? callerPid, ulong? callerStarted) = OwnParentPid();
+        return new(Environment.ProcessPath, callerPid, callerStarted, Environment.ProcessId);
+    }
 
     /// <summary>The parent's PID to keep as the caller. Only proof of reuse drops it.</summary>
     /// <param name="parentPid">The parent's PID, from the process table.</param>
@@ -31,16 +36,18 @@ public sealed record SweepProcess(string? ExePath, int? CallerPid, int Pid)
         return reused ? null : parentPid;
     }
 
-    /// <summary>The PID of the process that started this one, unless a newer process has provably taken its PID.</summary>
-    /// <returns>The parent's PID, or <see langword="null"/> when the table cannot be read or does not list this process, or when
-    /// the parent provably started after this one.</returns>
-    private static int? OwnParentPid()
+    /// <summary>The PID of the process that started this one and its creation time, unless a newer process has provably taken
+    /// its PID.</summary>
+    /// <returns>The parent's PID and creation time, or <see langword="null"/> for both when the table cannot be read or does not
+    /// list this process, or when the parent provably started after this one; the creation time is also
+    /// <see langword="null"/> when it cannot be read.</returns>
+    private static (int? Pid, ulong? Started) OwnParentPid()
     {
         try
         {
             if (!ProcessTable.Snapshot().TryGetValue(Environment.ProcessId, out ProcessEntry? entry))
             {
-                return null;
+                return (null, null);
             }
             int parentPid = entry.Parent;
             ulong? parentCreated = HolderFinder.StartedAt(parentPid);
@@ -50,8 +57,9 @@ public sealed record SweepProcess(string? ExePath, int? CallerPid, int Pid)
             if (kept is null)
             {
                 Trace.TraceWarning($"pid {parentPid} is not the process that started worktree-sweep: it was created after this one");
+                return (null, null);
             }
-            else if (parentCreated is null)
+            if (parentCreated is null)
             {
                 Trace.TraceWarning($"cannot read when the process that started worktree-sweep began: pid {parentPid}");
             }
@@ -59,12 +67,12 @@ public sealed record SweepProcess(string? ExePath, int? CallerPid, int Pid)
             {
                 Trace.TraceWarning("cannot read when this worktree-sweep began");
             }
-            return kept;
+            return (kept, parentCreated);
         }
         catch (Win32Exception error)
         {
             Trace.TraceWarning($"cannot find the process that started worktree-sweep: {error.Message}");
-            return null;
+            return (null, null);
         }
     }
 }

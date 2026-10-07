@@ -88,26 +88,39 @@ internal static class Program
     }
 
     /// <summary>
-    /// The hidden <c>unlock PATHS... [--caller-pid PID] [--sweep-pid PID]</c> subcommand that <c>sudo</c> runs elevated: finds what
-    /// holds files under the paths and offers to stop it or close its handles.
+    /// The hidden <c>unlock PATHS... [--caller-pid PID] [--caller-started TIME] [--sweep-pid PID]</c> subcommand that <c>sudo</c>
+    /// runs elevated: finds what holds files under the paths and offers to stop it or close its handles.
     /// </summary>
     private static Command UnlockCommand()
     {
         Argument<string[]> paths = new("PATHS") { Arity = ArgumentArity.OneOrMore, Description = "The locked folders." };
         Option<int?> callerPid = new("--caller-pid") { Hidden = true, Description = "The process that started the unelevated run." };
+        Option<ulong?> callerStarted = new("--caller-started")
+        {
+            Hidden = true,
+            Description = "That process's creation time, proving its PID still names it.",
+        };
         Option<int?> sweepPid = new("--sweep-pid") { Hidden = true, Description = "The unelevated worktree-sweep, never offered." };
-        Command unlock = new("unlock", "Find and clear what holds files under PATHS (run elevated by the sweep).") { paths, callerPid, sweepPid };
+        Command unlock = new("unlock", "Find and clear what holds files under PATHS (run elevated by the sweep).")
+        {
+            paths,
+            callerPid,
+            callerStarted,
+            sweepPid,
+        };
         unlock.Hidden = true;
-        unlock.SetAction(parsed => RunUnlock(parsed.GetRequiredValue(paths), parsed.GetValue(callerPid), parsed.GetValue(sweepPid)));
+        unlock.SetAction(parsed =>
+            RunUnlock(parsed.GetRequiredValue(paths), parsed.GetValue(callerPid), parsed.GetValue(callerStarted), parsed.GetValue(sweepPid))
+        );
         return unlock;
     }
 
-    private static int RunUnlock(string[] paths, int? callerPid, int? sweepPid)
+    private static int RunUnlock(string[] paths, int? callerPid, ulong? callerStarted, int? sweepPid)
     {
         try
         {
             var session = new ElevatedSession(Console.In, Console.Out, new HandleExe(), new ProcessControl());
-            return session.Run(paths, callerPid, sweepPid);
+            return session.Run(paths, callerPid, callerStarted, sweepPid);
         }
 #pragma warning disable CA1031 // Every failure of the elevated session ends it with exit 1 and its message, as the Rust tool does.
         catch (Exception error)
