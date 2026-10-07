@@ -14,5 +14,5 @@ public sealed class ProcessControl : IProcessControl
     public ulong? StartedAt(int pid) => HolderFinder.StartedAt(pid);
 
     /// <inheritdoc/>
-    public void Stop(int pid, string exe) => ProcessStopper.Stop(pid, exe, ProcessStopper.DefaultWait);
+    public void Stop(int pid, string exe, ulong? started) => ProcessStopper.Stop(pid, exe, started, ProcessStopper.DefaultWait);
 }

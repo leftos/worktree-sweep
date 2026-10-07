@@ -45,7 +45,7 @@ public sealed class ElevatedSession(TextReader input, TextWriter output, IHandle
         while (true)
         {
             Say("Scanning open handles…");
-            IReadOnlyList<Locker> lockers = LockerFinder.Find(handleExe.Dump(), paths, excluded);
+            IReadOnlyList<Locker> lockers = LockerFinder.Find(handleExe.Dump(), paths, excluded, processes.StartedAt);
             if (lockers.Count == 0)
             {
                 Say("Nothing holds files under those folders.");
@@ -190,13 +190,14 @@ public sealed class ElevatedSession(TextReader input, TextWriter output, IHandle
     /// <returns>The line and whether it was stopped.</returns>
     private Outcome StopLocker(Locker locker, string label)
     {
-        if (!StillRunning(locker))
+        LockerState state = CheckLocker(locker);
+        if (state != LockerState.Same)
         {
-            return new Outcome(ExitedLine(label), false);
+            return Skipped(label, state);
         }
         try
         {
-            processes.Stop(locker.Pid, locker.Process);
+            processes.Stop(locker.Pid, locker.Process, locker.Started);
             return new Outcome($"Stopped {label}.", true);
         }
         catch (Exception error) when (error is Win32Exception or InvalidOperationException)
@@ -217,9 +218,10 @@ public sealed class ElevatedSession(TextReader input, TextWriter output, IHandle
         {
             return new Outcome($"Left {label} alone.", false);
         }
-        if (!StillRunning(locker))
+        LockerState state = CheckLocker(locker);
+        if (state != LockerState.Same)
         {
-            return new Outcome(ExitedLine(label), false);
+            return Skipped(label, state);
         }
         IReadOnlyList<HandleRow> now = HandleCsv.Parse(handleExe.DumpProcess(locker.Pid));
         int closed = 0;
@@ -271,28 +273,54 @@ public sealed class ElevatedSession(TextReader input, TextWriter output, IHandle
     }
 
     /// <summary>
-    /// Whether the locker's PID still names the same program. A table that cannot be taken is traced and counts as exited, so
-    /// nothing is acted on behind a PID that may have been reused.
+    /// What a fresh look at the locker's PID finds: the process the scan saw, one that is gone, or another process that has taken
+    /// the PID since. A table that cannot be taken is traced and counts as gone, as does a creation time that can no longer be
+    /// read, so nothing is acted on behind a PID that may have been reused.
     /// </summary>
     /// <param name="locker">The process the scan saw.</param>
-    /// <returns><see langword="true"/> when the table still holds the PID under the same name.</returns>
-    private bool StillRunning(Locker locker)
+    /// <returns>The verdict.</returns>
+    private LockerState CheckLocker(Locker locker)
     {
         try
         {
-            return ProcessTable.IsSameProcess(locker.Pid, locker.Process, processes.Snapshot());
+            if (!ProcessTable.IsSameProcess(locker.Pid, locker.Process, processes.Snapshot()))
+            {
+                return LockerState.Exited;
+            }
         }
         catch (Win32Exception error)
         {
             Trace.TraceWarning($"cannot check that pid {locker.Pid} is still {locker.Process}: {error.Message}");
-            return false;
+            return LockerState.Exited;
         }
+        if (locker.Started is not ulong expected)
+        {
+            return LockerState.Same;
+        }
+        return processes.StartedAt(locker.Pid) switch
+        {
+            null => LockerState.Exited,
+            ulong started when started == expected => LockerState.Same,
+            _ => LockerState.Replaced,
+        };
     }
+
+    /// <summary>The outcome for a locker the re-check found gone or taken by another process: nothing was acted on.</summary>
+    /// <param name="label">The process, as <c>{name} (pid {pid})</c>.</param>
+    /// <param name="state">What the re-check found; never <see cref="LockerState.Same"/>.</param>
+    /// <returns>The line and that nothing was acted on.</returns>
+    private static Outcome Skipped(string label, LockerState state) =>
+        new(state == LockerState.Replaced ? ReplacedLine(label) : ExitedLine(label), false);
 
     /// <summary>The line reporting a process that is gone.</summary>
     /// <param name="label">The process, as <c>{name} (pid {pid})</c>.</param>
     /// <returns>The line.</returns>
     private static string ExitedLine(string label) => $"{label} has exited; skipped.";
+
+    /// <summary>The line reporting a PID that another process has taken since the scan.</summary>
+    /// <param name="label">The process, as <c>{name} (pid {pid})</c>.</param>
+    /// <returns>The line.</returns>
+    private static string ReplacedLine(string label) => $"{label} is no longer the process the scan saw; skipped.";
 
     /// <summary>Writes one line and flushes it, so a user sees it before the next read.</summary>
     /// <param name="line">The line.</param>
@@ -300,6 +328,19 @@ public sealed class ElevatedSession(TextReader input, TextWriter output, IHandle
     {
         output.WriteLine(line);
         output.Flush();
+    }
+
+    /// <summary>What a fresh look at a locker's PID found.</summary>
+    private enum LockerState
+    {
+        /// <summary>The PID still names the process the scan saw.</summary>
+        Same,
+
+        /// <summary>The process is gone, or nothing could confirm it is still there.</summary>
+        Exited,
+
+        /// <summary>Another process has taken the PID since the scan.</summary>
+        Replaced,
     }
 
     /// <summary>What one round of offers did.</summary>

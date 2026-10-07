@@ -46,10 +46,13 @@ public static class HandleCsv
 
     /// <summary>Groups rows by process, sorted by pid, keeping each process's handles in the order they appeared.</summary>
     /// <param name="rows">The rows to group.</param>
+    /// <param name="startedAt">A process's creation time by PID, as a <c>FILETIME</c> count; called once per locker when it is
+    /// built.</param>
     /// <returns>One locker per process, under the first name seen for its pid.</returns>
-    public static IReadOnlyList<Locker> GroupByProcess(IEnumerable<HandleRow> rows)
+    public static IReadOnlyList<Locker> GroupByProcess(IEnumerable<HandleRow> rows, Func<int, ulong?> startedAt)
     {
         ArgumentNullException.ThrowIfNull(rows);
+        ArgumentNullException.ThrowIfNull(startedAt);
         return
         [
             .. rows.GroupBy(row => row.Pid)
@@ -57,7 +60,8 @@ public static class HandleCsv
                 .Select(group => new Locker(
                     group.First().Process,
                     group.Key,
-                    [.. group.Select(row => new HeldHandle(row.Handle, row.Kind, row.Name))]
+                    [.. group.Select(row => new HeldHandle(row.Handle, row.Kind, row.Name))],
+                    startedAt(group.Key)
                 )),
         ];
     }

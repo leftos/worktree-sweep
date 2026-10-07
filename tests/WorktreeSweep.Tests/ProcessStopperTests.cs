@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using WorktreeSweep.Holders;
 using WorktreeSweep.Processes;
 
 namespace WorktreeSweep.Tests;
@@ -14,7 +15,7 @@ public sealed class ProcessStopperTests
         using Process child = SleepingChild.Start();
         try
         {
-            ProcessStopper.Stop(child.Id, "pwsh.exe", ProcessStopper.DefaultWait);
+            ProcessStopper.Stop(child.Id, "pwsh.exe", null, ProcessStopper.DefaultWait);
 
             child.WaitForExit();
             Assert.Equal(1, child.ExitCode);
@@ -36,7 +37,7 @@ public sealed class ProcessStopperTests
         child.Kill();
         child.WaitForExit();
 
-        ProcessStopper.Stop(child.Id, "pwsh.exe", ProcessStopper.DefaultWait);
+        ProcessStopper.Stop(child.Id, "pwsh.exe", null, ProcessStopper.DefaultWait);
     }
 
     /// <summary>A PID no process can have cannot be opened.</summary>
@@ -45,7 +46,7 @@ public sealed class ProcessStopperTests
     {
         const int NoSuchPid = int.MaxValue & ~3;
 
-        Win32Exception error = Assert.Throws<Win32Exception>(() => ProcessStopper.Stop(NoSuchPid, "pwsh.exe", ProcessStopper.DefaultWait));
+        Win32Exception error = Assert.Throws<Win32Exception>(() => ProcessStopper.Stop(NoSuchPid, "pwsh.exe", null, ProcessStopper.DefaultWait));
         Assert.Contains("cannot open process", error.Message, StringComparison.Ordinal);
     }
 
@@ -57,11 +58,56 @@ public sealed class ProcessStopperTests
         try
         {
             InvalidOperationException error = Assert.Throws<InvalidOperationException>(() =>
-                ProcessStopper.Stop(child.Id, "not-this.exe", ProcessStopper.DefaultWait)
+                ProcessStopper.Stop(child.Id, "not-this.exe", null, ProcessStopper.DefaultWait)
             );
 
             Assert.Contains("not-this.exe; not stopped", error.Message, StringComparison.Ordinal);
             Assert.False(child.HasExited);
+        }
+        finally
+        {
+            SleepingChild.KillIfAlive(child);
+        }
+    }
+
+    /// <summary>A PID whose process started at a different time than the caller saw is not stopped, so a PID reused since the scan
+    /// is never terminated even when the new process has the same image name.</summary>
+    [Fact]
+    public void StopWithADifferentStartTimeThrowsAndLeavesItRunning()
+    {
+        using Process child = SleepingChild.Start();
+        try
+        {
+            ulong? started = HolderFinder.StartedAt(child.Id);
+            Assert.NotNull(started);
+
+            InvalidOperationException error = Assert.Throws<InvalidOperationException>(() =>
+                ProcessStopper.Stop(child.Id, "pwsh.exe", started + 1, ProcessStopper.DefaultWait)
+            );
+
+            Assert.Contains("is not the process that was seen", error.Message, StringComparison.Ordinal);
+            Assert.False(child.HasExited);
+        }
+        finally
+        {
+            SleepingChild.KillIfAlive(child);
+        }
+    }
+
+    /// <summary>A PID whose creation time still matches the caller's is stopped.</summary>
+    [Fact]
+    public void StopWithTheMatchingStartTimeStops()
+    {
+        using Process child = SleepingChild.Start();
+        try
+        {
+            ulong? started = HolderFinder.StartedAt(child.Id);
+            Assert.NotNull(started);
+
+            ProcessStopper.Stop(child.Id, "pwsh.exe", started, ProcessStopper.DefaultWait);
+
+            child.WaitForExit();
+            Assert.Equal(1, child.ExitCode);
         }
         finally
         {

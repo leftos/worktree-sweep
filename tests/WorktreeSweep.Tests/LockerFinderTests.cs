@@ -21,7 +21,7 @@ public sealed class LockerFinderTests
         );
         HashSet<int> excluded = [90];
 
-        IReadOnlyList<Locker> lockers = LockerFinder.Find(dump, [Locked], excluded);
+        IReadOnlyList<Locker> lockers = LockerFinder.Find(dump, [Locked], excluded, _ => null);
 
         Locker locker = Assert.Single(lockers);
         Assert.Equal(12, locker.Pid);
@@ -40,11 +40,36 @@ public sealed class LockerFinderTests
         );
         HashSet<int> excluded = [];
 
-        IReadOnlyList<Locker> lockers = LockerFinder.Find(dump, [Locked], excluded);
+        IReadOnlyList<Locker> lockers = LockerFinder.Find(dump, [Locked], excluded, _ => null);
 
         Assert.Equal<int[]>([12, 90], [.. lockers.Select(locker => locker.Pid)]);
         Assert.Equal("code.exe", lockers[1].Process);
         Assert.Equal<ulong[]>([0x10, 0x12], [.. lockers[1].Handles.Select(held => held.Handle)]);
+    }
+
+    /// <summary>Each locker carries the start time the reader gave its PID, read once per PID even with several handles.</summary>
+    [Fact]
+    public void FindReadsEachLockersStartTimeOnce()
+    {
+        string dump = Dump(
+            ("code.exe", 90, "File", 0x10, @"D:\a.wt\x\a.txt"),
+            ("pwsh.exe", 12, "File", 0x11, @"D:\a.wt\x\b.txt"),
+            ("pwsh.exe", 12, "File", 0x12, @"D:\a.wt\x\c.txt")
+        );
+        HashSet<int> excluded = [];
+        Dictionary<int, ulong> times = new() { [12] = 1000, [90] = 2000 };
+        List<int> reads = [];
+        ulong? StartedAt(int pid)
+        {
+            reads.Add(pid);
+            return times.TryGetValue(pid, out ulong started) ? started : null;
+        }
+
+        IReadOnlyList<Locker> lockers = LockerFinder.Find(dump, [Locked], excluded, StartedAt);
+
+        Assert.Equal<ulong?[]>([1000, 2000], [.. lockers.Select(locker => locker.Started)]);
+        Assert.Equal(2, reads.Count);
+        Assert.Equal<int[]>([12, 90], [.. reads.Order()]);
     }
 
     /// <summary>A dump of the <c>-nobanner -v</c> layout, holding the given rows.</summary>
