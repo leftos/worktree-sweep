@@ -249,7 +249,8 @@ public static partial class SignalReader
 /// <see cref="GitTimeoutException"/> means the worktree's volume is stalled, where every later git call would wait the full time
 /// limit too: the volume is marked in <paramref name="stalls"/>, so no later call on it is started, and this worktree's remaining
 /// reads are skipped, each reporting <see langword="default"/>, with one notice naming the volume recorded after the timeout's own
-/// message. A worktree whose volume another worktree has already stalled makes no git call and records the same notice alone.
+/// message. A worktree whose volume another worktree has already stalled makes no git call and records the notice that says so.
+/// The volume is keyed once, in the constructor, and every check and mark uses that key.
 /// </summary>
 /// <param name="stalls">The volumes an earlier git call has stalled, shared by the scan's worktrees.</param>
 /// <param name="path">The worktree whose signals are read.</param>
@@ -258,11 +259,14 @@ internal sealed class SignalReads(VolumeStalls stalls, string path)
     private readonly List<string> _errors = [];
     private bool _timedOut;
 
-    /// <summary>The volume the worktree's git calls run on.</summary>
+    /// <summary>The volume the worktree's git calls run on, keyed once.</summary>
     public string Volume { get; } = VolumeStalls.Volume(path);
 
-    /// <summary>The notice recorded once when a read times out or is skipped for a stalled volume.</summary>
+    /// <summary>The notice recorded when this worktree's own git call timed out.</summary>
     public string TimeoutNotice => $"git timed out on {Volume}; remaining signals skipped";
+
+    /// <summary>The notice recorded when another worktree's git call has already stalled this worktree's volume.</summary>
+    public string StalledNotice => $"git was not started: {Volume} stalled earlier in this scan";
 
     /// <summary>The failures' messages, in order, plus the one skip notice a timeout or a stalled volume adds.</summary>
     public IReadOnlyList<string> Errors => _errors;
@@ -284,7 +288,7 @@ internal sealed class SignalReads(VolumeStalls stalls, string path)
         }
         catch (GitTimeoutException error)
         {
-            stalls.Mark(path);
+            stalls.MarkVolume(Volume);
             _errors.Add(error.Message);
             _errors.Add(TimeoutNotice);
             _timedOut = true;
@@ -307,11 +311,11 @@ internal sealed class SignalReads(VolumeStalls stalls, string path)
         {
             return true;
         }
-        if (!stalls.IsStalled(path))
+        if (!stalls.IsVolumeStalled(Volume))
         {
             return false;
         }
-        _errors.Add(TimeoutNotice);
+        _errors.Add(StalledNotice);
         _timedOut = true;
         return true;
     }

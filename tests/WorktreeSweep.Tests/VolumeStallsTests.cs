@@ -8,7 +8,7 @@ namespace WorktreeSweep.Tests;
 /// <summary>The volumes a git timeout stalls: one set per scan, shared by discovery and every signal read.</summary>
 public sealed class VolumeStallsTests
 {
-    /// <summary>Marking one folder stalls its whole volume, and no other volume.</summary>
+    /// <summary>Marking one folder stalls the whole volume it is spelled under, and no other volume.</summary>
     [Fact]
     public void MarkingOneFolderStallsItsWholeVolume()
     {
@@ -16,7 +16,6 @@ public sealed class VolumeStallsTests
         stalls.Mark(@"D:\a");
 
         Assert.True(stalls.IsStalled(@"D:\b\c"));
-        Assert.SkipWhen(VolumeStalls.Key(@"E:\x") == VolumeStalls.Key(@"D:\a"), "this machine's E: resolves to D:'s volume");
         Assert.False(stalls.IsStalled(@"E:\x"));
     }
 
@@ -31,27 +30,45 @@ public sealed class VolumeStallsTests
         Assert.False(stalls.IsStalled(@"\\nas\other\a"));
     }
 
-    /// <summary>Volume comparison folds case: the same volume spelled either way is one volume.</summary>
+    /// <summary>The key is the path's spelled root, compared folding case, and nothing is read to make it.</summary>
     [Fact]
-    public void VolumeComparisonFoldsCase()
+    public void TheKeyIsTheSpelledRootComparedFoldingCase()
     {
+        Assert.Equal(@"D:\", VolumeStalls.Volume(@"D:\a\b"));
+        Assert.Equal(@"\\nas\dev", VolumeStalls.Volume(@"\\nas\dev\a"));
+        Assert.Equal(VolumeStalls.Volume(@"D:\a"), VolumeStalls.Volume(@"d:/b"), ignoreCase: true);
+
         var stalls = new VolumeStalls();
         stalls.Mark(@"D:\a");
 
-        Assert.Equal(VolumeStalls.Key(@"D:\a"), VolumeStalls.Key(@"d:\b"));
         Assert.True(stalls.IsStalled(@"d:\b"));
     }
 
-    /// <summary>Marks made from many threads at once are all recorded, on every volume they name.</summary>
+    /// <summary>
+    /// A subst drive and its target key apart, so scanning both may pay one extra timeout; a volume mounted into a folder keys with
+    /// its host drive, so it pays none.
+    /// </summary>
+    [Fact]
+    public void SubstAndMountKeyByTheirSpelling()
+    {
+        Assert.NotEqual(VolumeStalls.Volume(@"D:\a"), VolumeStalls.Volume(@"X:\dev\a"), StringComparer.OrdinalIgnoreCase);
+        Assert.Equal(@"D:\", VolumeStalls.Volume(@"D:\mnt\volume\a"), ignoreCase: true);
+        Assert.Equal(@"D:\", VolumeStalls.Volume(@"D:\other"), ignoreCase: true);
+    }
+
+    /// <summary>Marks made from many threads at once are all recorded, on every one of the distinct keys they name.</summary>
     [Fact]
     public void ConcurrentMarksAreAllRecorded()
     {
         var stalls = new VolumeStalls();
-        string[] volumes = [@"D:\a", @"E:\b", @"F:\c", @"G:\d"];
+        string[] paths = [@"D:\a", @"E:\b", @"F:\c", @"G:\d"];
+        string[] keys = [.. paths.Select(VolumeStalls.Volume).Distinct(StringComparer.OrdinalIgnoreCase)];
 
-        _ = Parallel.For(0, 512, index => stalls.Mark(volumes[index % volumes.Length]));
+        _ = Parallel.For(0, 512, index => stalls.Mark(paths[index % paths.Length]));
 
-        Assert.All(volumes, volume => Assert.True(stalls.IsStalled(volume)));
+        Assert.Equal(paths.Length, keys.Length);
+        Assert.All(keys, key => Assert.True(stalls.IsVolumeStalled(key)));
+        Assert.All(paths, path => Assert.True(stalls.IsStalled(path)));
     }
 
     /// <summary>
@@ -71,6 +88,40 @@ public sealed class VolumeStallsTests
         Assert.Empty(found.Repos);
         DiscoveryError error = Assert.Single(found.Errors);
         Assert.Contains("stalled", error.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A repo whose own worktree listing times out stalls its volume there, so the next repo on it is skipped without git being
+    /// asked: the injected listing really throws, nothing is marked by hand, and it is never called for the second repo.
+    /// </summary>
+    [Fact]
+    public void ARepoWhoseWorktreeListTimesOutStallsTheVolumeForTheNextRepo()
+    {
+        using var fx = new Fixture();
+        string first = fx.Repo("a");
+        string second = fx.Repo("b");
+        var stalls = new VolumeStalls();
+        var listed = new List<string>();
+
+        DiscoveryResult found = Discoverer.Discover(
+            fx.Root,
+            PathResolver.Resolve,
+            stalls,
+            repo =>
+            {
+                listed.Add(repo);
+                return Fixture.SamePath(repo, first)
+                    ? throw new GitTimeoutException("`git -C a worktree list --porcelain` did not exit within 60 s")
+                    : Discoverer.ListWorktrees(repo);
+            }
+        );
+
+        string only = Assert.Single(listed);
+        Assert.True(Fixture.SamePath(only, first), only);
+        Assert.True(stalls.IsStalled(second));
+        Assert.Empty(found.Repos);
+        Assert.Equal(2, found.Errors.Count);
+        Assert.Contains(found.Errors, error => error.Message.Contains("stalled", StringComparison.Ordinal));
     }
 
     /// <summary>A stalled volume's default branches are not read: the repo answers main on a volume that is live.</summary>

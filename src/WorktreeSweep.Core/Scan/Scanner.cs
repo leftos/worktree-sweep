@@ -15,9 +15,10 @@ public static class Scanner
     /// </summary>
     /// <remarks>
     /// A repo's main worktree is never a candidate. A repo whose default branches or common git dir git cannot find is still
-    /// scanned, with a trace warning: its candidates get no default branches to compare against, or no released marker. One
-    /// <see cref="VolumeStalls"/> is made for the whole scan and shared by discovery and every read, so a volume one git call
-    /// times out on is not waited on again by any other repo or worktree on it.
+    /// scanned, with a trace warning: its candidates get no default branches to compare against, or no released marker; a git
+    /// timeout behind any of those reads marks the repo's volume stalled. One <see cref="VolumeStalls"/> is made for the whole scan
+    /// and shared by discovery and every read, so a volume one git call times out on is not waited on again by any other repo or
+    /// worktree on it.
     /// </remarks>
     /// <param name="root">The folder to scan.</param>
     /// <returns>The report, its candidates registered worktrees first, then orphans, each in discovery order.</returns>
@@ -78,6 +79,10 @@ public static class Scanner
         }
         catch (GitException error)
         {
+            if (error is GitTimeoutException)
+            {
+                stalls.Mark(repo);
+            }
             Trace.TraceWarning($"cannot find the default branches of {repo}: {error.Message}");
             return new DefaultBranches();
         }
@@ -96,6 +101,10 @@ public static class Scanner
         }
         catch (GitException error)
         {
+            if (error is GitTimeoutException)
+            {
+                stalls.Mark(repo);
+            }
             Trace.TraceWarning($"cannot find the git dir of {repo}: {error.Message}");
             return null;
         }
