@@ -12,11 +12,17 @@ public sealed record ReviewTotals
     /// <summary>Gets their size; an unknown size counts 0.</summary>
     public long RecycleBytes { get; init; }
 
+    /// <summary>Gets how many of the recycled folders have an unknown size.</summary>
+    public int RecycleUnknown { get; init; }
+
     /// <summary>Gets the folders deleted for good.</summary>
     public int Permanent { get; init; }
 
     /// <summary>Gets their size; an unknown size counts 0.</summary>
     public long PermanentBytes { get; init; }
+
+    /// <summary>Gets how many of the permanently deleted folders have an unknown size.</summary>
+    public int PermanentUnknown { get; init; }
 
     /// <summary>Gets the links deleted.</summary>
     public int Links { get; init; }
@@ -32,7 +38,8 @@ public sealed record ReviewTotals
 
     /// <summary>
     /// The final confirmation's sentence, naming only the non-zero parts: <c>Remove N items: R to the Recycle Bin (X), P permanently
-    /// (Y), L links, U registrations pruned; B branches deleted. S skipped.</c>
+    /// (Y), L links, U registrations pruned; B branches deleted. S skipped.</c> A sized part that includes a folder of unknown size
+    /// reads <c>at least X; K of unknown size</c> instead of <c>X</c>.
     /// </summary>
     /// <returns>The sentence.</returns>
     public string FinalSentence()
@@ -41,11 +48,11 @@ public sealed record ReviewTotals
         var parts = new List<string>();
         if (Recycle > 0)
         {
-            parts.Add(string.Create(CultureInfo.InvariantCulture, $"{Recycle} to the Recycle Bin ({ReportTable.HumanBytes(RecycleBytes)})"));
+            parts.Add(SizedPart(Recycle, "to the Recycle Bin", RecycleBytes, RecycleUnknown));
         }
         if (Permanent > 0)
         {
-            parts.Add(string.Create(CultureInfo.InvariantCulture, $"{Permanent} permanently ({ReportTable.HumanBytes(PermanentBytes)})"));
+            parts.Add(SizedPart(Permanent, "permanently", PermanentBytes, PermanentUnknown));
         }
         if (Links > 0)
         {
@@ -67,4 +74,15 @@ public sealed record ReviewTotals
         sentence += ".";
         return Skipped > 0 ? sentence + string.Create(CultureInfo.InvariantCulture, $" {Skipped} skipped.") : sentence;
     }
+
+    /// <summary>One sized part of the sentence.</summary>
+    /// <param name="count">The folders in the part.</param>
+    /// <param name="what">What happens to them.</param>
+    /// <param name="bytes">Their total size; an unknown size counts 0.</param>
+    /// <param name="unknown">How many of them have an unknown size.</param>
+    /// <returns><c>{count} {what} ({bytes})</c>, or <c>{count} {what} (at least {bytes}; {unknown} of unknown size)</c> when any is unknown.</returns>
+    private static string SizedPart(int count, string what, long bytes, int unknown) =>
+        unknown > 0
+            ? string.Create(CultureInfo.InvariantCulture, $"{count} {what} (at least {ReportTable.HumanBytes(bytes)}; {unknown} of unknown size)")
+            : string.Create(CultureInfo.InvariantCulture, $"{count} {what} ({ReportTable.HumanBytes(bytes)})");
 }
