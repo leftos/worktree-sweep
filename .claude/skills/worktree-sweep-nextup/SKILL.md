@@ -41,7 +41,7 @@ linear: worktree-sweep
 ## Agents and gates
 
 - Explore: `Explore`. Rust design second opinion: `oracle`.
-- Implementer: the Opus `implementer` through `Agent` (module API shapes are still being settled, so briefs leave small design calls to it).
+- Implementer: tier 1 and tier 2 briefs go to DeepSeek through `dispatch`, as `plan-execution` routes them; its mid-run `QUESTION` channel takes the small API-shape calls a brief leaves open, answered with `dispatch answer`. The Opus `implementer` through `Agent` takes tier 3 briefs and any brief whose open design call the orchestrator cannot settle before dispatch. The message announcing a dispatch names each brief's route.
 - Reviewers: `code-review` for every item.
 - Gates, each wrapped as `cmd > .tmp/<name>.log 2>&1; $rc = $LASTEXITCODE; Get-Content .tmp/<name>.log -Tail 20; "rc=$rc"` from the repo root, test runs at BelowNormal priority:
   - `cargo fmt --all -- --check`
