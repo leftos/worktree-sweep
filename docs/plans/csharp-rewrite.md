@@ -46,7 +46,7 @@ Every brief quotes the ones its module enforces, from the Rust source it ports:
 - **Handle naming (C8) differs from `src/holders.rs` in three ways:** a lookup that fails at once (a volume handle, a file pending delete) counts against its process only when the file system lists that process as using the folder, where Rust made every such process an unnamed may-hold; a timed-out lookup is cancelled with `CancelSynchronousIo` and its worker kept if it then returns; and the 200 ms budget starts when the worker begins the lookup, not when the handle is posted.
 - **One elevation per run:** removal is two passes; the locked picks go to a single unlock offer, one `sudo`, one `handle.exe` dump filtered by every locked path, then one retry pass.
 - **The released marker keeps its file shape** (`worktree-sweep-released.json` in the worktree's `.git/worktrees/{id}` folder: `released_at`, `reason`, `holders`): it is state already on disk, and the Rust and C# tools read each other's during coexistence.
-- **Output:** UTF-8, `\n` line ends (`Console.Out.NewLine`, `JsonSerializerOptions` with relaxed escaping), children sorted with `StringComparer.Ordinal`, path keys case-folded.
+- **Output:** UTF-16 through `WriteConsoleW` to a console and UTF-8 without a BOM to a redirected stream (`ConsoleEncodings`, which never changes the console code page), `\n` line ends (`Console.Out.NewLine`, `JsonSerializerOptions` with relaxed escaping), children sorted with `StringComparer.Ordinal`, path keys case-folded.
 - `--list` keeps the Rust table's columns and order (`src/report.rs:371-383`); only the JSON is redesigned.
 
 ## Layout

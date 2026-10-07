@@ -38,7 +38,8 @@ public static class ReportJson
     {
         ArgumentNullException.ThrowIfNull(report);
         ArgumentNullException.ThrowIfNull(output);
-        output.Write(JsonSerializer.Serialize(ReportDocument.From(report), Options) + "\n");
+        output.Write(JsonSerializer.Serialize(ReportDocument.From(report), Options));
+        output.Write('\n');
     }
 
     /// <summary>A Unix time as an ISO 8601 UTC string in whole seconds.</summary>
