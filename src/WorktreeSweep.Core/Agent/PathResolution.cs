@@ -36,12 +36,16 @@ public static class PathResolution
     /// folder.</exception>
     /// <exception cref="IOException">The path's attributes cannot be read for a reason other than its absence.</exception>
     /// <exception cref="UnauthorizedAccessException">The path's attributes cannot be read for lack of access.</exception>
-    public static Resolution ResolveOne(string path) => ResolveOne(path, new VolumeStalls(), Discoverer.ListWorktrees);
+    public static Resolution ResolveOne(string path) => ResolveOne(path, new VolumeStalls(), Discoverer.ListWorktrees, Scanner.CommonDirOrNull);
 
-    /// <summary>Resolves what <see cref="ResolveOne(string)"/> resolves, listing each repo's worktrees with <paramref name="listWorktrees"/>.</summary>
+    /// <summary>
+    /// Resolves what <see cref="ResolveOne(string)"/> resolves, finding each repo's common git dir with <paramref name="commonDir"/> and
+    /// listing its worktrees with <paramref name="listWorktrees"/>.
+    /// </summary>
     /// <param name="path">The path given for removal; relative paths are made absolute against the current folder.</param>
     /// <param name="stalls">The volumes an earlier git call has stalled, shared by the whole call.</param>
     /// <param name="listWorktrees">Lists a repo's worktrees, as <see cref="Discoverer.ListWorktrees"/> does.</param>
+    /// <param name="commonDir">Finds the common git dir of the repo a folder lies in, as <see cref="Scanner.CommonDirOrNull"/> does.</param>
     /// <returns>The resolved worktree, or the refusal.</returns>
     /// <exception cref="ArgumentException"><paramref name="path"/> is empty or not a valid path.</exception>
     /// <exception cref="GitTimeoutException">A git read times out or its volume is stalled, so a repo that may register the path
@@ -50,7 +54,12 @@ public static class PathResolution
     /// folder.</exception>
     /// <exception cref="IOException">The path's attributes cannot be read for a reason other than its absence.</exception>
     /// <exception cref="UnauthorizedAccessException">The path's attributes cannot be read for lack of access.</exception>
-    internal static Resolution ResolveOne(string path, VolumeStalls stalls, Func<string, IReadOnlyList<WorktreeRecord>> listWorktrees)
+    internal static Resolution ResolveOne(
+        string path,
+        VolumeStalls stalls,
+        Func<string, IReadOnlyList<WorktreeRecord>> listWorktrees,
+        Func<string, VolumeStalls, string?> commonDir
+    )
     {
         ArgumentNullException.ThrowIfNull(path);
         string absolute = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
@@ -61,7 +70,7 @@ public static class PathResolution
         }
         catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException)
         {
-            return ResolveMissing(absolute, stalls, listWorktrees);
+            return ResolveMissing(absolute, stalls, listWorktrees, commonDir);
         }
         bool isDirectory = attributes.HasFlag(FileAttributes.Directory);
         FileSystemInfo info = isDirectory ? new DirectoryInfo(absolute) : new FileInfo(absolute);
@@ -69,14 +78,21 @@ public static class PathResolution
         {
             return Refuse(RefusalReason.Link, null);
         }
-        return isDirectory ? ResolveFolder(PathResolver.Resolve(absolute), stalls, listWorktrees) : Refuse(RefusalReason.NotAWorktree, null);
+        return isDirectory
+            ? ResolveFolder(PathResolver.Resolve(absolute), stalls, listWorktrees, commonDir)
+            : Refuse(RefusalReason.NotAWorktree, null);
     }
 
     /// <summary>Resolves an existing folder that is not a link, already resolved to the name the system gives it.</summary>
-    private static Resolution ResolveFolder(string target, VolumeStalls stalls, Func<string, IReadOnlyList<WorktreeRecord>> listWorktrees)
+    private static Resolution ResolveFolder(
+        string target,
+        VolumeStalls stalls,
+        Func<string, IReadOnlyList<WorktreeRecord>> listWorktrees,
+        Func<string, VolumeStalls, string?> commonDir
+    )
     {
         bool hasGitFile = File.Exists(Path.Join(target, ".git"));
-        if (Scanner.CommonDirOrNull(target, stalls) is not { } common)
+        if (commonDir(target, stalls) is not { } common)
         {
             return Refuse(hasGitFile ? RefusalReason.Orphan : RefusalReason.NotAWorktree, null);
         }
@@ -109,7 +125,12 @@ public static class PathResolution
     /// </summary>
     /// <exception cref="GitTimeoutException">A repo's git read times out or its volume is stalled; every repo near the path sits on
     /// the same volume, so none of the rest could be read either.</exception>
-    private static Resolution ResolveMissing(string absolute, VolumeStalls stalls, Func<string, IReadOnlyList<WorktreeRecord>> listWorktrees)
+    private static Resolution ResolveMissing(
+        string absolute,
+        VolumeStalls stalls,
+        Func<string, IReadOnlyList<WorktreeRecord>> listWorktrees,
+        Func<string, VolumeStalls, string?> commonDir
+    )
     {
         string? existing = Path.GetDirectoryName(absolute);
         while (existing is not null && !Directory.Exists(existing))
@@ -124,23 +145,8 @@ public static class PathResolution
         string key = Discoverer.PathKey(Path.Join(canonical, Path.GetRelativePath(existing, absolute)));
         foreach (string repo in ReposNear(canonical))
         {
-            if (Scanner.CommonDirOrNull(repo, stalls) is not { } common)
+            if (ReadRepo(repo, stalls, listWorktrees, commonDir) is not (string common, var records))
             {
-                continue;
-            }
-            IReadOnlyList<WorktreeRecord> records;
-            try
-            {
-                records = listWorktrees(common);
-            }
-            catch (GitException error)
-            {
-                if (error is GitTimeoutException)
-                {
-                    stalls.Mark(repo);
-                    throw;
-                }
-                Trace.TraceWarning($"skipping repo {repo}: {error.Message}");
                 continue;
             }
             int index = RecordKeys(records).IndexOf(key);
@@ -150,6 +156,34 @@ public static class PathResolution
             }
         }
         return Refuse(RefusalReason.NotFound, null);
+    }
+
+    /// <summary>
+    /// The common git dir and worktree records of the repo <paramref name="repo"/> lies in; <see langword="null"/> when git finds no
+    /// repo there, or when either read fails for a reason other than a timeout, which is traced and skips the repo.
+    /// </summary>
+    /// <exception cref="GitTimeoutException">Either read times out or the volume is stalled; the volume is marked stalled.</exception>
+    private static (string Common, IReadOnlyList<WorktreeRecord> Records)? ReadRepo(
+        string repo,
+        VolumeStalls stalls,
+        Func<string, IReadOnlyList<WorktreeRecord>> listWorktrees,
+        Func<string, VolumeStalls, string?> commonDir
+    )
+    {
+        try
+        {
+            return commonDir(repo, stalls) is { } common ? (common, listWorktrees(common)) : null;
+        }
+        catch (GitException error)
+        {
+            if (error is GitTimeoutException)
+            {
+                stalls.Mark(repo);
+                throw;
+            }
+            Trace.TraceWarning($"skipping repo {repo}: {error.Message}");
+            return null;
+        }
     }
 
     /// <summary>
