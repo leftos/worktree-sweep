@@ -32,7 +32,10 @@ public sealed class WindowWorkers
         main.PropertyChanged += OnMainChanged;
     }
 
-    /// <summary>Gets or sets the window that owns the Shell's prompts during removal; <see cref="ShellRecycler.NoOwner"/> until the window has a handle.</summary>
+    /// <summary>
+    /// Gets or sets the window that owns the Shell's prompts during removal; <see cref="ShellRecycler.NoOwner"/> until the window has
+    /// a handle.
+    /// </summary>
     public nint OwnerWindow { get; set; } = ShellRecycler.NoOwner;
 
     /// <summary>Scans <paramref name="root"/> in the background, then shows what it found or why it failed.</summary>
