@@ -49,6 +49,37 @@ public sealed class DetailTextTests
         Assert.EndsWith(" (2h ago)", DetailText.FormatLocal(Now - (2 * 3600), TimeSpan.Zero, Now), StringComparison.Ordinal);
     }
 
+    /// <summary>A time past the year 9999 prints the year whole rather than throwing.</summary>
+    [Fact]
+    public void FormatLocalOfAFarFutureTimeDoesNotThrow() =>
+        Assert.Equal("33658-09-27 01:46 (0m ago)", DetailText.FormatLocal(999_999_999_999, TimeSpan.Zero, Now));
+
+    /// <summary>A negative offset can put the local time on the day before the epoch.</summary>
+    [Fact]
+    public void FormatLocalWithANegativeOffsetBeforeTheEpoch() =>
+        Assert.Equal("1969-12-31 22:59 (56y ago)", DetailText.FormatLocal(-1, TimeSpan.FromHours(-1), Now));
+
+    /// <summary>An offset over 14 h either way, or one that is not whole minutes, does not throw.</summary>
+    /// <param name="offsetSeconds">The offset, in seconds.</param>
+    /// <param name="expected">The exact text, or <see langword="null"/> to assert only that a string comes back.</param>
+    [Theory]
+    [InlineData(54_000, null)]
+    [InlineData(-54_000, null)]
+    [InlineData(90, "1970-01-01 00:01 (56y ago)")]
+    public void FormatLocalNeverThrowsForAnyOffset(int offsetSeconds, string? expected)
+    {
+        string text = DetailText.FormatLocal(0, TimeSpan.FromSeconds(offsetSeconds), Now);
+
+        if (expected is null)
+        {
+            Assert.NotEmpty(text);
+        }
+        else
+        {
+            Assert.Equal(expected, text);
+        }
+    }
+
     /// <summary>A registered worktree with work, unpushed commits, a size and a git lock reads as seven exact lines.</summary>
     [Fact]
     public void RegisteredDetailHasSevenLines()
@@ -147,6 +178,18 @@ public sealed class DetailTextTests
         string[] lines = [.. DetailText.Lines(Registered(@"yaat.wt\one", "one", new WorktreeSignals { Errors = ["a", "b"] }), Now, UtcZone)];
 
         Assert.Equal("a; b", lines[6]);
+    }
+
+    /// <summary>Each signal error is flattened to one line before the errors are joined.</summary>
+    [Fact]
+    public void SignalErrorsAreFlattenedToOneLine()
+    {
+        RegisteredCandidate candidate = Registered(@"yaat.wt\one", "one", new WorktreeSignals { Errors = ["git failed\nfatal: x"] });
+
+        string[] lines = [.. DetailText.Lines(candidate, Now, UtcZone)];
+
+        Assert.Equal("git failed; fatal: x", lines[6]);
+        Assert.DoesNotContain("\n", lines[6], StringComparison.Ordinal);
     }
 
     /// <summary>A partly measured size reads as a lower bound and still names its unreadable entries.</summary>
