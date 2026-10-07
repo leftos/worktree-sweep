@@ -13,7 +13,8 @@ public sealed class RemoveCommandTests
 {
     private const string LogVariable = "WORKTREE_SWEEP_LOG";
 
-    private static readonly TimeSpan RunTimeout = TimeSpan.FromSeconds(60);
+    // Each Shell recycle may take 30 s, and a locked run makes two of them plus a holder scan.
+    private static readonly TimeSpan RunTimeout = TimeSpan.FromSeconds(120);
 
     private static readonly string Exe = Path.Join(AppContext.BaseDirectory, "worktree-sweep.exe");
 
@@ -89,7 +90,7 @@ public sealed class RemoveCommandTests
     [Fact(Explicit = true)]
     public async Task RemoveReleasesLockedWorktree()
     {
-        using var fx = new Fixture();
+        using var fx = Fixture.InRepoTmp();
         using var side = new Fixture();
         (string repo, string worktree) = RepoWithWorktree(fx, @"x.wt\feat", "feat");
         string info = Path.Join(repo, ".git", "info");
@@ -124,7 +125,7 @@ public sealed class RemoveCommandTests
     [Fact]
     public async Task RemovePrunableRecord()
     {
-        using var fx = new Fixture();
+        using var fx = Fixture.InRepoTmp();
         (string repo, string worktree) = RepoWithWorktree(fx, @"x.wt\feat", "feat");
         Directory.Delete(worktree, recursive: true);
 
@@ -141,7 +142,7 @@ public sealed class RemoveCommandTests
     [Fact]
     public async Task RemovePrunableSiblingWorktree()
     {
-        using var fx = new Fixture();
+        using var fx = Fixture.InRepoTmp();
         (string repo, string worktree) = RepoWithWorktree(fx, "x-feat", "feat");
         Directory.Delete(worktree, recursive: true);
 
@@ -161,7 +162,7 @@ public sealed class RemoveCommandTests
     [Fact]
     public async Task RemoveRefusesPrunableRecordWhoseFolderRemains()
     {
-        using var fx = new Fixture();
+        using var fx = Fixture.InRepoTmp();
         (string repo, string worktree) = RepoWithWorktree(fx, @"x\.claude\worktrees\a", "a");
         File.Delete(Path.Join(worktree, ".git"));
 
@@ -179,7 +180,7 @@ public sealed class RemoveCommandTests
     [Fact(Explicit = true)]
     public async Task RemoveRecyclesCleanWorktree()
     {
-        using var fx = new Fixture();
+        using var fx = Fixture.InRepoTmp();
         (string repo, string worktree) = RepoWithWorktree(fx, @"x.wt\feat", "feat");
 
         Run run = await RemoveAsync(worktree, fx.Root);
@@ -202,6 +203,19 @@ public sealed class RemoveCommandTests
         Assert.Equal(2, run.Code);
         Assert.StartsWith("error: ", run.Stderr, StringComparison.Ordinal);
         Assert.Contains("--json", run.Stderr, StringComparison.Ordinal);
+        Assert.Equal("", run.Stdout);
+    }
+
+    /// <summary><c>--json</c> takes no value: <c>--json false</c> is a usage error, and nothing is removed.</summary>
+    [Fact]
+    public async Task RemoveJsonTakesNoValue()
+    {
+        using var fx = new Fixture();
+
+        Run run = await RunInAsync(fx.Root, Exe, "remove", "", "--json", "false");
+
+        Assert.Equal(2, run.Code);
+        Assert.StartsWith("error: ", run.Stderr, StringComparison.Ordinal);
         Assert.Equal("", run.Stdout);
     }
 
@@ -255,6 +269,7 @@ public sealed class RemoveCommandTests
             WorkingDirectory = workingDirectory,
             UseShellExecute = false,
             CreateNoWindow = true,
+            RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             StandardOutputEncoding = Encoding.UTF8,
@@ -267,6 +282,7 @@ public sealed class RemoveCommandTests
         GitRunner.ClearRepoEnv(startInfo);
         startInfo.Environment.Remove(LogVariable);
         using Process process = Process.Start(startInfo) ?? throw new InvalidOperationException($"{program} did not start");
+        process.StandardInput.Close();
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
         timeout.CancelAfter(RunTimeout);
         try

@@ -20,13 +20,23 @@ public sealed class Fixture : IDisposable
 
     /// <summary>Initializes a new instance of the <see cref="Fixture"/> class with a new temporary root folder.</summary>
     public Fixture()
+        : this(Directory.CreateTempSubdirectory("worktree-sweep-").FullName) { }
+
+    private Fixture(string root)
     {
         _ = EmptyGitConfig.Value;
-        Root = Directory.CreateTempSubdirectory("worktree-sweep-").FullName;
+        Root = root;
     }
 
     /// <summary>Gets the temporary root folder.</summary>
     public string Root { get; }
+
+    /// <summary>
+    /// A fixture whose root is a new folder under the repo's gitignored <c>.tmp</c> folder, on the Dev Drive: on <c>C:</c>, where
+    /// <c>%TEMP%</c> is, a scanner holds freshly written files for seconds, which looks like a lock to a delete or a recycle.
+    /// </summary>
+    /// <returns>The fixture.</returns>
+    public static Fixture InRepoTmp() => new(Directory.CreateDirectory(Path.Join(RepoTmp(), $"worktree-sweep-{Guid.NewGuid():N}")).FullName);
 
     /// <summary>A path under the root.</summary>
     /// <param name="relative">The path relative to the root; <c>/</c> and <c>\</c> both separate.</param>
@@ -229,6 +239,19 @@ public sealed class Fixture : IDisposable
         Environment.SetEnvironmentVariable("GIT_CONFIG_NOSYSTEM", "1");
         Environment.SetEnvironmentVariable("GIT_CONFIG_GLOBAL", empty);
         return empty;
+    }
+
+    /// <summary>The repo's gitignored <c>.tmp</c> folder, found above the test assembly's folder, created when missing.</summary>
+    private static string RepoTmp()
+    {
+        for (DirectoryInfo? dir = new(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+        {
+            if (File.Exists(Path.Join(dir.FullName, "WorktreeSweep.slnx")))
+            {
+                return Directory.CreateDirectory(Path.Join(dir.FullName, ".tmp")).FullName;
+            }
+        }
+        throw new InvalidOperationException($"no WorktreeSweep.slnx above {AppContext.BaseDirectory}");
     }
 
     private static void DeleteTree(DirectoryInfo dir)

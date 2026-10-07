@@ -37,8 +37,7 @@ public static class RemoveReportJson
     {
         ArgumentNullException.ThrowIfNull(report);
         ArgumentNullException.ThrowIfNull(output);
-        output.Write(JsonSerializer.Serialize(Document.From(report), Options));
-        output.Write('\n');
+        output.Write(JsonSerializer.Serialize(Document.From(report), Options) + "\n");
     }
 
     /// <summary>A FILETIME count as an ISO 8601 UTC string in whole seconds; <see langword="null"/> for 0, an unknown time.</summary>
