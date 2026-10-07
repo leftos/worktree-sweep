@@ -46,11 +46,15 @@ public static class AgentRemover
     /// The path's attributes cannot be read, the current folder cannot be changed, the caller's holders cannot be listed, or the
     /// recycle fails for a reason other than a lock.
     /// </exception>
-    /// <exception cref="UnauthorizedAccessException">The path's attributes cannot be read or the current folder changed for lack of access.</exception>
+    /// <exception cref="UnauthorizedAccessException">
+    /// The path's attributes cannot be read or the current folder changed for lack of access.
+    /// </exception>
     /// <exception cref="Win32Exception">The process list cannot be read for the caller's holders.</exception>
     public static RemoveReport Run(string path, AgentOptions options) => Run(path, options, AgentSeams.Production);
 
-    /// <summary>Removes the worktree at <paramref name="path"/>, as <see cref="Run(string, AgentOptions)"/> does, through <paramref name="seams"/>.</summary>
+    /// <summary>
+    /// Removes the worktree at <paramref name="path"/>, as <see cref="Run(string, AgentOptions)"/> does, through <paramref name="seams"/>.
+    /// </summary>
     /// <param name="path">The worktree.</param>
     /// <param name="options">The flags.</param>
     /// <param name="seams">What the removal reaches outside the process through.</param>
@@ -123,7 +127,7 @@ public static class AgentRemover
     /// <summary>Capacity, recycle, and on a lock the holders, a retry and the release; the follow-ups on success.</summary>
     private static void RemoveFolder(RegisteredCandidate candidate, AgentOptions options, AgentSeams seams, Draft draft)
     {
-        if (TooBig(candidate) is { } why)
+        if (TooBig(candidate, seams) is { } why)
         {
             draft.Notes.Add($"cannot go to the Recycle Bin: {why}");
             Release(draft, candidate, Reason.TooBigForRecycleBin);
@@ -137,8 +141,10 @@ public static class AgentRemover
         {
             case Recycled.TimedOut:
                 Release(draft, candidate, Reason.ShellTimeout);
+                RestoreGitLock(candidate, options, draft);
                 return;
             case Recycled.Locked when !RetryLocked(candidate, options, seams, draft):
+                RestoreGitLock(candidate, options, draft);
                 return;
             default:
                 break;
@@ -147,23 +153,26 @@ public static class AgentRemover
     }
 
     /// <summary>Why the folder cannot go to the Recycle Bin; <see langword="null"/> when it fits. An unknown size never fits.</summary>
-    private static string? TooBig(RegisteredCandidate candidate)
+    private static string? TooBig(RegisteredCandidate candidate, AgentSeams seams)
     {
         ulong size = candidate.Signals.Size is { } known ? (ulong)Math.Max(known.Bytes, 0) : ulong.MaxValue;
-        return RecycleDecider.Decide(size, ReadCapacity(candidate.Path)) is RecycleDecision.AskPermanent ask ? ask.Reason : null;
+        return RecycleDecider.Decide(size, seams.ReadCapacity(candidate.Path)) is RecycleDecision.AskPermanent ask ? ask.Reason : null;
     }
 
-    /// <summary>The Recycle Bin settings of the folder's volume; <see langword="null"/>, with a trace warning, when they cannot be read.</summary>
-    private static BinCapacity? ReadCapacity(string path)
+    /// <summary>Puts back the git lock <c>--force</c> lifted, on a worktree that stays; git failing is a note.</summary>
+    private static void RestoreGitLock(RegisteredCandidate candidate, AgentOptions options, Draft draft)
     {
+        if (!options.Force)
+        {
+            return;
+        }
         try
         {
-            return BinCapacityReader.Read(path);
+            CandidateRemover.GitRelock(candidate);
         }
-        catch (IOException error)
+        catch (GitException error)
         {
-            Trace.TraceWarning($"cannot read the Recycle Bin size for {path}: {error.Message}");
-            return null;
+            draft.Notes.Add($"git lock not restored: {error.Message}");
         }
     }
 
@@ -219,7 +228,8 @@ public static class AgentRemover
         {
             scan = seams.FindHolders(candidate.Path, []);
         }
-        catch (Exception error) when (error is IOException or Win32Exception or PlatformNotSupportedException)
+        catch (Exception error)
+            when (error is IOException or Win32Exception or PlatformNotSupportedException or UnauthorizedAccessException or InvalidOperationException)
         {
             draft.Notes.Add($"cannot list the processes holding it: {error.Message}");
             scan = new HolderReport([], []);
@@ -243,11 +253,16 @@ public static class AgentRemover
         }
     }
 
-    /// <summary>Stops each allowlisted holder; one that cannot be stopped is a note.</summary>
+    /// <summary>Stops each allowlisted holder; one no longer the same process, or one that cannot be stopped, is a note.</summary>
     private static void StopBuildServers(HolderReport scan, AgentSeams seams, Draft draft)
     {
         foreach (Holder holder in StopAllowlist.Stoppable(scan))
         {
+            if (!seams.StillSame(holder))
+            {
+                draft.Notes.Add($"pid {holder.Pid} ({holder.Exe}) not stopped: it is no longer the same process");
+                continue;
+            }
             try
             {
                 seams.Stop(holder);
