@@ -1,6 +1,8 @@
 using WorktreeSweep.Agent;
+using WorktreeSweep.Discovery;
 using WorktreeSweep.Git;
 using WorktreeSweep.Report;
+using WorktreeSweep.Scan;
 using WorktreeSweep.Signals;
 
 namespace WorktreeSweep.Tests;
@@ -156,8 +158,58 @@ public sealed class AgentResolveTests
         Directory.Delete(worktree, recursive: true);
 
         _ = Assert.Throws<GitTimeoutException>(() =>
-            PathResolution.ResolveOne(worktree, new VolumeStalls(), _ => throw new GitTimeoutException("worktree list timed out"))
+            PathResolution.ResolveOne(
+                worktree,
+                new VolumeStalls(),
+                _ => throw new GitTimeoutException("worktree list timed out"),
+                Scanner.CommonDirOrNull
+            )
         );
+    }
+
+    /// <summary>
+    /// A missing path is still resolved when the first repo near it cannot give its common git dir for a reason other than a
+    /// timeout: that repo is skipped, as one whose worktrees cannot be listed is.
+    /// </summary>
+    [Fact]
+    public void MissingPathResolutionSkipsARepoWhoseCommonDirFails()
+    {
+        using var fx = new Fixture();
+        (string repo, string worktree) = RepoWithWorktree(fx);
+        Directory.Delete(worktree, recursive: true);
+        var asked = new List<string>();
+
+        Resolution resolution = PathResolution.ResolveOne(
+            worktree,
+            new VolumeStalls(),
+            Discoverer.ListWorktrees,
+            (dir, stalls) =>
+            {
+                asked.Add(dir);
+                return asked.Count == 1 ? throw new GitException("rev-parse failed") : Scanner.CommonDirOrNull(dir, stalls);
+            }
+        );
+
+        Assert.True(Fixture.SamePath(asked[0], fx.PathTo("x.wt")), asked[0]);
+        Resolution.Resolved found = Assert.IsType<Resolution.Resolved>(resolution);
+        Assert.True(Fixture.SamePath(found.Candidate.Path, worktree), found.Candidate.Path);
+        Assert.True(Fixture.SamePath(found.MainWorktree, repo), found.MainWorktree);
+        Assert.NotNull(found.Candidate.Record.Prunable);
+    }
+
+    /// <summary>A missing path whose nearby repo's common git dir read times out throws, and marks the repo's volume stalled.</summary>
+    [Fact]
+    public void CommonDirTimeoutMarksTheStallAndThrows()
+    {
+        using var fx = new Fixture();
+        (_, string worktree) = RepoWithWorktree(fx);
+        Directory.Delete(worktree, recursive: true);
+        var stalls = new VolumeStalls();
+
+        _ = Assert.Throws<GitTimeoutException>(() =>
+            PathResolution.ResolveOne(worktree, stalls, Discoverer.ListWorktrees, (_, _) => throw new GitTimeoutException("rev-parse timed out"))
+        );
+        Assert.True(stalls.IsStalled(worktree));
     }
 
     /// <summary>
