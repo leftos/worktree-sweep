@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using WorktreeSweep.Git;
 using WorktreeSweep.Report;
 using WorktreeSweep.Unlock;
 
@@ -11,7 +12,8 @@ public static class Remover
     /// Removes and follows up every decided pick with <see cref="TwoPassSweep"/>. A <see cref="Plan.Skip"/> decision becomes
     /// <see cref="Outcome.Skipped"/> without touching the disk, reports no <see cref="Progress"/> and is never offered for unlocking.
     /// A pick still locked after the retry pass is <c>failed: locked (&lt;file or path&gt;)</c>, one that fails any other way is
-    /// <see cref="Outcome.Failed"/> with the failure's message, and one the token stopped is <c>skipped (cancelled)</c>.
+    /// <see cref="Outcome.Failed"/> with the failure's message, and one the token stopped is <c>skipped (cancelled)</c>. A registered
+    /// worktree whose git lock was lifted and that was not removed gets its lock back, with its reason.
     /// </summary>
     /// <param name="decisions">The picks, each with its plan and branch choice.</param>
     /// <param name="onProgress">
@@ -50,8 +52,12 @@ public static class Remover
         for (int item = 0; item < runnable.Count; item++)
         {
             Decision decision = decisions[runnable[item]];
-            Outcome outcome = OutcomeOf(decision, results[item]);
-            swept[runnable[item]] = new Swept(decision.Candidate, outcome, sweeper.Notes[item]);
+            SweepResult result = results[item];
+            IReadOnlyList<string> notes =
+                result is not SweepResult.Removed && sweeper.GitUnlocked(item)
+                    ? Relock((RegisteredCandidate)decision.Candidate)
+                    : sweeper.NotesOf(item);
+            swept[runnable[item]] = new Swept(decision.Candidate, OutcomeOf(decision, result), notes);
         }
         return swept;
     }
@@ -63,7 +69,7 @@ public static class Remover
     private static Outcome OutcomeOf(Decision decision, SweepResult result) =>
         result switch
         {
-            SweepResult.Removed => Removed(((Plan.Run)decision.Plan).Action, decision.Candidate),
+            SweepResult.Removed => Removed(ActionOf(decision), decision.Candidate),
             SweepResult.Locked locked => new Outcome.Failed($"locked ({locked.Error.FirstLockedFile ?? locked.Error.Path})"),
             SweepResult.Failed failed => new Outcome.Failed(failed.Error.Message),
             SweepResult.Cancelled => new Outcome.Skipped("cancelled"),
@@ -87,6 +93,27 @@ public static class Remover
         };
     }
 
+    /// <summary>The action of a runnable decision.</summary>
+    /// <param name="decision">The decision, whose plan is <see cref="Plan.Run"/>.</param>
+    /// <returns>How it is removed.</returns>
+    private static RemoveAction ActionOf(Decision decision) => ((Plan.Run)decision.Plan).Action;
+
+    /// <summary>Puts back the git lock of a worktree that was not removed.</summary>
+    /// <param name="registered">The worktree.</param>
+    /// <returns>No note when the lock is back; <c>git lock not restored: &lt;why&gt;</c> when git failed.</returns>
+    private static IReadOnlyList<string> Relock(RegisteredCandidate registered)
+    {
+        try
+        {
+            CandidateRemover.GitRelock(registered);
+            return [];
+        }
+        catch (GitException error)
+        {
+            return [$"git lock not restored: {error.Message}"];
+        }
+    }
+
     /// <summary>
     /// The live unit the sweep drives: item <c>i</c> is the <c>i</c>-th runnable decision. A registered worktree's git lock is lifted
     /// once, before its first attempt.
@@ -102,14 +129,18 @@ public static class Remover
         Func<IReadOnlyList<string>, UnlockOutcome> offerUnlock
     ) : ISweeper
     {
-        private readonly IReadOnlyList<Decision> decisions = decisions;
-        private readonly List<int> runnable = runnable;
-        private readonly Action<Progress> onProgress = onProgress;
-        private readonly Func<IReadOnlyList<string>, UnlockOutcome> offerUnlock = offerUnlock;
-        private readonly bool[] gitUnlocked = new bool[runnable.Count];
+        private readonly HashSet<int> gitUnlocked = [];
+        private readonly Dictionary<int, IReadOnlyList<string>> notes = [];
 
-        /// <summary>Gets each item's follow-up notes; empty until it is removed.</summary>
-        public List<IReadOnlyList<string>> Notes { get; } = [.. runnable.Select(_ => (IReadOnlyList<string>)[])];
+        /// <summary>Whether item <paramref name="index"/>'s git lock was lifted.</summary>
+        /// <param name="index">The item's index.</param>
+        /// <returns><see langword="true"/> once <see cref="CandidateRemover.GitUnlock"/> ran for it.</returns>
+        public bool GitUnlocked(int index) => gitUnlocked.Contains(index);
+
+        /// <summary>Item <paramref name="index"/>'s follow-up notes; empty until it is removed.</summary>
+        /// <param name="index">The item's index.</param>
+        /// <returns>The notes.</returns>
+        public IReadOnlyList<string> NotesOf(int index) => notes.GetValueOrDefault(index, []);
 
         /// <inheritdoc/>
         public void Remove(int index)
@@ -131,8 +162,14 @@ public static class Remover
         public void Finish(int index)
         {
             Decision decision = decisions[runnable[index]];
-            Notes[index] = FollowUps.AfterRemoved(decision.Candidate, decision.Branch);
-            Report(new Progress.Done(runnable[index]));
+            try
+            {
+                notes[index] = FollowUps.AfterRemoved(decision.Candidate, ActionOf(decision), decision.Branch);
+            }
+            finally
+            {
+                Report(new Progress.Done(runnable[index]));
+            }
         }
 
         /// <inheritdoc/>
@@ -143,12 +180,12 @@ public static class Remover
         private void TryRemove(int index)
         {
             Decision decision = decisions[runnable[index]];
-            if (decision.Candidate is RegisteredCandidate registered && !gitUnlocked[index])
+            if (decision.Candidate is RegisteredCandidate registered && !gitUnlocked.Contains(index))
             {
                 CandidateRemover.GitUnlock(registered);
-                gitUnlocked[index] = true;
+                _ = gitUnlocked.Add(index);
             }
-            CandidateRemover.Remove(decision.Candidate, ((Plan.Run)decision.Plan).Action);
+            CandidateRemover.Remove(decision.Candidate, ActionOf(decision));
         }
 
         /// <summary>Tells the progress callback; what it throws, other than a cancellation, is traced and ignored.</summary>

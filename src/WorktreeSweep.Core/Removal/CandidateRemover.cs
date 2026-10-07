@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using WorktreeSweep.Discovery;
 using WorktreeSweep.Git;
 using WorktreeSweep.Recycle;
 using WorktreeSweep.Report;
@@ -9,13 +8,10 @@ namespace WorktreeSweep.Removal;
 /// <summary>Removes one pick as its <see cref="RemoveAction"/> says: a link as a link, a folder recycled or deleted, a registration pruned.</summary>
 public static class CandidateRemover
 {
-    /// <summary>What <see cref="FileSystemInfo.Attributes"/> returns when the path is not there.</summary>
-    private const FileAttributes Missing = unchecked((FileAttributes)(-1));
-
     /// <summary>
     /// Carries out <paramref name="action"/> on <paramref name="candidate"/>'s folder or link. A registered worktree's git lock must
-    /// already be lifted (<see cref="GitUnlock"/>). A folder bound for the Recycle Bin that has become a link since the scan is left in
-    /// place: the Shell is never handed a link.
+    /// already be lifted (<see cref="GitUnlock"/>). A folder to recycle or delete that has become a link since the scan is left in
+    /// place: the Shell is never handed a link, and a link is never reported as a deleted folder.
     /// </summary>
     /// <param name="candidate">The pick.</param>
     /// <param name="action">How to remove it.</param>
@@ -36,10 +32,11 @@ public static class CandidateRemover
                 Prune(candidate);
                 break;
             case RemoveAction.Delete { Method: DeleteMethod.Recycle }:
-                RejectLink(path);
+                PermanentDelete.RejectLink(path);
                 ShellRecycler.Recycle(path);
                 break;
             case RemoveAction.Delete { Method: DeleteMethod.Permanent }:
+                PermanentDelete.RejectLink(path);
                 PermanentDelete.Delete(path);
                 break;
             default:
@@ -57,6 +54,24 @@ public static class CandidateRemover
         {
             _ = GitRunner.Run(registered.Repo, ["worktree", "unlock", registered.Path]);
         }
+    }
+
+    /// <summary>
+    /// Puts back a registered worktree's git lock, with its reason when it had one, after <see cref="GitUnlock"/> lifted it and the
+    /// removal did not go through; does nothing when it was not git-locked.
+    /// </summary>
+    /// <param name="registered">The worktree, as the scan saw it.</param>
+    /// <exception cref="GitException">Git failed.</exception>
+    public static void GitRelock(RegisteredCandidate registered)
+    {
+        ArgumentNullException.ThrowIfNull(registered);
+        string? reason = registered.Record.Locked;
+        if (reason is null)
+        {
+            return;
+        }
+        string[] args = reason.Length == 0 ? ["worktree", "lock", registered.Path] : ["worktree", "lock", "--reason", reason, registered.Path];
+        _ = GitRunner.Run(registered.Repo, args);
     }
 
     /// <summary>Runs <c>git worktree prune</c> in <paramref name="repo"/>.</summary>
@@ -77,31 +92,5 @@ public static class CandidateRemover
             throw new IOException($"{candidate.Path} is not a registered worktree; there is nothing to prune");
         }
         PruneRepo(registered.Repo);
-    }
-
-    /// <summary>Fails when <paramref name="path"/> is now a junction or symbolic link, which a recycle would follow.</summary>
-    /// <param name="path">The folder about to be recycled.</param>
-    /// <exception cref="IOException">It is a link now, or it cannot be read.</exception>
-    private static void RejectLink(string path)
-    {
-        FileSystemInfo entry;
-        try
-        {
-            var file = new FileInfo(path);
-            FileAttributes attributes = file.Attributes;
-            if (attributes == Missing)
-            {
-                throw new FileNotFoundException($"could not find '{path}'", path);
-            }
-            entry = attributes.HasFlag(FileAttributes.Directory) ? new DirectoryInfo(path) : file;
-        }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-        {
-            throw new IOException($"cannot read {path}: {error.Message}", error);
-        }
-        if (Discoverer.IsLink(entry))
-        {
-            throw new IOException($"{path} became a link since the scan; left in place");
-        }
     }
 }
