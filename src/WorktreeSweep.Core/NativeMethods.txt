@@ -8,3 +8,15 @@ WaitForSingleObject
 CloseHandle
 QueryFullProcessImageNameW
 WIN32_ERROR
+OpenProcessToken
+GetTokenInformation
+EqualSid
+TOKEN_USER
+GetProcessTimes
+GetCurrentProcess
+ReadProcessMemory
+GetLongPathNameW
+PROCESS_BASIC_INFORMATION
+NtQueryInformationProcess
+CreateFile
+GetFinalPathNameByHandle
