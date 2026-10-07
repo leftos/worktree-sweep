@@ -8,13 +8,13 @@ namespace WorktreeSweep.Unlock;
 internal static class ChildProcess
 {
     /// <summary>Runs <paramref name="program"/> with <paramref name="arguments"/> and waits for it.</summary>
-    /// <param name="program">The program name, looked up on PATH.</param>
+    /// <param name="program">The full path of the program.</param>
     /// <param name="arguments">The arguments, passed one by one so nothing is re-parsed.</param>
     /// <param name="timeout">How long it may run; past that its whole tree is killed.</param>
     /// <param name="outputEncoding">How to decode its output, or <see langword="null"/> for the default of
     /// <see cref="ProcessStartInfo.StandardOutputEncoding"/>.</param>
     /// <returns>The exit code and both decoded streams.</returns>
-    /// <exception cref="ProgramNotFoundException">The program is not on the PATH.</exception>
+    /// <exception cref="ProgramNotFoundException">The program does not exist.</exception>
     /// <exception cref="UnlockException">It cannot be started for any other reason, or does not finish within
     /// <paramref name="timeout"/>.</exception>
     internal static ChildResult Run(string program, IReadOnlyList<string> arguments, TimeSpan timeout, Encoding? outputEncoding)
@@ -53,7 +53,56 @@ internal static class ChildProcess
         }
     }
 
-    /// <summary>Whether a start failure means the program is not on the PATH.</summary>
+    /// <summary>
+    /// Runs <paramref name="program"/> in this console, its streams shared with this process so it can prompt the user, and waits
+    /// for it as long as it takes.
+    /// </summary>
+    /// <param name="program">The full path of the program.</param>
+    /// <param name="arguments">The arguments, passed one by one so nothing is re-parsed.</param>
+    /// <returns>Its exit code.</returns>
+    /// <exception cref="ProgramNotFoundException">The program does not exist.</exception>
+    /// <exception cref="UnlockException">It cannot be started for any other reason.</exception>
+    internal static int RunAttached(string program, IReadOnlyList<string> arguments)
+    {
+        ArgumentNullException.ThrowIfNull(program);
+        ArgumentNullException.ThrowIfNull(arguments);
+        var startInfo = new ProcessStartInfo(program) { UseShellExecute = false };
+        foreach (string argument in arguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+        using Process process = Start(program, startInfo);
+        process.WaitForExit();
+        return process.ExitCode;
+    }
+
+    /// <summary>
+    /// Finds <paramref name="fileName"/> in the folders of a PATH value, in order. Only fully qualified entries are searched, so
+    /// neither the current directory nor an entry relative to it (<c>.</c>, an empty entry, <c>bin</c>) can supply the program.
+    /// </summary>
+    /// <param name="fileName">The program's file name, extension included, such as <c>handle.exe</c>.</param>
+    /// <param name="pathVariable">The PATH value: folders separated by <c>;</c>, each optionally in double quotes.</param>
+    /// <returns>The full path of the first match, or <see langword="null"/> when no searched folder holds it.</returns>
+    internal static string? FindOnPath(string fileName, string? pathVariable)
+    {
+        ArgumentNullException.ThrowIfNull(fileName);
+        foreach (string entry in (pathVariable ?? "").Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+        {
+            string folder = entry.Trim('"');
+            if (!Path.IsPathFullyQualified(folder))
+            {
+                continue;
+            }
+            string candidate = Path.Join(folder, fileName);
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>Whether a start failure means the program does not exist.</summary>
     /// <param name="nativeErrorCode">The <see cref="Win32Exception.NativeErrorCode"/> of the failure.</param>
     /// <returns><see langword="true"/> for 2 (file not found) and 3 (path not found), the codes a missing program
     /// gives.</returns>
@@ -63,7 +112,7 @@ internal static class ChildProcess
     /// <param name="program">The program name.</param>
     /// <param name="startInfo">How to start it.</param>
     /// <returns>The running process.</returns>
-    /// <exception cref="ProgramNotFoundException">The program is not on the PATH.</exception>
+    /// <exception cref="ProgramNotFoundException">The program does not exist.</exception>
     /// <exception cref="UnlockException">It cannot be started for any other reason.</exception>
     private static Process Start(string program, ProcessStartInfo startInfo)
     {
@@ -73,7 +122,7 @@ internal static class ChildProcess
         }
         catch (Win32Exception error) when (IsNotFound(error.NativeErrorCode))
         {
-            throw new ProgramNotFoundException($"{program} is not on the PATH", error);
+            throw new ProgramNotFoundException($"cannot find {program}", error);
         }
         catch (Win32Exception error)
         {
@@ -104,7 +153,7 @@ internal static class ChildProcess
 /// <param name="Error">Standard error, decoded.</param>
 internal sealed record ChildResult(int ExitCode, string Output, string Error);
 
-/// <summary>A program cannot be run because it is not on the PATH.</summary>
+/// <summary>A program cannot be run because it does not exist.</summary>
 internal sealed class ProgramNotFoundException : UnlockException
 {
     /// <summary>Initializes a new instance of the <see cref="ProgramNotFoundException"/> class.</summary>

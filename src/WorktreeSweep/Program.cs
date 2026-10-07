@@ -1,6 +1,5 @@
 using System.CommandLine;
 using System.CommandLine.Parsing;
-using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
@@ -110,7 +109,9 @@ internal static class Program
             var session = new ElevatedSession(Console.In, Console.Out, new HandleExe(), new ProcessControl());
             return session.Run(paths, callerPid, sweepPid);
         }
-        catch (Exception error) when (error is UnlockException or Win32Exception)
+#pragma warning disable CA1031 // Every failure of the elevated session ends it with exit 1 and its message, as the Rust tool does.
+        catch (Exception error)
+#pragma warning restore CA1031
         {
             Console.Error.WriteLine($"error: {error.Message}");
             return Failure;

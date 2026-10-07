@@ -15,4 +15,13 @@ public sealed class SudoConfigTests
     [InlineData("", SudoMode.Unknown)]
     [InlineData("something else entirely", SudoMode.Unknown)]
     public void SudoModeIsReadFromSudoConfig(string text, SudoMode mode) => Assert.Equal(mode, SudoConfig.Parse(text));
+
+    /// <summary>sudo is the one in <c>%SystemRoot%\System32</c>, never a program found by name.</summary>
+    [Fact]
+    public void SudoIsTheSystemOne()
+    {
+        string systemRoot = Environment.GetEnvironmentVariable("SystemRoot") ?? throw new InvalidOperationException("SystemRoot is not set");
+
+        Assert.Equal(Path.Join(systemRoot, "System32", "sudo.exe"), SudoConfig.Program, ignoreCase: true);
+    }
 }

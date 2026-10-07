@@ -6,6 +6,10 @@ public static class SudoConfig
     /// <summary>How long <c>sudo config</c> may take before it is killed.</summary>
     private static readonly TimeSpan Limit = TimeSpan.FromSeconds(10);
 
+    /// <summary>The Windows <c>sudo.exe</c> in the system folder. It is never looked up by name, so no <c>sudo.exe</c> in this
+    /// program's folder, the current directory or the PATH can stand in for it.</summary>
+    public static string Program => Path.Join(Environment.SystemDirectory, "sudo.exe");
+
     /// <summary>Reads the mode from <c>sudo config</c> output such as <c>Sudo is currently in Inline mode on this machine</c>.</summary>
     /// <param name="configOutput">Standard output and standard error of <c>sudo config</c>, concatenated.</param>
     /// <returns><see cref="SudoMode.Disabled"/> when the text says sudo is turned off, else the mode it names, else
@@ -42,7 +46,7 @@ public static class SudoConfig
         ChildResult result;
         try
         {
-            result = ChildProcess.Run("sudo", ["config"], Limit, outputEncoding: null);
+            result = ChildProcess.Run(Program, ["config"], Limit, outputEncoding: null);
         }
         catch (ProgramNotFoundException)
         {
