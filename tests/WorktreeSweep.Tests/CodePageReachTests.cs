@@ -33,7 +33,12 @@ public sealed class CodePageReachTests
         CodePageReach.RegisterProvider();
         IReadOnlyList<Encoding> pages = CodePageReach.SystemCodePages();
 
-        int[] expected = [.. new[] { (int)PInvoke.GetACP(), (int)PInvoke.GetOEMCP(), (int)PInvoke.GetConsoleOutputCP() }.Distinct()];
+        int[] expected =
+        [
+            .. new[] { (int)PInvoke.GetACP(), (int)PInvoke.GetOEMCP(), (int)PInvoke.GetConsoleOutputCP() }
+                .Select(codePage => Encoding.GetEncoding(codePage).CodePage)
+                .Distinct(),
+        ];
         Assert.Equal<int[]>(expected, [.. pages.Select(page => page.CodePage)]);
     }
 

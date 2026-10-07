@@ -1,4 +1,3 @@
-using System.Text;
 using System.Text.Json;
 using WorktreeSweep.Discovery;
 using WorktreeSweep.Report;
@@ -145,12 +144,12 @@ public sealed class ReportJsonTests
             ],
         };
 
-        using var stream = new MemoryStream();
-        ReportJson.Write(report, stream);
-        byte[] bytes = stream.ToArray();
+        using var output = new StringWriter();
+        ReportJson.Write(report, output);
+        string json = output.ToString();
 
-        Assert.Equal((byte)'{', bytes[0]);
-        Assert.Equal(GoldenDocument.ReplaceLineEndings("\n") + "\n", Encoding.UTF8.GetString(bytes));
+        Assert.Equal('{', json[0]);
+        Assert.Equal(GoldenDocument.ReplaceLineEndings("\n") + "\n", json);
     }
 
     /// <summary>A discovery error is written as its repo, path and message, between <c>repos</c> and <c>candidates</c>.</summary>
@@ -250,9 +249,9 @@ public sealed class ReportJsonTests
 
     private static string Json(ScanReport report)
     {
-        using var stream = new MemoryStream();
-        ReportJson.Write(report, stream);
-        return Encoding.UTF8.GetString(stream.ToArray());
+        using var output = new StringWriter();
+        ReportJson.Write(report, output);
+        return output.ToString();
     }
 
     /// <summary>One field of the only candidate of a report holding one worktree with <paramref name="signals"/>, as compact JSON.</summary>

@@ -31,15 +31,14 @@ public static class ReportJson
         Converters = { new JsonStringEnumConverter(JsonNamingPolicy.SnakeCaseLower), new MergeStateConverter(), new UpstreamConverter() },
     };
 
-    /// <summary>Writes the report as one indented JSON document in UTF-8 without a BOM, with <c>\n</c> line ends and a trailing <c>\n</c>.</summary>
+    /// <summary>Writes the report as one indented JSON document with <c>\n</c> line ends and a trailing <c>\n</c>.</summary>
     /// <param name="report">The report; its candidates are written in stored order.</param>
-    /// <param name="output">The stream to write to.</param>
-    public static void Write(ScanReport report, Stream output)
+    /// <param name="output">The writer to write to.</param>
+    public static void Write(ScanReport report, TextWriter output)
     {
         ArgumentNullException.ThrowIfNull(report);
         ArgumentNullException.ThrowIfNull(output);
-        JsonSerializer.Serialize(output, ReportDocument.From(report), Options);
-        output.WriteByte((byte)'\n');
+        output.Write(JsonSerializer.Serialize(ReportDocument.From(report), Options) + "\n");
     }
 
     /// <summary>A Unix time as an ISO 8601 UTC string in whole seconds.</summary>

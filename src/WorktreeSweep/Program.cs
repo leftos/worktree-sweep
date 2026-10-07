@@ -30,8 +30,15 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
-        Console.SetOut(Utf8Writer(Console.OpenStandardOutput()));
-        Console.SetError(Utf8Writer(Console.OpenStandardError()));
+        bool outRedirected = Console.IsOutputRedirected;
+        bool errorRedirected = Console.IsErrorRedirected;
+        if (!outRedirected || !errorRedirected)
+        {
+            // Code page 1200 makes .NET write a console through WriteConsoleW without calling SetConsoleOutputCP, so the shell keeps its code page.
+            Console.OutputEncoding = Encoding.Unicode;
+        }
+        Console.SetOut(StandardWriter(Console.OpenStandardOutput(), outRedirected));
+        Console.SetError(StandardWriter(Console.OpenStandardError(), errorRedirected));
         Trace.Listeners.Clear();
         Trace.Listeners.Add(new StderrTraceListener(showDebug: Environment.GetEnvironmentVariable(LogVariable) == "debug"));
         Trace.AutoFlush = true;
@@ -78,8 +85,7 @@ internal static class Program
             ScanReport report = Scanner.Scan(root);
             if (json)
             {
-                using Stream stdout = Console.OpenStandardOutput();
-                ReportJson.Write(report, stdout);
+                ReportJson.Write(report, Console.Out);
             }
             else
             {
@@ -201,9 +207,9 @@ internal static class Program
         }
     }
 
-    /// <summary>A writer over a standard stream that writes UTF-8 without a BOM and <c>\n</c> line ends, flushing every write.</summary>
-    private static StreamWriter Utf8Writer(Stream stream) =>
-        new(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)) { NewLine = "\n", AutoFlush = true };
+    /// <summary>A writer over a standard stream in <see cref="ConsoleEncodings.For"/>'s encoding, with <c>\n</c> line ends, flushing every write.</summary>
+    private static StreamWriter StandardWriter(Stream stream, bool redirected) =>
+        new(stream, ConsoleEncodings.For(redirected)) { NewLine = "\n", AutoFlush = true };
 
     /// <summary>
     /// Writes trace warnings and errors to standard error as <c>warning: </c> and <c>error: </c> lines, and debug traces as
