@@ -71,7 +71,7 @@ public sealed class GitRunnerTests
         string repo = fx.Repo("repo");
         var clock = Stopwatch.StartNew();
 
-        GitException error = Assert.Throws<GitException>(() =>
+        GitTimeoutException error = Assert.Throws<GitTimeoutException>(() =>
             GitRunner.RunStatusWithEnv(
                 repo,
                 ["-c", "alias.hang=!sleep 30", "hang"],

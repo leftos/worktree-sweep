@@ -19,6 +19,7 @@ public static partial class SignalReader
     /// <param name="defaults">The default branches of its repo.</param>
     /// <param name="record">The worktree's record.</param>
     /// <returns>The state and the default's short name; <see langword="null"/> when the repo has no default branch.</returns>
+    /// <exception cref="GitTimeoutException">A git read times out; it is not retried against another default.</exception>
     /// <exception cref="GitException">A git command fails unexpectedly; for a branch, against every default.</exception>
     /// <exception cref="IOException">The scratch object directory merge-tree writes to cannot be created.</exception>
     public static (MergeState State, string Against)? ReadMergeState(string dir, DefaultBranches defaults, WorktreeRecord record)
@@ -60,14 +61,30 @@ public static partial class SignalReader
 
     /// <summary>
     /// The best merge state of a branch over the default refs, stopping at the first that has it as an ancestor. A git failure
-    /// against one default is traced as a warning when another default gives a state, and rethrown when none does. Every
-    /// merge-tree of the call writes to one scratch object directory, created on first use and deleted before this returns.
+    /// against one default is traced as a warning when another default gives a state, and rethrown when none does; a git timeout is
+    /// neither retried nor traced, because it means the volume is stalled. Every merge-tree of the call writes to one scratch object
+    /// directory, created on first use and deleted before this returns.
     /// </summary>
+    /// <exception cref="GitTimeoutException">A read times out; the remaining defaults are not tried.</exception>
     /// <exception cref="GitException">Measuring fails against every default; the first failure is rethrown.</exception>
     /// <exception cref="IOException">The scratch object directory cannot be created.</exception>
     private static (MergeState State, string Against)? BestState(string dir, string branchRef, IReadOnlyList<(string Name, string Ref)> refs)
     {
         using var scratch = new LazyScratch(dir);
+        return BestState(refs, target => StateAgainst(dir, branchRef, target, scratch));
+    }
+
+    /// <summary>The best merge state of a branch over the default refs, reading each ref with <paramref name="stateAgainst"/>.</summary>
+    /// <param name="refs">The default refs, local first.</param>
+    /// <param name="stateAgainst">The branch's state against one default ref.</param>
+    /// <returns>The state and the default's short name; <see langword="null"/> when no read gave a state.</returns>
+    /// <exception cref="GitTimeoutException">A read times out; the remaining defaults are not tried.</exception>
+    /// <exception cref="GitException">Every read failed; the first failure is rethrown.</exception>
+    internal static (MergeState State, string Against)? BestState(
+        IReadOnlyList<(string Name, string Ref)> refs,
+        Func<string, MergeState> stateAgainst
+    )
+    {
         (MergeState State, string Against)? best = null;
         GitException? firstFailure = null;
         foreach ((string Name, string Ref) target in refs)
@@ -75,9 +92,9 @@ public static partial class SignalReader
             MergeState state;
             try
             {
-                state = StateAgainst(dir, branchRef, target.Ref, scratch);
+                state = stateAgainst(target.Ref);
             }
-            catch (GitException error)
+            catch (GitException error) when (error is not GitTimeoutException)
             {
                 firstFailure ??= error;
                 continue;
@@ -94,7 +111,8 @@ public static partial class SignalReader
         return BestDespiteFailure(best, firstFailure);
     }
 
-    /// <summary>The best state when there is one, tracing the failure beside it; the failure itself when there is no state.</summary>
+    /// <summary>The best state when there is one, tracing the failure beside it; the failure itself when there is no state. A git
+    /// timeout never reaches it: it propagates from the read that raised it.</summary>
     private static (MergeState State, string Against)? BestDespiteFailure((MergeState State, string Against)? best, GitException? failure)
     {
         if (failure is null)
@@ -111,8 +129,10 @@ public static partial class SignalReader
 
     /// <summary>
     /// The merge state of a detached HEAD: contained against the first default that reaches it, else not contained against the
-    /// first default that answered. A git failure against one default is handled as in <see cref="BestState"/>.
+    /// first default that answered. A failure against one default is handled as in <see cref="BestState"/>, a timeout included: it
+    /// propagates at once instead of trying the next default.
     /// </summary>
+    /// <exception cref="GitTimeoutException">A read times out; the remaining defaults are not tried.</exception>
     /// <exception cref="GitException">Measuring fails against every default; the first failure is rethrown.</exception>
     private static (MergeState State, string Against)? DetachedState(string dir, IReadOnlyList<(string Name, string Ref)> refs, string head)
     {
@@ -125,7 +145,7 @@ public static partial class SignalReader
             {
                 contained = IsAncestor(dir, head, target.Ref);
             }
-            catch (GitException error)
+            catch (GitException error) when (error is not GitTimeoutException)
             {
                 firstFailure ??= error;
                 continue;
