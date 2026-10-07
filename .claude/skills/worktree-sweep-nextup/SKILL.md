@@ -63,8 +63,9 @@ linear: worktree-sweep
 
 ## Concurrency
 
-- Ceiling: **one** implementer. The crate is small and every item so far touches `main.rs` or `remove.rs`.
-- Branch: `git switch -c <slug> <base>` in the main checkout (no worktree needed at ceiling one; an item under a feature marker is cut from `feat/<name>` in the feature worktree instead), then `branch.<slug>.base` and `branch.<slug>.landOn` recorded as the user-level `nextup` §3 **Base and target** says (`main` and `main` by default).
+- Ceiling: **three** implementers. The C# rewrite's chains (C2–C5, C6–C8, C9–C11 in `docs/plans/csharp-rewrite.md`) touch disjoint folders under `src/WorktreeSweep.Core/` until they meet at C11, so items from different chains run side by side; items in one chain still run in order. Shared files that serialize two items: `tests/WorktreeSweep.Tests/Fixture.cs`, `src/WorktreeSweep.Core/Git/GitRunner.cs` and the csproj files.
+- Branch: each implementer gets its own worktree, `git worktree add ../worktree-sweep.wt/<slug> -b <slug> <base>`, per the user-level `nextup` §3 (an item under a feature marker is cut from `feat/<name>` instead). The main checkout hosts at most one implementer, and none while a gate runs there. Record `branch.<slug>.base` and `branch.<slug>.landOn` as §3 **Base and target** says (`main` and `main` by default).
+- Gates in concurrent trees go through `tools/gate.ps1`: a heavy run waits for one of the machine-wide heavy slots, so three trees' builds and tests queue rather than oversubscribe the machine.
 - Context: read the status bar's figure at every landing (`jq .context_window.used_percentage <scratchpad>/statusline.json`); past 40% stop refilling, per the user-level `nextup`.
 
 ## Docs map
@@ -79,7 +80,7 @@ linear: worktree-sweep
 
 ## Landing
 
-- A multi-file item (from a brief): commit on `<slug>` (the prek hook runs fmt and clippy), `git push -u origin <slug>`, `gh pr create --base <landOn>` with the agent-authored marker line as the body's first line, then `gh pr merge --rebase --delete-branch`, `git switch <landOn>`, `git pull --ff-only`. Merge PRs yourself as you go. `feat/*` names belong to feature branches alone.
+- A multi-file item (from a brief): commit on `<slug>` (the prek hook runs fmt and clippy), `git push -u origin <slug>`, `gh pr create --base <landOn>` with the agent-authored marker line as the body's first line, then, from the main checkout, `gh pr merge <N> --rebase` and `git pull --ff-only` on `<landOn>`. An item built in a worktree then has its worktree and branch removed per the user-level `nextup` §4 step 6 (`git cherry` check, `git worktree remove`, `git branch -D <slug>`) and `git push origin --delete <slug>`; `--delete-branch` cannot delete a branch a worktree has checked out. Merge PRs yourself as you go. `feat/*` names belong to feature branches alone.
 - An item under a feature marker (user-level `nextup` §3, "Feature branches") has `landOn` = `feat/<name>`, so its PR targets the feature branch; the feature PR into `main` merges only through `/ship` on the feature branch, and the item is **land**ed with the note `on feat/<name>, ships with #N`. The repo has no CI, so the feature PR's checks are the local gates.
 - A small change (docs, plan, config, one-line fix): commit on `main` and `git push`. A session running from a worktree offers `/ship` instead of pushing (user-level `nextup`, "A worktree session offers a ship instead of a push").
 - Commit messages: ≤4-char type tag, imperative, ≤72-char subject, the session's attribution trailers.

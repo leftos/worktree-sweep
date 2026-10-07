@@ -17,6 +17,7 @@ The whole tool is rewritten in C# on .NET 10 with a WPF window for the interacti
 - **Install:** `tools/install.ps1` runs `dotnet publish -c Release` into `%LOCALAPPDATA%\worktree-sweep\` and adds that folder to the user PATH once. Until the cutover the C# exe is not installed; tests run the built exe from its output folder.
 - **Unlock step:** runs in the terminal the tool was launched from, with plain numbered line prompts (`[Y/n]`, `1) Stop process  2) Close its handles  3) Skip  4) Done [1]:`) read by a pure parser. While it runs the window shows "Finish the unlock step in the terminal" and takes no input; then it shows the retry. `sudo` must be in Inline mode, as today.
 - **After exit:** nothing is printed; the Results view is the only record.
+- **Scan JSON (C4):** snake_case keys (`JsonNamingPolicy.SnakeCaseLower`); one flat `candidates` array tagged by `"kind": "registered"|"orphan"`; every timestamp an ISO 8601 UTC string whose key drops the `_unix` suffix (`last_activity`, `size.last_write`, `released.released_at`).
 
 Carried over from the full-screen picker's design (`archive/tui-picker.md`, "Rulings from the review"): every question is asked up front in Review (loss, then permanent delete, then branch, per pick in list order), and a branch answer applies only if its removal succeeds.
 
@@ -75,10 +76,9 @@ Each lands green and testable; leaf first. Rust files named are the ones the ite
 | C15 | Window and wiring | `main.rs` interactive path | XAML, scan and removal workers, unlock hand-off, Cancel |
 | C16 | Cutover | — | `tools/install.ps1`, README, `docs/agent-path.md`, `docs/design.md`, ARCHITECTURE, glossary, nextup profile and CLAUDE.md gates; the crate, `Cargo.*`, `deny.toml` and Rust hooks deleted |
 
-C2–C5 are a chain, as are C6–C8 and C9–C11; the chains meet at C11–C13, and C14–C15 need C11. The concurrency ceiling is one implementer, so they run in table order.
+C2–C5 are a chain, as are C6–C8 and C9–C11; the chains meet at C11–C13, and C14–C15 need C11. Each chain runs in table order; up to three implementers run items from different chains side by side, each in its own worktree.
 
 ## Open decisions, asked in the item's decision round
 
-- C4: the scan JSON's shape (naming case, how a candidate's kind is tagged, timestamps as Unix seconds or ISO 8601).
 - C13: the agent report's shape and exit codes.
 - C15: the window's layout (a `DataGrid` with a checkbox column above a detail pane is the default), and whether it remembers its size.
