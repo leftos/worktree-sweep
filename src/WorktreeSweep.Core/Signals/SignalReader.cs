@@ -26,11 +26,15 @@ public static partial class SignalReader
     /// exist is dropped, with a traced warning, and the local default falls back to <c>main</c>, else <c>master</c>.
     /// </summary>
     /// <param name="repo">A folder inside the repo.</param>
+    /// <param name="stalls">The volumes an earlier git call has stalled; a repo on one of them is not asked for anything.</param>
     /// <returns>The defaults that exist.</returns>
+    /// <exception cref="GitTimeoutException">The repo's volume is stalled, so git is not started; the message names the volume.</exception>
     /// <exception cref="GitException">Git cannot be started or fails unexpectedly.</exception>
-    public static DefaultBranches ReadDefaultBranches(string repo)
+    public static DefaultBranches ReadDefaultBranches(string repo, VolumeStalls stalls)
     {
         ArgumentNullException.ThrowIfNull(repo);
+        ArgumentNullException.ThrowIfNull(stalls);
+        stalls.ThrowIfStalled(repo);
         GitStatus symref = GitRunner.RunStatus(repo, ["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"]);
         string? origin = symref.Success ? StripPrefix(symref.Stdout.Trim(), "refs/remotes/") : null;
         if (origin is not null && !RefExists(repo, "refs/remotes/" + origin))
@@ -51,22 +55,26 @@ public static partial class SignalReader
     /// <summary>
     /// Reads every signal of a registered worktree. A signal that fails is left <see langword="null"/> and its error recorded in
     /// <see cref="WorktreeSignals.Errors"/> and traced, so one broken worktree never hides the others. A git read that times out
-    /// (<see cref="GitTimeoutException"/>) means the worktree's volume is stalled, so its remaining signals are skipped, the size
-    /// walk included, with one notice recorded after the timeout's message.
+    /// (<see cref="GitTimeoutException"/>) means the worktree's volume is stalled, so the volume is marked in
+    /// <paramref name="stalls"/> and the worktree's remaining signals are skipped, the size walk included, with one notice naming the
+    /// volume recorded after the timeout's message. A worktree whose volume another worktree has already stalled starts no git call
+    /// at all.
     /// </summary>
     /// <param name="defaults">The default branches of the worktree's repo.</param>
     /// <param name="record">The worktree's record.</param>
+    /// <param name="stalls">The volumes an earlier git call has stalled, shared by the scan's worktrees.</param>
     /// <returns>The signals; all <see langword="null"/> for a prunable registration.</returns>
-    public static WorktreeSignals ReadWorktreeSignals(DefaultBranches defaults, WorktreeRecord record)
+    public static WorktreeSignals ReadWorktreeSignals(DefaultBranches defaults, WorktreeRecord record, VolumeStalls stalls)
     {
         ArgumentNullException.ThrowIfNull(defaults);
         ArgumentNullException.ThrowIfNull(record);
+        ArgumentNullException.ThrowIfNull(stalls);
         if (record.Prunable is not null)
         {
             return new WorktreeSignals();
         }
         string dir = record.Path;
-        var reads = new SignalReads();
+        var reads = new SignalReads(stalls, dir);
         (MergeState State, string Against)? merge = reads.Read(() => ReadMergeState(dir, defaults, record));
         Dirty? dirty = reads.Read(() => ReadDirty(dir));
         Upstream? upstream = record.Branch is { } branch ? reads.Read(() => ReadUpstream(dir, branch)) : null;
@@ -239,28 +247,34 @@ public static partial class SignalReader
 /// <summary>
 /// Reads one worktree's signals in order, recording each failure's message. A read that fails with
 /// <see cref="GitTimeoutException"/> means the worktree's volume is stalled, where every later git call would wait the full time
-/// limit too: the remaining reads are skipped, each reporting <see langword="default"/>, and one notice is recorded after the
-/// timeout's own message instead.
+/// limit too: the volume is marked in <paramref name="stalls"/>, so no later call on it is started, and this worktree's remaining
+/// reads are skipped, each reporting <see langword="default"/>, with one notice naming the volume recorded after the timeout's own
+/// message. A worktree whose volume another worktree has already stalled makes no git call and records the same notice alone.
 /// </summary>
-internal sealed class SignalReads
+/// <param name="stalls">The volumes an earlier git call has stalled, shared by the scan's worktrees.</param>
+/// <param name="path">The worktree whose signals are read.</param>
+internal sealed class SignalReads(VolumeStalls stalls, string path)
 {
-    /// <summary>The notice recorded once after the message of the read that timed out.</summary>
-    public const string TimeoutNotice = "git timed out; remaining signals skipped";
-
     private readonly List<string> _errors = [];
     private bool _timedOut;
 
-    /// <summary>The failures' messages, in order, plus the one skip notice a timeout adds.</summary>
+    /// <summary>The volume the worktree's git calls run on.</summary>
+    public string Volume { get; } = VolumeStalls.Volume(path);
+
+    /// <summary>The notice recorded once when a read times out or is skipped for a stalled volume.</summary>
+    public string TimeoutNotice => $"git timed out on {Volume}; remaining signals skipped";
+
+    /// <summary>The failures' messages, in order, plus the one skip notice a timeout or a stalled volume adds.</summary>
     public IReadOnlyList<string> Errors => _errors;
 
     /// <summary>Runs <paramref name="read"/> and returns its result.</summary>
     /// <typeparam name="T">The signal's type.</typeparam>
-    /// <param name="read">The read; not called once an earlier read has timed out.</param>
+    /// <param name="read">The read; not called once an earlier read has timed out or the volume is stalled.</param>
     /// <returns>The signal; <see langword="default"/> when the read fails or is skipped after a timeout.</returns>
     public T? Read<T>(Func<T> read)
     {
         ArgumentNullException.ThrowIfNull(read);
-        if (_timedOut)
+        if (Skipped())
         {
             return default;
         }
@@ -270,6 +284,7 @@ internal sealed class SignalReads
         }
         catch (GitTimeoutException error)
         {
+            stalls.Mark(path);
             _errors.Add(error.Message);
             _errors.Add(TimeoutNotice);
             _timedOut = true;
@@ -282,5 +297,22 @@ internal sealed class SignalReads
             _errors.Add(error.Message);
             return default;
         }
+    }
+
+    /// <summary>Whether this read is not run: an earlier read timed out, or another worktree's read stalled the volume.</summary>
+    /// <returns><see langword="true"/> when the read is skipped, with the notice recorded the first time.</returns>
+    private bool Skipped()
+    {
+        if (_timedOut)
+        {
+            return true;
+        }
+        if (!stalls.IsStalled(path))
+        {
+            return false;
+        }
+        _errors.Add(TimeoutNotice);
+        _timedOut = true;
+        return true;
     }
 }
