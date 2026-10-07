@@ -20,7 +20,9 @@ internal static class PathResolver
     /// <remarks>
     /// A missing path resolves its nearest existing ancestor and keeps the missing segments as spelled. When even that cannot be
     /// resolved, or the path is empty or invalid, a trace warning names the path and it is returned made absolute, as spelled, or as
-    /// given when it cannot be made absolute. It never throws.
+    /// given when it cannot be made absolute. A loopback admin share of one of this machine's volumes is rewritten to its drive path
+    /// first, and a resolved path spelled as such a share (a junction or link whose target is one) is rewritten once more, because
+    /// the system names such a share only as <c>\\?\UNC\{host}\...</c> and nothing maps it back to the drive. It never throws.
     /// </remarks>
     /// <param name="path">A path.</param>
     /// <returns>The resolved path.</returns>
@@ -28,6 +30,7 @@ internal static class PathResolver
     {
         try
         {
+            path = LoopbackShare.ToLocalDrive(path, LoopbackShare.LocalHosts()) ?? path;
             string existing = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
             var missing = new Stack<string>();
             while (!Path.Exists(existing) && Path.GetDirectoryName(existing) is { } parent)
@@ -36,6 +39,10 @@ internal static class PathResolver
                 existing = parent;
             }
             string resolved = Discoverer.StripVerbatim(FinalPath(existing));
+            if (LoopbackShare.ToLocalDrive(resolved, LoopbackShare.LocalHosts()) is { } drive)
+            {
+                resolved = Discoverer.StripVerbatim(FinalPath(drive));
+            }
             foreach (string segment in missing)
             {
                 resolved = Path.Join(resolved, segment);
