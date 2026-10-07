@@ -25,7 +25,7 @@ linear: worktree-sweep
 
 - The owner delegates the technical design and implementation of the C# rewrite to the orchestrator, through to the cutover (WTS-22). The orchestrator settles decision rounds from the Rust behaviour, the docs and the conventions, and records each with **settle** as "Settled (orchestrator, owner-delegated)" rather than opening an `AskUserQuestion` round. This covers JSON shapes (C13's agent report), the window's layout (C15), and follow-ups such as WTS-25 to WTS-29.
 
-  The session keeps going past the slice and refill limits until the project is done, writing the checkpoint handoff whenever the context-budget hook pauses it.
+  Each session refills slots until the user-level `nextup`'s context line (40%), then lands what is in flight and writes the checkpoint handoff. The owner's only step between sessions is `/clear` then `/nextup`, until the project is done.
 - The owner is asked only for what needs a person: anything that runs elevated or raises a UAC prompt (the C12 manual check), a removing run against a real folder, a change to the tool's purpose or scope, or a release.
 - The code stays plain, readable C#: the owner reads it to understand the tool. Prefer the obvious construct over a clever one.
 
