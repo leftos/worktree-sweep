@@ -1,10 +1,12 @@
 using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.System.Threading;
+using WorktreeSweep.Holders;
 
 namespace WorktreeSweep.Processes;
 
@@ -24,19 +26,22 @@ public static class ProcessStopper
     public static TimeSpan DefaultWait { get; } = TimeSpan.FromSeconds(5);
 
     /// <summary>
-    /// Terminates the process with exit code 1 and waits up to <paramref name="wait"/> for it to exit. The image name is read
-    /// through the same handle that terminates it, so a PID reused by another program is never stopped. A process that has
-    /// already exited counts as stopped.
+    /// Terminates the process with exit code 1 and waits up to <paramref name="wait"/> for it to exit. The image name and, when
+    /// <paramref name="expectedStart"/> is known, the creation time are read through the same handle that terminates it, so a PID
+    /// reused by another program is never stopped. A process that has already exited counts as stopped.
     /// </summary>
     /// <param name="pid">The process to stop.</param>
     /// <param name="expectedExe">The image file name the caller saw, such as <c>code.exe</c>; compared case-insensitively.</param>
+    /// <param name="expectedStart">The creation time the caller saw, as a <c>FILETIME</c> count, or <see langword="null"/> to
+    /// check the image name alone.</param>
     /// <param name="wait">How long to wait for it to exit; at least <see cref="TimeSpan.Zero"/>.</param>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="wait"/> is negative.</exception>
-    /// <exception cref="InvalidOperationException">The PID now belongs to another image; nothing was stopped.</exception>
+    /// <exception cref="InvalidOperationException">The PID now belongs to another image, or to a process that started at another
+    /// time; nothing was stopped.</exception>
     /// <exception cref="Win32Exception">
     /// The process cannot be opened, its image name read or it terminated, or it has not exited within the wait.
     /// </exception>
-    public static void Stop(int pid, string expectedExe, TimeSpan wait)
+    public static void Stop(int pid, string expectedExe, ulong? expectedStart, TimeSpan wait)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(wait, TimeSpan.Zero);
         using SafeFileHandle process = PInvoke.OpenProcess_SafeHandle(
@@ -64,6 +69,14 @@ public static class ProcessStopper
         {
             throw new InvalidOperationException($"process {pid} is now {actual}, not {expectedExe}; not stopped");
         }
+        if (expectedStart is ulong expected)
+        {
+            ulong? started = ProcessQuery.CreationTime(process);
+            if (started != expected)
+            {
+                throw new InvalidOperationException(NotSeenMessage(pid, started, expected));
+            }
+        }
         if (!PInvoke.TerminateProcess(process, StoppedExitCode))
         {
             int error = Marshal.GetLastPInvokeError();
@@ -75,6 +88,19 @@ public static class ProcessStopper
         }
         WaitForExit(process, pid, wait);
     }
+
+    /// <summary>The message for a PID that no longer names the process the caller saw.</summary>
+    /// <param name="pid">The process.</param>
+    /// <param name="actual">The creation time read from the open handle, or <see langword="null"/> when it could not be read.</param>
+    /// <param name="expected">The creation time the caller saw.</param>
+    /// <returns>The message.</returns>
+    private static string NotSeenMessage(int pid, ulong? actual, ulong expected) =>
+        $"process {pid} is not the process that was seen (started {StartedText(actual)}, expected {StartedText(expected)}); not stopped";
+
+    /// <summary>A creation time as text, or <c>unknown</c> when it could not be read.</summary>
+    /// <param name="started">The creation time, or <see langword="null"/>.</param>
+    /// <returns>The text.</returns>
+    private static string StartedText(ulong? started) => started is ulong value ? value.ToString(CultureInfo.InvariantCulture) : "unknown";
 
     private static bool TryImageName(SafeFileHandle process, [NotNullWhen(true)] out string? image)
     {

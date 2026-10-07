@@ -19,7 +19,7 @@ public sealed class HandleCsvTests
         Assert.Equal(@"\Sessions\1\BaseNamedObjects\windows_shell_global_counters", rows[1].Name);
         Assert.Equal(@"D:\example\repo.wt\feature\notes, draft.txt", rows[3].Name);
 
-        Assert.Equal<int[]>([1720, 7036, 9620, 35952], [.. HandleCsv.GroupByProcess(rows).Select(locker => locker.Pid)]);
+        Assert.Equal<int[]>([1720, 7036, 9620, 35952], [.. HandleCsv.GroupByProcess(rows, _ => null).Select(locker => locker.Pid)]);
     }
 
     /// <summary>The recorded no-name dump parses into its two rows, grouped into the one locker that holds them.</summary>
@@ -33,7 +33,7 @@ public sealed class HandleCsvTests
         Assert.Equal(0x748ul, rows[1].Handle);
         Assert.Equal(@"D:\worktree-sweep\.tmp\lockprobe\held.txt", rows[1].Name);
 
-        Locker locker = Assert.Single(HandleCsv.GroupByProcess(rows));
+        Locker locker = Assert.Single(HandleCsv.GroupByProcess(rows, _ => null));
         Assert.Equal(64336, locker.Pid);
         Assert.Equal(2, locker.Handles.Count);
     }
@@ -90,7 +90,7 @@ public sealed class HandleCsvTests
         Assert.Equal(2, rows.Count);
         Assert.Equal(@"D:\a", rows[0].Name);
         Assert.Equal(@"D:\b", rows[1].Name);
-        Assert.Equal<int[]>([3, 7], [.. HandleCsv.GroupByProcess(rows).Select(locker => locker.Pid)]);
+        Assert.Equal<int[]>([3, 7], [.. HandleCsv.GroupByProcess(rows, _ => null).Select(locker => locker.Pid)]);
     }
 
     private static string Fixture(string name) => File.ReadAllText(Path.Join(AppContext.BaseDirectory, "fixtures", name));

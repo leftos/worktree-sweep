@@ -19,11 +19,14 @@ public interface IProcessControl
     /// <returns>The creation time as a <c>FILETIME</c> count, or <see langword="null"/> when it cannot be read.</returns>
     ulong? StartedAt(int pid);
 
-    /// <summary>Stops a process by PID, after checking it is still the program the scan saw, and waits for it to exit.</summary>
+    /// <summary>Stops a process by PID, after checking it is still the process the scan saw, and waits for it to exit.</summary>
     /// <param name="pid">The process to stop.</param>
     /// <param name="exe">The image file name the scan saw, compared case-insensitively.</param>
-    /// <exception cref="InvalidOperationException">The PID now belongs to another image; nothing was stopped.</exception>
+    /// <param name="started">The creation time the scan saw, as a <c>FILETIME</c> count, or <see langword="null"/> to check the
+    /// image name alone.</param>
+    /// <exception cref="InvalidOperationException">The PID now belongs to another image, or to a process that started at another
+    /// time; nothing was stopped.</exception>
     /// <exception cref="Win32Exception">The process cannot be opened, terminated, or has not exited within the wait.</exception>
-    void Stop(int pid, string exe);
+    void Stop(int pid, string exe, ulong? started);
 }
 #pragma warning restore CA1716

@@ -396,6 +396,92 @@ public sealed class ElevatedSessionTests
         Assert.Contains("pwsh.exe (pid 642) has exited; skipped.\n", output.ToString(), StringComparison.Ordinal);
     }
 
+    /// <summary>A PID taken by a newer process since the scan is not stopped, even under the same image name.</summary>
+    [Fact]
+    public void StopOfAPidTakenByANewerProcessIsSkipped()
+    {
+        StringWriter output = Writer();
+        var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
+        processes.StartedTimeSequence[642] = StartTimes(1000, 2000);
+        var session = new ElevatedSession(new StringReader("1\n"), output, new FakeHandleExe(OneLocker()), processes);
+
+        int exit = session.Run([Locked], null, null, null);
+
+        Assert.Equal(UnlockExit.NothingDone, exit);
+        Assert.Empty(processes.Stopped);
+        Assert.Contains("pwsh.exe (pid 642) is no longer the process the scan saw; skipped.\n", output.ToString(), StringComparison.Ordinal);
+    }
+
+    /// <summary>A PID taken by a newer process since the scan has no handles closed.</summary>
+    [Fact]
+    public void CloseOfAPidTakenByANewerProcessIsSkipped()
+    {
+        StringWriter output = Writer();
+        var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
+        processes.StartedTimeSequence[642] = StartTimes(1000, 2000);
+        var handleExe = new FakeHandleExe(OneLocker(), OneLocker());
+        var session = new ElevatedSession(new StringReader("2\ny\n"), output, handleExe, processes);
+
+        int exit = session.Run([Locked], null, null, null);
+
+        Assert.Equal(UnlockExit.NothingDone, exit);
+        Assert.Empty(handleExe.Closed);
+        Assert.Contains("pwsh.exe (pid 642) is no longer the process the scan saw; skipped.\n", output.ToString(), StringComparison.Ordinal);
+    }
+
+    /// <summary>The start time the scan saw is passed to the stop, so it needs no second check of its own.</summary>
+    [Fact]
+    public void StopPassesTheScanStartTime()
+    {
+        StringWriter output = Writer();
+        var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
+        processes.StartedTimeSequence[642] = StartTimes(1000);
+        var session = new ElevatedSession(new StringReader("\n"), output, new FakeHandleExe(OneLocker(), ""), processes);
+
+        int exit = session.Run([Locked], null, null, null);
+
+        Assert.Equal(UnlockExit.AllClear, exit);
+        (int Pid, string Exe, ulong? Started) stop = Assert.Single(processes.Stops);
+        Assert.Equal(642, stop.Pid);
+        Assert.Equal("pwsh.exe", stop.Exe);
+        Assert.Equal<ulong?>(1000, stop.Started);
+    }
+
+    /// <summary>A locker whose start time could not be read at the scan is stopped by image name, as before.</summary>
+    [Fact]
+    public void LockerWithAnUnreadableScanTimeIsStoppedByName()
+    {
+        StringWriter output = Writer();
+        var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
+        var session = new ElevatedSession(new StringReader("\n"), output, new FakeHandleExe(OneLocker(), ""), processes);
+
+        int exit = session.Run([Locked], null, null, null);
+
+        Assert.Equal(UnlockExit.AllClear, exit);
+        Assert.Null(Assert.Single(processes.Stops).Started);
+    }
+
+    /// <summary>A locker whose start time can no longer be read at the re-check counts as exited, so nothing is acted on.</summary>
+    [Fact]
+    public void LockerWhoseStartTimeBecomesUnreadableIsSkippedAsExited()
+    {
+        StringWriter output = Writer();
+        var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
+        processes.StartedTimeSequence[642] = StartTimes(1000, null);
+        var session = new ElevatedSession(new StringReader("1\n"), output, new FakeHandleExe(OneLocker()), processes);
+
+        int exit = session.Run([Locked], null, null, null);
+
+        Assert.Equal(UnlockExit.NothingDone, exit);
+        Assert.Empty(processes.Stopped);
+        Assert.Contains("pwsh.exe (pid 642) has exited; skipped.\n", output.ToString(), StringComparison.Ordinal);
+    }
+
+    /// <summary>The start times <see cref="ScriptedProcessControl.StartedAt"/> answers with, in turn, the last repeating.</summary>
+    /// <param name="times">The times, in the order they are read.</param>
+    /// <returns>The queue.</returns>
+    private static Queue<ulong?> StartTimes(params ulong?[] times) => new(times);
+
     /// <summary>A <c>StringWriter</c> that ends its lines with <c>\n</c>.</summary>
     private static StringWriter Writer() => new() { NewLine = "\n" };
 
@@ -494,11 +580,14 @@ public sealed class ElevatedSessionTests
     /// failures.</summary>
     private sealed class ScriptedProcessControl(IReadOnlyDictionary<int, ProcessEntry> table) : IProcessControl
     {
-        private readonly List<int> stopped = [];
+        private readonly List<(int Pid, string Exe, ulong? Started)> stops = [];
         private int snapshots;
 
         /// <summary>Gets the PIDs stopped, in the order they were stopped.</summary>
-        public IReadOnlyList<int> Stopped => stopped;
+        public IReadOnlyList<int> Stopped => [.. stops.Select(stop => stop.Pid)];
+
+        /// <summary>Gets the stops made, with the image name and the start time each was given.</summary>
+        public IReadOnlyList<(int Pid, string Exe, ulong? Started)> Stops => stops;
 
         /// <summary>Gets or sets the failure <see cref="Stop"/> throws, or <see langword="null"/> for none.</summary>
         public Exception? StopThrows { get; set; }
@@ -506,8 +595,12 @@ public sealed class ElevatedSessionTests
         /// <summary>Gets or sets the 1-based snapshot call that throws, or 0 so that none does.</summary>
         public int SnapshotThrowsOn { get; set; }
 
-        /// <summary>Gets the creation times <see cref="StartedAt"/> answers with; a PID it does not name reads as unknown.</summary>
+        /// <summary>Gets the creation times <see cref="StartedAt"/> answers with, so that a PID it does not name reads as
+        /// unknown.</summary>
         public Dictionary<int, ulong?> StartedTimes { get; } = [];
+
+        /// <summary>Gets the creation times <see cref="StartedAt"/> answers with in turn per PID, the last value repeating.</summary>
+        public Dictionary<int, Queue<ulong?>> StartedTimeSequence { get; } = [];
 
         public IReadOnlyDictionary<int, ProcessEntry> Snapshot()
         {
@@ -519,15 +612,22 @@ public sealed class ElevatedSessionTests
             return table;
         }
 
-        public ulong? StartedAt(int pid) => StartedTimes.TryGetValue(pid, out ulong? started) ? started : null;
+        public ulong? StartedAt(int pid)
+        {
+            if (StartedTimeSequence.TryGetValue(pid, out Queue<ulong?>? times) && times.Count > 0)
+            {
+                return times.Count > 1 ? times.Dequeue() : times.Peek();
+            }
+            return StartedTimes.TryGetValue(pid, out ulong? started) ? started : null;
+        }
 
-        public void Stop(int pid, string exe)
+        public void Stop(int pid, string exe, ulong? started)
         {
             if (StopThrows is Exception failure)
             {
                 throw failure;
             }
-            stopped.Add(pid);
+            stops.Add((pid, exe, started));
         }
     }
 }
