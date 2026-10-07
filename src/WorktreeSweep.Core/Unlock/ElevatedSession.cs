@@ -34,7 +34,8 @@ public sealed class ElevatedSession(
     /// <summary>
     /// Runs the session, scanning, offering and acting until nothing holds the files or the user ends it. A path
     /// <c>handle.exe</c> cannot name is warned about before the first scan, and the session never reports clear while one is in
-    /// play: nothing it can see holding the others is no proof about that path.
+    /// play: nothing it can see holding the others is no proof about that path. Such a path ends the session at
+    /// <see cref="UnlockExit.SomeLeft"/> even when nothing is found holding the others, so the sweep retries every locked pick.
     /// </summary>
     /// <param name="paths">The folders whose open handles are cleared.</param>
     /// <param name="callerPid">The process that started the unelevated run, usually the user's shell, whose stopping is not the
@@ -43,9 +44,9 @@ public sealed class ElevatedSession(
     /// when it is not known.</param>
     /// <param name="sweepPid">The unelevated worktree-sweep, which with its children is never offered; <see langword="null"/>
     /// when it is not known.</param>
-    /// <returns><see cref="UnlockExit.AllClear"/> when nothing holds the files and <c>handle.exe</c> can name every path,
-    /// <see cref="UnlockExit.SomeLeft"/> when something still does after an action, otherwise
-    /// <see cref="UnlockExit.NothingDone"/>.</returns>
+    /// <returns><see cref="UnlockExit.AllClear"/> when nothing holds the files and <c>handle.exe</c> can name every path;
+    /// <see cref="UnlockExit.SomeLeft"/> when something still holds them after an action, or when a path could not be named at
+    /// all; otherwise <see cref="UnlockExit.NothingDone"/>.</returns>
     /// <exception cref="UnlockException"><c>handle.exe</c> is missing or fails.</exception>
     /// <exception cref="Win32Exception">The process table cannot be read.</exception>
     public int Run(IReadOnlyList<string> paths, int? callerPid, ulong? callerStarted, int? sweepPid)
@@ -54,9 +55,7 @@ public sealed class ElevatedSession(
         IReadOnlyList<string> unnameable = [.. paths.Where(path => !handleExeCanName(path))];
         foreach (string path in unnameable)
         {
-            Say(
-                $"handle.exe cannot name files under {path}: its path holds characters outside this machine's code pages; close what holds it by hand."
-            );
+            Say(UnnameableLine(path));
         }
         IReadOnlySet<int> excluded = ProcessTable.ExcludedPids(Environment.ProcessId, sweepPid, processes.Snapshot(), processes.StartedAt);
         bool acted = false;
@@ -67,10 +66,13 @@ public sealed class ElevatedSession(
             IReadOnlyList<Locker> lockers = LockerFinder.Find(handleExe.Dump(), paths, excluded, processes.StartedAt);
             if (lockers.Count == 0)
             {
-                Say(
-                    unnameable.Count == 0 ? "Nothing holds files under those folders." : "Nothing handle.exe can see holds files under those folders."
-                );
-                return UnlockExit.For(unnameable.Count == 0, acted);
+                if (unnameable.Count > 0)
+                {
+                    Say("Nothing handle.exe can see holds files under those folders.");
+                    return UnlockExit.SomeLeft;
+                }
+                Say("Nothing holds files under those folders.");
+                return UnlockExit.For(true, acted);
             }
             if (finished)
             {
@@ -356,6 +358,13 @@ public sealed class ElevatedSession(
     /// <param name="label">The process, as <c>{name} (pid {pid})</c>.</param>
     /// <returns>The line.</returns>
     private static string UnconfirmedLine(string label) => $"{label} could not be confirmed as the process the scan saw; skipped.";
+
+    /// <summary>The warning for a path <c>handle.exe</c> cannot print, and what the user can do about it.</summary>
+    /// <param name="path">The path.</param>
+    /// <returns>The line.</returns>
+    private static string UnnameableLine(string path) =>
+        $"handle.exe cannot name files under {path}: its path holds characters outside this machine's code pages; "
+        + "close what holds it, then run the sweep again.";
 
     /// <summary>Writes one line and flushes it, so a user sees it before the next read.</summary>
     /// <param name="line">The line.</param>

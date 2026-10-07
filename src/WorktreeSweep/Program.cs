@@ -119,6 +119,7 @@ internal static class Program
     {
         try
         {
+            CodePageReach.RegisterProvider();
             IReadOnlyList<Encoding> codePages = CodePageReach.SystemCodePages();
             var session = new ElevatedSession(
                 Console.In,
