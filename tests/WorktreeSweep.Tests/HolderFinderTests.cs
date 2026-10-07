@@ -265,28 +265,22 @@ public sealed class HolderFinderTests : IDisposable
     [Fact]
     public void ScanDoesNotBlockAnotherProcessDeletingItsFiles()
     {
-        string churn = Path.Join(RepoTmp(), $"churn {Guid.NewGuid():N}");
+        using var churnFx = Fixture.InRepoTmp();
+        string churn = churnFx.PathTo($"churn {Guid.NewGuid():N}");
         _ = Directory.CreateDirectory(churn);
-        try
+        string failures = Ready("failures.log");
+        string stop = Ready("stop");
+        string done = Ready("done");
+        using var child = ReadyChild.Run(Side, Ready("churn-ready"), ChurnScript(Path.Join(churn, "churn.tmp"), failures, stop, done));
+        for (int scan = 0; scan < 5; scan++)
         {
-            string failures = Ready("failures.log");
-            string stop = Ready("stop");
-            string done = Ready("done");
-            using var child = ReadyChild.Run(Side, Ready("churn-ready"), ChurnScript(Path.Join(churn, "churn.tmp"), failures, stop, done));
-            for (int scan = 0; scan < 5; scan++)
-            {
-                _ = HolderFinder.Find(Scanned, []);
-            }
-            File.WriteAllText(stop, "stop");
-            child.WaitFor(done);
+            _ = HolderFinder.Find(Scanned, []);
+        }
+        File.WriteAllText(stop, "stop");
+        child.WaitFor(done);
 
-            string logged = File.Exists(failures) ? File.ReadAllText(failures) : "";
-            Assert.True(logged.Length == 0, $"the churning child failed while the folder was scanned:\n{logged}");
-        }
-        finally
-        {
-            Directory.Delete(churn, recursive: true);
-        }
+        string logged = File.Exists(failures) ? File.ReadAllText(failures) : "";
+        Assert.True(logged.Length == 0, $"the churning child failed while the folder was scanned:\n{logged}");
     }
 
     /// <inheritdoc/>
@@ -301,19 +295,6 @@ public sealed class HolderFinderTests : IDisposable
         + "} "
         + $"catch {{ Add-Content -LiteralPath {ReadyChild.Quoted(failures)} $_.Exception.Message; Start-Sleep -Milliseconds 10 }} "
         + $"}}; Set-Content -LiteralPath {ReadyChild.Quoted(done)} done; Start-Sleep 120";
-
-    /// <summary>The repo's gitignored <c>.tmp</c> folder, found above the test assembly's folder, created when missing.</summary>
-    private static string RepoTmp()
-    {
-        for (DirectoryInfo? dir = new(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
-        {
-            if (File.Exists(Path.Join(dir.FullName, "WorktreeSweep.slnx")))
-            {
-                return Directory.CreateDirectory(Path.Join(dir.FullName, ".tmp")).FullName;
-            }
-        }
-        throw new InvalidOperationException($"no WorktreeSweep.slnx above {AppContext.BaseDirectory}");
-    }
 
     private static Holder RequiredHolder(HolderReport report, int pid) =>
         FindHolder(report, pid) ?? throw new InvalidOperationException($"pid {pid} not listed as a holder: {Describe(report)}");

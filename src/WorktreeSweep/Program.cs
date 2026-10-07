@@ -151,7 +151,7 @@ internal static class Program
     private static Command RemoveCommand()
     {
         Argument<string> path = new("PATH") { Description = "The root folder of a registered linked worktree." };
-        Option<bool> json = new("--json") { Description = "Print the result as one JSON document (required)." };
+        Option<bool> json = new("--json") { Arity = ArgumentArity.Zero, Description = "Print the result as one JSON document (required)." };
         Option<bool> force = new("--force")
         {
             Description = "Remove it even when uncommitted, unmerged or unpushed work would be lost; lifts a git lock first.",
