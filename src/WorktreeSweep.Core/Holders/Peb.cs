@@ -129,26 +129,8 @@ internal static class Peb
     {
         T result = default;
         uint returned = 0;
-        bool added = false;
-        NTSTATUS status;
-        try
-        {
-            process.DangerousAddRef(ref added);
-            status = WdkPInvoke.NtQueryInformationProcess(
-                new HANDLE(process.DangerousGetHandle()),
-                infoClass,
-                &result,
-                (uint)sizeof(T),
-                ref returned
-            );
-        }
-        finally
-        {
-            if (added)
-            {
-                process.DangerousRelease();
-            }
-        }
+        using var raw = BorrowedHandle.Of(process);
+        NTSTATUS status = WdkPInvoke.NtQueryInformationProcess(raw.Value, infoClass, &result, (uint)sizeof(T), ref returned);
         value = result;
         return status.Value >= 0;
     }
