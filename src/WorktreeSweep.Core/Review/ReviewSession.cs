@@ -14,7 +14,9 @@ namespace WorktreeSweep.Review;
 /// <remarks>
 /// An orphan whose <see cref="Orphan.LiveGitdir"/> points into a repo discovery could not fully read is planned as
 /// <see cref="Plan.Skip"/> and asked nothing: its repo's worktree list failed, the list left out this very worktree's
-/// <c>gitdir</c> file, or the repo's <c>.git\worktrees</c> folder was unreadable. Paths compare by <see cref="Discoverer.PathKey"/>.
+/// <c>gitdir</c> file, or the <c>worktrees</c> folder holding its git dir was unreadable. Both sides are resolved by
+/// <see cref="PathResolver.Resolve"/> (junctions, symbolic links, subst drives, 8.3 names and <c>..</c> segments) before they compare
+/// by <see cref="Discoverer.PathKey"/>.
 /// </remarks>
 public sealed class ReviewSession
 {
@@ -44,7 +46,8 @@ public sealed class ReviewSession
         ArgumentNullException.ThrowIfNull(capacity);
         ArgumentNullException.ThrowIfNull(discoveryErrors);
         this.root = root;
-        entries = [.. candidates.Select(candidate => NewEntry(candidate, capacity, discoveryErrors))];
+        ErrorKey[] errorKeys = [.. discoveryErrors.Select(error => new ErrorKey(Key(error.Repo), Key(error.Path), error.Message))];
+        entries = [.. candidates.Select(candidate => NewEntry(candidate, capacity, errorKeys))];
         Current = NextStep();
     }
 
@@ -122,9 +125,9 @@ public sealed class ReviewSession
     /// <summary>The entry for one pick, its capacity read only when its plan depends on it.</summary>
     /// <param name="candidate">The pick.</param>
     /// <param name="capacity">Reads the Recycle Bin settings of a volume.</param>
-    /// <param name="errors">The problems discovery met.</param>
+    /// <param name="errors">The problems discovery met, keyed.</param>
     /// <returns>The entry, unanswered.</returns>
-    private static Entry NewEntry(Candidate candidate, Func<string, BinCapacity?> capacity, IReadOnlyList<DiscoveryError> errors)
+    private static Entry NewEntry(Candidate candidate, Func<string, BinCapacity?> capacity, IReadOnlyList<ErrorKey> errors)
     {
         ArgumentNullException.ThrowIfNull(candidate);
         string? guard = candidate is OrphanCandidate orphan ? DiscoveryGuard(orphan.Orphan, errors) : null;
@@ -141,26 +144,29 @@ public sealed class ReviewSession
 
     /// <summary>Why an orphan is skipped for a discovery error in the repo its live git dir belongs to.</summary>
     /// <param name="orphan">The orphan.</param>
-    /// <param name="errors">The problems discovery met.</param>
+    /// <param name="errors">The problems discovery met, keyed.</param>
     /// <returns>The skip reason; <see langword="null"/> when no error guards the orphan.</returns>
-    private static string? DiscoveryGuard(Orphan orphan, IReadOnlyList<DiscoveryError> errors)
+    private static string? DiscoveryGuard(Orphan orphan, IReadOnlyList<ErrorKey> errors)
     {
         if (orphan.LiveGitdir is not { } gitdir)
         {
             return null;
         }
-        string repo = LossText.RepoOfGitdir(gitdir);
+        string resolved = PathResolver.Resolve(gitdir);
+        string repo = PathResolver.Resolve(LossText.RepoOfGitdir(resolved));
         string repoKey = Discoverer.PathKey(repo);
-        string gitdirFileKey = Discoverer.PathKey(Path.Join(gitdir, "gitdir"));
-        string worktreesKey = Discoverer.PathKey(Path.Join(repo, ".git", "worktrees"));
-        DiscoveryError? hit = errors.FirstOrDefault(error =>
-        {
-            string pathKey = Discoverer.PathKey(error.Path);
-            bool listFailed = pathKey == Discoverer.PathKey(error.Repo) && pathKey == repoKey;
-            return listFailed || pathKey == gitdirFileKey || pathKey == worktreesKey;
-        });
+        string gitdirFileKey = Key(Path.Join(resolved, "gitdir"));
+        string? worktreesKey = Path.GetDirectoryName(resolved) is { } worktrees ? Key(worktrees) : null;
+        ErrorKey? hit = errors.FirstOrDefault(error =>
+            (error.ItemKey == error.RepoKey && error.ItemKey == repoKey) || error.ItemKey == gitdirFileKey || error.ItemKey == worktreesKey
+        );
         return hit is null ? null : $"{repo} may still use it: {hit.Message}";
     }
+
+    /// <summary>The comparison key of <paramref name="path"/>: resolved by <see cref="PathResolver.Resolve"/>, then <see cref="Discoverer.PathKey"/>.</summary>
+    /// <param name="path">A path.</param>
+    /// <returns>The key.</returns>
+    private static string Key(string path) => Discoverer.PathKey(PathResolver.Resolve(path));
 
     /// <summary><paramref name="totals"/> with one more pick planned as <paramref name="plan"/>.</summary>
     /// <param name="totals">The totals so far.</param>
@@ -226,6 +232,12 @@ public sealed class ReviewSession
         }
         return null;
     }
+
+    /// <summary>A discovery error with its repo and path keyed by <see cref="Key"/>.</summary>
+    /// <param name="RepoKey">The key of the repo the problem is in.</param>
+    /// <param name="ItemKey">The key of what the problem is about.</param>
+    /// <param name="Message">What went wrong.</param>
+    private sealed record ErrorKey(string RepoKey, string ItemKey, string Message);
 
     /// <summary>One pick, what can be asked about it, and the answers so far.</summary>
     private sealed class Entry

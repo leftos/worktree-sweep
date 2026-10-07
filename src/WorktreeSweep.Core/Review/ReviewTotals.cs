@@ -49,30 +49,22 @@ public sealed record ReviewTotals
         }
         if (Links > 0)
         {
-            parts.Add(Counted(Links, "link", "links"));
+            parts.Add(LossText.Counted(Links, "link", "links"));
         }
         if (Prunes > 0)
         {
-            parts.Add($"{Counted(Prunes, "registration", "registrations")} pruned");
+            parts.Add($"{LossText.Counted(Prunes, "registration", "registrations")} pruned");
         }
-        string sentence = $"Remove {Counted(count, "item", "items")}";
+        string sentence = $"Remove {LossText.Counted(count, "item", "items")}";
         if (parts.Count > 0)
         {
             sentence += ": " + string.Join(", ", parts);
         }
         if (Branches > 0)
         {
-            sentence += $"; {Counted(Branches, "branch", "branches")} deleted";
+            sentence += $"; {LossText.Counted(Branches, "branch", "branches")} deleted";
         }
         sentence += ".";
         return Skipped > 0 ? sentence + string.Create(CultureInfo.InvariantCulture, $" {Skipped} skipped.") : sentence;
     }
-
-    /// <summary>A count and its noun: <c>1 link</c>, <c>2 links</c>.</summary>
-    /// <param name="count">The count.</param>
-    /// <param name="one">The noun for one.</param>
-    /// <param name="many">The noun for any other count.</param>
-    /// <returns>The text.</returns>
-    private static string Counted(int count, string one, string many) =>
-        string.Create(CultureInfo.InvariantCulture, $"{count} {(count == 1 ? one : many)}");
 }

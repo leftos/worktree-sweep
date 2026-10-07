@@ -286,16 +286,60 @@ public sealed class ReviewSessionTests
     public void DiscoveryErrorPathsCompareCaseInsensitively(string repo, string path) => AssertGuarded(new DiscoveryError(repo, path, "failed"));
 
     /// <summary>
-    /// Asserts that <paramref name="error"/> makes the orphan at <see cref="StrayGitdir"/> a skip naming the error, with no question.
+    /// A git dir written relative to its worktree (<c>worktree.useRelativePaths</c>), so with <c>..</c> segments, is guarded by each
+    /// clause of the rule.
     /// </summary>
-    /// <param name="error">The discovery error.</param>
-    private static void AssertGuarded(DiscoveryError error)
+    /// <param name="path">The error's path, in the repo <c>D:\yaat</c>.</param>
+    [Theory]
+    [InlineData(@"D:\yaat")]
+    [InlineData(StrayGitdir + @"\gitdir")]
+    [InlineData(@"D:\yaat\.git\worktrees")]
+    public void DiscoveryErrorGuardsRelativeGitdir(string path) =>
+        AssertGuarded(@"D:\yaat.wt\stray\..\..\yaat\.git\worktrees\stray", @"D:\yaat", new DiscoveryError(@"D:\yaat", path, "failed"));
+
+    /// <summary>
+    /// An error named through a junction to the scanned folders guards the orphan whose git dir names the real path: discovery walks
+    /// the junction's spelling, git prints the resolved one.
+    /// </summary>
+    [Fact]
+    public void DiscoveryErrorThroughJunctionGuardsOrphan()
     {
-        ReviewSession review = Session([Orphan(OrphanKind.Folder, StrayGitdir)], _ => Roomy, error);
+        using Fixture fx = new();
+        string real = fx.PathTo("real");
+        string gitdir = Path.Join(real, "yaat", ".git", "worktrees", "stray");
+        Directory.CreateDirectory(gitdir);
+        string linked = fx.PathTo("linked");
+        Assert.SkipUnless(Fixture.MakeJunction(linked, real), "mklink /J is unavailable");
+        string walkedRepo = Path.Join(linked, "yaat");
+
+        AssertGuarded(gitdir, Path.Join(real, "yaat"), new DiscoveryError(walkedRepo, walkedRepo, "git worktree list failed: boom"));
+    }
+
+    /// <summary>
+    /// A bare-shaped git dir (<c>{common}\worktrees\{id}</c>) is guarded by an error on the <c>worktrees</c> folder holding it.
+    /// </summary>
+    [Fact]
+    public void DiscoveryErrorUnreadableWorktreesGuardsBareShapedGitdir() =>
+        AssertGuarded(@"D:\bare.git\worktrees\stray", @"D:\bare.git", new DiscoveryError(@"D:\bare.git", @"D:\bare.git\worktrees", "cannot read it"));
+
+    /// <summary>Asserts that <paramref name="error"/> guards the orphan at <see cref="StrayGitdir"/> in <c>D:\yaat</c>.</summary>
+    /// <param name="error">The discovery error.</param>
+    private static void AssertGuarded(DiscoveryError error) => AssertGuarded(StrayGitdir, @"D:\yaat", error);
+
+    /// <summary>
+    /// Asserts that <paramref name="error"/> makes the orphan whose live git dir is <paramref name="gitdir"/> a skip naming
+    /// <paramref name="repo"/> (resolved) and the error, with no question.
+    /// </summary>
+    /// <param name="gitdir">The orphan's live git dir.</param>
+    /// <param name="repo">The repo it belongs to.</param>
+    /// <param name="error">The discovery error.</param>
+    private static void AssertGuarded(string gitdir, string repo, DiscoveryError error)
+    {
+        ReviewSession review = Session([Orphan(OrphanKind.Folder, gitdir)], _ => Roomy, error);
 
         Assert.Null(review.Current);
         Plan.Skip skip = Assert.IsType<Plan.Skip>(OnlyDecision(review).Plan);
-        Assert.Equal($@"D:\yaat may still use it: {error.Message}", skip.Reason);
+        Assert.Equal($"{PathResolver.Resolve(repo)} may still use it: {error.Message}", skip.Reason);
         Assert.Equal(new ReviewTotals { Skipped = 1 }, review.Totals());
     }
 

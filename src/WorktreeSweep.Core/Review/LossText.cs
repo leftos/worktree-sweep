@@ -45,23 +45,25 @@ public static class LossText
 
     /// <summary>
     /// The repo a worktree's git dir (<c>{repo}\.git\worktrees\{id}</c>) belongs to; the common dir itself for a bare repo
-    /// (<c>{common}\worktrees\{id}</c>), and <paramref name="gitdir"/> unchanged when it has neither shape. Folder names compare
-    /// case-insensitively.
+    /// (<c>{common}\worktrees\{id}</c>), and the git dir itself when it has neither shape. The git dir is first made absolute
+    /// with its <c>.</c> and <c>..</c> segments removed (<see cref="Path.GetFullPath(string)"/>; nothing on disk is read), so a git
+    /// dir written relative to its worktree yields a plain path. Folder names compare case-insensitively.
     /// </summary>
     /// <param name="gitdir">The worktree's git dir.</param>
     /// <returns>The repo folder.</returns>
     public static string RepoOfGitdir(string gitdir)
     {
         ArgumentNullException.ThrowIfNull(gitdir);
-        string? worktrees = Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(gitdir));
+        string full = Path.GetFullPath(gitdir);
+        string? worktrees = Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(full));
         if (worktrees is null || !NameIs(worktrees, "worktrees"))
         {
-            return gitdir;
+            return full;
         }
         string? common = Path.GetDirectoryName(worktrees);
         if (common is null)
         {
-            return gitdir;
+            return full;
         }
         return NameIs(common, ".git") ? Path.GetDirectoryName(common) ?? common : common;
     }
@@ -104,7 +106,7 @@ public static class LossText
         }
         if (signals.Upstream is { Kind: UpstreamKind.Tracking, Ahead: > 0 } upstream)
         {
-            lost.Add($"{Counted(upstream.Ahead, "commit")} not pushed");
+            lost.Add($"{Counted(upstream.Ahead, "commit", "commits")} not pushed");
         }
         return lost.Count > 0 ? $"{JoinAnd(lost)} will be lost." : null;
     }
@@ -117,7 +119,7 @@ public static class LossText
     private static string? MergeLoss(MergeState? state, string? head, string against) =>
         state switch
         {
-            { Kind: MergeStateKind.Unmerged, Commits: var commits } => $"{Counted(commits, "commit")} not on {against}",
+            { Kind: MergeStateKind.Unmerged, Commits: var commits } => $"{Counted(commits, "commit", "commits")} not on {against}",
             { Kind: MergeStateKind.NoCommits } => "a branch with no commits of its own (it may be new work in progress)",
             { Kind: MergeStateKind.Detached, Contained: false } => $"detached HEAD {ShortHead(head)} and its commits not on {against}",
             _ => null,
@@ -182,11 +184,13 @@ public static class LossText
     /// <returns><c>file</c> or <c>files</c>.</returns>
     private static string Files(int count) => count == 1 ? "file" : "files";
 
-    /// <summary>A count and its noun with an <c>s</c> unless it is one: <c>1 commit</c>, <c>4 commits</c>.</summary>
+    /// <summary>A count and its noun: <c>1 commit</c>, <c>4 commits</c>.</summary>
     /// <param name="count">The count.</param>
-    /// <param name="noun">The singular noun.</param>
+    /// <param name="one">The noun for one.</param>
+    /// <param name="many">The noun for any other count.</param>
     /// <returns>The text.</returns>
-    private static string Counted(int count, string noun) => string.Create(CultureInfo.InvariantCulture, $"{count} {noun}{(count == 1 ? "" : "s")}");
+    internal static string Counted(int count, string one, string many) =>
+        string.Create(CultureInfo.InvariantCulture, $"{count} {(count == 1 ? one : many)}");
 
     /// <summary>The parts joined as <c>a</c>, <c>a and b</c>, <c>a, b and c</c>.</summary>
     /// <param name="parts">The parts; at least one.</param>

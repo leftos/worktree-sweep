@@ -138,6 +138,23 @@ public sealed class LossTextTests
         Assert.Null(LossText.For(Orphan(OrphanKind.Folder, liveGitdir: null)));
     }
 
+    /// <summary>
+    /// A git dir written relative to its worktree (<c>worktree.useRelativePaths</c>) names its repo without <c>..</c> segments in the
+    /// loss text.
+    /// </summary>
+    [Fact]
+    public void LossTextRelativeGitdirNamesPlainRepo()
+    {
+        Loss? loss = LossText.For(Orphan(OrphanKind.Folder, ReportSamples.Under(@"yaat.wt\stray\..\..\yaat\.git\worktrees\stray")));
+
+        Assert.NotNull(loss);
+        Assert.Equal(@"Still registered in D:\yaat; removing leaves a prunable registration there.", loss.Text);
+    }
+
+    /// <summary>A bare-shaped git dir (<c>{common}\worktrees\{id}</c>) belongs to the common dir itself.</summary>
+    [Fact]
+    public void RepoOfGitdirBareShapeIsCommonDir() => Assert.Equal(@"D:\bare.git", LossText.RepoOfGitdir(@"D:\bare.git\worktrees\stray"));
+
     /// <summary>Clean signals with <paramref name="mergeState"/> against <c>main</c>, tracking an upstream with nothing ahead.</summary>
     /// <param name="mergeState">The merge state.</param>
     /// <returns>The signals.</returns>
