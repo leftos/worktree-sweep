@@ -34,6 +34,7 @@ Start here. Plans live in [plans/MAIN.md](./plans/MAIN.md).
 - **Decision**: a pick with its plan and its branch choice, the unit the sweep works through.
 - **Review**: the questions asked after picking and before anything is removed: per pick, what it would lose, a permanent delete, its branch; then one final confirmation.
 - **Caller**: the shell that started worktree-sweep; it is flagged as a locker, never stopped by default.
+- **Start time** (process): the creation time Windows records for a process. The tool keeps the one it read for a caller, parent or locker, and acts on that PID later only while the start time still matches, since Windows reuses a PID once its process exits (**PID reuse**).
 - **Feature marker**: `branch: feat/<name>` in a Linear project's content; every item under it lands on the `feat/<name>` branch instead of `main` (user-level `nextup` §3, "Feature branches").
 - **Feature PR**: the draft pull request from a marker's `feat/<name>` into `main`, opened with the marker and merged with `--rebase` by `/ship` once every issue in the marker's project has landed.
 - **Decision round**: the step before an item's briefs where every open design choice its exploration found is settled, from the docs and code or by asking; for the C# rewrite the orchestrator settles them (owner-delegated).
