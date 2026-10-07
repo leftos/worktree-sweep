@@ -30,8 +30,8 @@ internal static class PathResolver
     {
         try
         {
-            path = LoopbackShare.ToLocalDrive(path, LoopbackShare.LocalHosts()) ?? path;
-            string existing = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+            string local = LoopbackShare.ToLocalDrive(path, LoopbackShare.LocalHosts()) ?? path;
+            string existing = Path.TrimEndingDirectorySeparator(Path.GetFullPath(local));
             var missing = new Stack<string>();
             while (!Path.Exists(existing) && Path.GetDirectoryName(existing) is { } parent)
             {

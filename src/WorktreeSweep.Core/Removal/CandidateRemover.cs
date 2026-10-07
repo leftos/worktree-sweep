@@ -52,7 +52,7 @@ public static class CandidateRemover
         ArgumentNullException.ThrowIfNull(registered);
         if (registered.Record.Locked is not null)
         {
-            _ = GitRunner.Run(registered.Repo, ["worktree", "unlock", registered.Path]);
+            _ = GitRunner.Run(registered.Repo, ["worktree", "unlock", registered.Record.Path]);
         }
     }
 
@@ -70,7 +70,8 @@ public static class CandidateRemover
         {
             return;
         }
-        string[] args = reason.Length == 0 ? ["worktree", "lock", registered.Path] : ["worktree", "lock", "--reason", reason, registered.Path];
+        string worktree = registered.Record.Path;
+        string[] args = reason.Length == 0 ? ["worktree", "lock", worktree] : ["worktree", "lock", "--reason", reason, worktree];
         _ = GitRunner.Run(registered.Repo, args);
     }
 

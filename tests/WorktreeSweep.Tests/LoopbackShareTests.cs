@@ -1,5 +1,8 @@
 using WorktreeSweep.Discovery;
 using WorktreeSweep.Git;
+using WorktreeSweep.Removal;
+using WorktreeSweep.Report;
+using WorktreeSweep.Signals;
 
 namespace WorktreeSweep.Tests;
 
@@ -73,24 +76,124 @@ public sealed class LoopbackShareTests
         string? uncRoot = LoopbackSpelling(fx.Root);
         Assert.SkipWhen(uncRoot is null || !Directory.Exists(uncRoot), $"the loopback admin share of {fx.Root} is not reachable");
         string uncWorktree = Path.Join(uncRoot, "repo.wt", "feat");
-        string config = Path.Join(fx.Root, "gitconfig");
-        File.WriteAllText(config, "[safe]\n\tdirectory = *\n");
-        string? previous = Environment.GetEnvironmentVariable("GIT_CONFIG_GLOBAL");
+        using InheritedEnv trust = TrustEveryDirectory(fx);
+        Fixture.Git(repo, ["worktree", "add", "-q", uncWorktree, "-b", "feat"]);
+
+        DiscoveryResult found = Discoverer.Discover(fx.Root, new VolumeStalls());
+
+        Assert.DoesNotContain(found.Orphans, orphan => Fixture.SamePath(orphan.Path, wt));
+        _ = Assert.Single(found.Registered, pair => Fixture.SamePath(PathResolver.Resolve(pair.Record.Path), wt));
+    }
+
+    /// <summary>
+    /// A registered candidate's path is the drive spelling of a loopback admin share git recorded, while its record keeps git's
+    /// spelling; a share of another host is left as recorded.
+    /// </summary>
+    [Fact]
+    public void RegisteredCandidatePathUsesTheLocalDrive()
+    {
+        RegisteredCandidate loopback = Registered(@"\\localhost\Q$\a\b");
+
+        Assert.Equal(@"Q:\a\b", loopback.Path);
+        Assert.Equal(@"\\localhost\Q$\a\b", loopback.Record.Path);
+        Assert.Equal(@"\\otherhost\Q$\a\b", Registered(@"\\otherhost\Q$\a\b").Path);
+    }
+
+    /// <summary>
+    /// Lifting and putting back the git lock of a worktree git registered through a loopback admin share reaches that worktree: the
+    /// lock is gone after <see cref="CandidateRemover.GitUnlock"/> and back with its reason after <see cref="CandidateRemover.GitRelock"/>.
+    /// </summary>
+    [Fact]
+    public void GitLockReachesAUncRegisteredWorktree()
+    {
+        using var fx = new Fixture();
+        string repo = fx.Repo("repo");
+        string wt = fx.PathTo("repo.wt/feat");
+        string? uncRoot = LoopbackSpelling(fx.Root);
+        Assert.SkipWhen(uncRoot is null || !Directory.Exists(uncRoot), $"the loopback admin share of {fx.Root} is not reachable");
+        string uncWorktree = Path.Join(uncRoot, "repo.wt", "feat");
+        using InheritedEnv trust = TrustEveryDirectory(fx);
+        Fixture.Git(repo, ["worktree", "add", "-q", uncWorktree, "-b", "feat"]);
+        Fixture.Git(repo, ["worktree", "lock", "--reason", "in use", uncWorktree]);
+        RegisteredCandidate candidate = Assert.Single(
+            fx.Scan().Candidates.OfType<RegisteredCandidate>(),
+            registered => Fixture.SamePath(PathResolver.Resolve(registered.Path), wt)
+        );
+
+        CandidateRemover.GitUnlock(candidate);
+        string? afterUnlock = GitLock(repo, wt);
+        CandidateRemover.GitRelock(candidate);
+
+        Assert.Null(afterUnlock);
+        Assert.Equal("in use", GitLock(repo, wt));
+    }
+
+    /// <summary>
+    /// A symbolic link whose target is spelled as a loopback admin share resolves to the drive spelling of its target. A junction
+    /// cannot target a share, so the link is a symbolic one, and the test is skipped where this process may not create one.
+    /// </summary>
+    [Fact]
+    public void ResolveMapsALinkThatTargetsALoopbackShare()
+    {
+        using var fx = new Fixture();
+        string target = fx.PathTo("target");
+        Directory.CreateDirectory(target);
+        string? uncTarget = LoopbackSpelling(target);
+        Assert.SkipWhen(uncTarget is null || !Directory.Exists(uncTarget), $"the loopback admin share of {target} is not reachable");
+        string link = fx.PathTo("link");
         try
         {
-            Environment.SetEnvironmentVariable("GIT_CONFIG_GLOBAL", config);
-            Fixture.Git(repo, ["worktree", "add", "-q", uncWorktree, "-b", "feat"]);
-
-            DiscoveryResult found = Discoverer.Discover(fx.Root, new VolumeStalls());
-
-            Assert.DoesNotContain(found.Orphans, orphan => Fixture.SamePath(orphan.Path, wt));
-            _ = Assert.Single(found.Registered, pair => Fixture.SamePath(PathResolver.Resolve(pair.Record.Path), wt));
+            _ = Directory.CreateSymbolicLink(link, uncTarget!);
         }
-        finally
+        catch (Exception error) when (error is UnauthorizedAccessException or IOException)
         {
-            Environment.SetEnvironmentVariable("GIT_CONFIG_GLOBAL", previous);
+            Assert.Skip($"cannot create a symbolic link to {uncTarget}: {error.Message}");
         }
+
+        Assert.Equal(PathResolver.Resolve(target), PathResolver.Resolve(link), ignoreCase: true);
     }
+
+    /// <summary>A registered candidate whose record has <paramref name="path"/>, with signals no test here reads.</summary>
+    /// <param name="path">The record's path.</param>
+    /// <returns>The candidate.</returns>
+    private static RegisteredCandidate Registered(string path) =>
+        new()
+        {
+            Record = new WorktreeRecord { Path = path, Branch = "feat" },
+            Repo = @"Q:\a",
+            Signals = new WorktreeSignals
+            {
+                MergeState = MergeState.Ancestor,
+                MergeStateAgainst = "main",
+                Dirty = new Dirty(),
+                Upstream = Upstream.None,
+            },
+        };
+
+    /// <summary>
+    /// Points git's global config at a file under the fixture that trusts every directory, until disposed: git refuses a repository
+    /// whose loopback-share spelling it reads as another owner's.
+    /// </summary>
+    /// <param name="fx">The fixture.</param>
+    /// <returns>The environment change.</returns>
+    private static InheritedEnv TrustEveryDirectory(Fixture fx)
+    {
+        string config = Path.Join(fx.Root, "gitconfig");
+        File.WriteAllText(config, "[safe]\n\tdirectory = *\n");
+        return new InheritedEnv(new Dictionary<string, string> { ["GIT_CONFIG_GLOBAL"] = config });
+    }
+
+    /// <summary>The git lock reason <c>git worktree list --porcelain</c> shows for the worktree at <paramref name="wt"/>.</summary>
+    /// <param name="repo">The repo.</param>
+    /// <param name="wt">The worktree's drive path.</param>
+    /// <returns>The reason, <c>""</c> when locked without one, or <see langword="null"/> when not locked.</returns>
+    private static string? GitLock(string repo, string wt) =>
+        Assert
+            .Single(
+                Discoverer.ParseWorktreePorcelain(Fixture.Git(repo, ["worktree", "list", "--porcelain"])),
+                record => Fixture.SamePath(PathResolver.Resolve(record.Path), wt)
+            )
+            .Locked;
 
     /// <summary>The loopback admin-share spelling of a local path, or <see langword="null"/> when it has no drive letter.</summary>
     /// <param name="path">A local path.</param>
