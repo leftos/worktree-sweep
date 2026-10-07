@@ -6,7 +6,9 @@ Part of the agent path, see [agent-path.md](../../agent-path.md) (ruling 10, "Ma
 
 - Root: `D:\worktree-sweep` (the main checkout). First: `git switch -c feat/released-first` from an up-to-date `main`.
 - Files: `src/report.rs` (field, ordering, FLAGS), `src/lib.rs` (the scan fills the field), `src/pick.rs` (defaults), `src/agent.rs` (the marker type), and the `RegisteredCandidate` constructors in tests and helpers. As of `main` 001a4a4 they are at report.rs:485, pick.rs:243, remove.rs:797, agent.rs:580, lib.rs:75 and lib.rs:310 (`build_candidate`).
-- After 4b (checked on 001a4a4): `agent::MARKER_FILE` (agent.rs:27) is pub. The writer is `write_marker` (agent.rs:520), which serializes a private borrowed `struct Marker<'a> { released_at: i64, reason, holders }` (agent.rs:513). Turn it into one owned `pub` type, `Released { released_at: i64, reason: Reason, holders: Vec<ProcessRef> }`, that derives `Serialize` and `Deserialize`. Use it for both the write and the read, so the format lives in one place. Wherever `Reason` and `ProcessRef` also need `Deserialize`, derive it.
+- After 4b (checked on 001a4a4): `agent::MARKER_FILE` (agent.rs:27) is pub. The writer is `write_marker` (agent.rs:520), which serializes a private borrowed `struct Marker<'a> { released_at: i64, reason, holders }` (agent.rs:513).
+
+  Turn it into one owned `pub` type, `Released { released_at: i64, reason: Reason, holders: Vec<ProcessRef> }`, that derives `Serialize` and `Deserialize`. Use it for both the write and the read, so the format lives in one place. Wherever `Reason` and `ProcessRef` also need `Deserialize`, derive it.
 
 ## Measured facts (code on `main` before 4b; re-check after 4b lands)
 

@@ -89,7 +89,9 @@ linear: worktree-sweep
 
 ## Landing
 
-- A multi-file item (from a brief): commit on `<slug>` (the prek hook runs fmt and clippy), `git push -u origin <slug>`, `gh pr create --base <landOn>` with the agent-authored marker line as the body's first line, then, from the main checkout, `gh pr merge <N> --rebase` and `git pull --ff-only` on `<landOn>`. An item built in a worktree then has its worktree and branch removed per the user-level `nextup` §4 step 6 (`git cherry` check, `git worktree remove`, `git branch -D <slug>`) and `git push origin --delete <slug>`; `--delete-branch` cannot delete a branch a worktree has checked out. Merge PRs yourself as you go. `feat/*` names belong to feature branches alone.
+- A multi-file item (from a brief): commit on `<slug>` (the prek hook runs fmt and clippy), `git push -u origin <slug>`, `gh pr create --base <landOn>` with the agent-authored marker line as the body's first line, then, from the main checkout, `gh pr merge <N> --rebase` and `git pull --ff-only` on `<landOn>`.
+
+  An item built in a worktree then has its worktree and branch removed per the user-level `nextup` §4 step 6 (`git cherry` check, `git worktree remove`, `git branch -D <slug>`) and `git push origin --delete <slug>`; `--delete-branch` cannot delete a branch a worktree has checked out. Merge PRs yourself as you go. `feat/*` names belong to feature branches alone.
 - An item under a feature marker (user-level `nextup` §3, "Feature branches") has `landOn` = `feat/<name>`, so its PR targets the feature branch; the feature PR into `main` merges only through `/ship` on the feature branch, and the item is **land**ed with the note `on feat/<name>, ships with #N`. The repo has no CI, so the feature PR's checks are the local gates.
 - A small change (docs, plan, config, one-line fix): commit on `main` and `git push`. A session running from a worktree offers `/ship` instead of pushing (user-level `nextup`, "A worktree session offers a ship instead of a push").
 - Commit messages: ≤4-char type tag, imperative, ≤72-char subject, the session's attribution trailers.

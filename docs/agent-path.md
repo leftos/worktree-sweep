@@ -50,7 +50,9 @@ What surprised us: a running exe or loaded DLL doesn't block a recycle; a delete
 
 Same-user process census (Toolhelp + token user, ~20 ms) → PEB cwd → per-process disk handles, excluding worktree-sweep itself. That covers every kind that blocks a recycle, in about 0.35–0.65 s. An optional image-path check flags an exe running from inside, which matters only for a permanent delete. `FileProcessIdsUsingFile` on the root alone names holders we can't open.
 
-Sketch of `src/holders.rs`: `find_holders(folder, exclude) -> HolderReport { holders: Vec<Holder { pid, exe, image, holds: Vec<Hold> }>, uninspectable }`, where `Hold` is `CurrentFolder`, `OpenHandle { path }` or `Unnamed`; a pure `collect` (reusing `unlock::matches_locked_path`) and a pure `stoppable(holders, allowlist)`. The red tests: a pwsh child with its cwd in a temp subfolder, and a pwsh child holding a file there with share none, are both found by `find_holders`; the folder is canonicalized first, so 8.3 temp paths match.
+Sketch of `src/holders.rs`: `find_holders(folder, exclude) -> HolderReport { holders: Vec<Holder { pid, exe, image, holds: Vec<Hold> }>, uninspectable }`, where `Hold` is `CurrentFolder`, `OpenHandle { path }` or `Unnamed`; a pure `collect` (reusing `unlock::matches_locked_path`) and a pure `stoppable(holders, allowlist)`.
+
+The red tests: a pwsh child with its cwd in a temp subfolder, and a pwsh child holding a file there with share none, are both found by `find_holders`; the folder is canonicalized first, so 8.3 temp paths match.
 
 ## Open decisions
 

@@ -28,7 +28,9 @@ Decisions from the interview:
 ## Tooling (measured)
 
 - **Rust / git:** rustc 1.98.1; git 2.55 (`merge-tree --write-tree` is available).
-- **handle.exe:** Sysinternals v5.0 on PATH (winget). Flags: `-nobanner -v` gives CSV output, and `-c <handle> -p <pid> -y` closes one handle. With a name argument the CSV has 5 columns (`Process,PID,Type,Handle,Name`). With none, it dumps every handle on the system in 7 columns (`Process,PID,User,Handle,Type,Share Flags,Name`), both `File` and `Section` rows. Names carry a trailing space and are unquoted. Measured on this machine: an elevated unfiltered dump takes 1.4 s (about 19,500 rows). Unelevated, it takes about 141 s and sees only the caller's own processes.
+- **handle.exe:** Sysinternals v5.0 on PATH (winget). Flags: `-nobanner -v` gives CSV output, and `-c <handle> -p <pid> -y` closes one handle. With a name argument the CSV has 5 columns (`Process,PID,Type,Handle,Name`).
+
+  With none, it dumps every handle on the system in 7 columns (`Process,PID,User,Handle,Type,Share Flags,Name`), both `File` and `Section` rows. Names carry a trailing space and are unquoted. Measured on this machine: an elevated unfiltered dump takes 1.4 s (about 19,500 rows). Unelevated, it takes about 141 s and sees only the caller's own processes.
 - **sudo:** Windows `sudo.exe` in **Inline** mode, so an elevated child shares the console and can prompt the user directly.
 
 ## Design
