@@ -817,7 +817,7 @@ mod tests {
         sweeper.locked_until_unlock.clear();
         sweeper.always_locked.clear();
         let _ = sweep(4, &mut sweeper);
-        assert!(sweeper.offers.is_empty());
+        assert_eq!(sweeper.offers, Vec::<Vec<PathBuf>>::new());
         assert_eq!(sweeper.finished, vec![0, 1, 2]);
     }
 
