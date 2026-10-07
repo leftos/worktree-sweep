@@ -30,11 +30,8 @@ public sealed record SweepProcess(string? ExePath, int? CallerPid, ulong? Caller
     /// <param name="ownCreated">This process's creation time, or <see langword="null"/> when it cannot be read.</param>
     /// <returns><see langword="null"/> only when both times are known and the parent's is later than this process's own, so its PID
     /// has been reused; <paramref name="parentPid"/> otherwise, an unknown time being no proof of reuse.</returns>
-    internal static int? KeepParent(int parentPid, ulong? parentCreated, ulong? ownCreated)
-    {
-        bool reused = parentCreated is ulong parent && ownCreated is ulong own && parent > own;
-        return reused ? null : parentPid;
-    }
+    internal static int? KeepParent(int parentPid, ulong? parentCreated, ulong? ownCreated) =>
+        ProcessTable.IsReused(parentCreated, ownCreated) ? null : parentPid;
 
     /// <summary>The PID of the process that started this one and its creation time, unless a newer process has provably taken
     /// its PID.</summary>

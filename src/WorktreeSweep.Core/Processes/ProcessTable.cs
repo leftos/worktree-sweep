@@ -42,7 +42,10 @@ public static class ProcessTable
     /// <summary>
     /// The PID and, when one of its ancestors is a <c>sudo.exe</c>, every ancestor up to and including the nearest one: the
     /// elevated side's own console and the <c>sudo.exe</c> that started it. Only the PID when no <c>sudo.exe</c> is among the
-    /// parents, or when the walk meets a missing parent, a cycle, or a parent started after its child (a reused PID) first.
+    /// parents, or when the walk meets a missing parent, a cycle, or a parent started after its child (a reused PID) first. This
+    /// differs from <c>HolderFinder.Ancestors</c>, which keeps a link only on proof that the parent is the older one because it
+    /// claims an ancestry: a walk that only excludes PIDs keeps a link on every absence of proof of reuse, an unknown time
+    /// included, so it never excludes a PID on a guess.
     /// </summary>
     /// <param name="own">The PID the walk starts from.</param>
     /// <param name="table">The process table.</param>
@@ -54,30 +57,35 @@ public static class ProcessTable
         ArgumentNullException.ThrowIfNull(startedAt);
         var chain = new HashSet<int> { own };
         int current = own;
+        ulong? currentStarted = startedAt(own);
         while (
             table.TryGetValue(current, out ProcessEntry? entry)
             && table.TryGetValue(entry.Parent, out ProcessEntry? parent)
-            && !StartedAfter(entry.Parent, current, startedAt)
             && chain.Add(entry.Parent)
         )
         {
+            ulong? parentStarted = startedAt(entry.Parent);
+            if (IsReused(parentStarted, currentStarted))
+            {
+                return new HashSet<int> { own };
+            }
             if (parent.Exe.Equals("sudo.exe", StringComparison.OrdinalIgnoreCase))
             {
                 return chain;
             }
             current = entry.Parent;
+            currentStarted = parentStarted;
         }
         return new HashSet<int> { own };
     }
 
-    /// <summary>Whether the parent's known creation time is later than its child's, so the parent's PID has been reused by
-    /// another process.</summary>
-    /// <param name="parent">The parent's PID.</param>
-    /// <param name="child">The child's PID.</param>
-    /// <param name="startedAt">A process's creation time by PID, or <see langword="null"/> when it cannot be read.</param>
+    /// <summary>Whether a parent's known creation time is later than its child's, so the parent's PID has been reused by another
+    /// process and no longer names the parent.</summary>
+    /// <param name="parentStarted">The parent's creation time, or <see langword="null"/> when it cannot be read.</param>
+    /// <param name="childStarted">The child's creation time, or <see langword="null"/> when it cannot be read.</param>
     /// <returns><see langword="true"/> only when both times are known and the parent's is later.</returns>
-    private static bool StartedAfter(int parent, int child, Func<int, ulong?> startedAt) =>
-        startedAt(parent) is ulong parentStarted && startedAt(child) is ulong childStarted && parentStarted > childStarted;
+    internal static bool IsReused(ulong? parentStarted, ulong? childStarted) =>
+        parentStarted is ulong parent && childStarted is ulong child && parent > child;
 
     /// <summary>
     /// The PIDs the unlock flow never offers to stop: <see cref="ParentChain"/> of <paramref name="own"/>, plus the unelevated

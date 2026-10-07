@@ -166,6 +166,25 @@ public sealed class UnlockOfferTests
         Assert.DoesNotContain("worktree-sweep.exe instead", output, StringComparison.Ordinal);
     }
 
+    /// <summary>A caller whose creation time is known is passed to sudo as <c>--caller-started</c>.</summary>
+    [Fact]
+    public void OfferPassesTheCallersCreationTime()
+    {
+        var sudo = new FakeSudo(SudoMode.Inline, 0);
+        using var writer = new StringWriter { NewLine = "\n" };
+        using var reader = new StringReader("y\n");
+        var offer = new UnlockOffer(reader, writer, sudo, new SweepProcess(Exe, CallerPid, 133700000000000000, SweepPid));
+
+        UnlockOutcome outcome = offer.Offer(Paths);
+
+        Assert.Equal(UnlockOutcome.Unlocked, outcome);
+        IReadOnlyList<string> run = Assert.Single(sudo.Runs);
+        Assert.Equal<string>(
+            [Exe, "unlock", "--caller-pid", "100", "--caller-started", "133700000000000000", "--sweep-pid", "200", @"D:\a.wt\x", @"D:\b.wt\y"],
+            run
+        );
+    }
+
     /// <summary>The bound offer fits the sweep's offer callback.</summary>
     [Fact]
     public void OfferFitsTheCallback()

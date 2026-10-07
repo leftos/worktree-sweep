@@ -21,6 +21,9 @@ public sealed class ElevatedSession(TextReader input, TextWriter output, IHandle
     /// <summary>The actions the prompt offers, in the order it numbers them.</summary>
     private static readonly LockerAction[] Actions = [LockerAction.Stop, LockerAction.CloseHandles, LockerAction.Skip, LockerAction.Done];
 
+    /// <summary>The caller verdict for each locker PID offered so far, so a PID is judged, and its warning written, once.</summary>
+    private readonly Dictionary<int, bool> callerVerdicts = [];
+
     /// <summary>Runs the session, scanning, offering and acting until nothing holds the files or the user ends it.</summary>
     /// <param name="paths">The folders whose open handles are cleared.</param>
     /// <param name="callerPid">The process that started the unelevated run, usually the user's shell, whose stopping is not the
@@ -87,15 +90,33 @@ public sealed class ElevatedSession(TextReader input, TextWriter output, IHandle
     }
 
     /// <summary>
-    /// Whether the locker is the caller: the PIDs must match, and when the caller's creation time is known so must the locker's.
-    /// A known different time means the PID was reused by another process, and the locker is an ordinary one; an unreadable time
-    /// keeps it the caller, whose default of Skip is the safe one.
+    /// Whether the locker is the caller, judged once per PID per session so a PID offered again in a later round reuses the
+    /// verdict and its warning is written once.
     /// </summary>
     /// <param name="pid">The locker's PID.</param>
     /// <param name="callerPid">The PID of the process that started the unelevated run, or <see langword="null"/>.</param>
     /// <param name="callerStarted">That process's creation time, or <see langword="null"/> when it is not known.</param>
     /// <returns><see langword="true"/> when the locker is the process that started the unelevated run.</returns>
     private bool IsCaller(int pid, int? callerPid, ulong? callerStarted)
+    {
+        if (!callerVerdicts.TryGetValue(pid, out bool verdict))
+        {
+            verdict = JudgeCaller(pid, callerPid, callerStarted);
+            callerVerdicts[pid] = verdict;
+        }
+        return verdict;
+    }
+
+    /// <summary>
+    /// Judges one locker: the PIDs must match, and when the caller's creation time is known so must the locker's. A known
+    /// different time means the PID was reused by another process, and the locker is an ordinary one, with a warning; an
+    /// unreadable time keeps it the caller, whose default of Skip is the safe one.
+    /// </summary>
+    /// <param name="pid">The locker's PID.</param>
+    /// <param name="callerPid">The PID of the process that started the unelevated run, or <see langword="null"/>.</param>
+    /// <param name="callerStarted">That process's creation time, or <see langword="null"/> when it is not known.</param>
+    /// <returns><see langword="true"/> when the locker is the process that started the unelevated run.</returns>
+    private bool JudgeCaller(int pid, int? callerPid, ulong? callerStarted)
     {
         if (callerPid != pid)
         {
