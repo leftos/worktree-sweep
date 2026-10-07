@@ -36,6 +36,7 @@ public sealed class ElevatedSessionTests
     {
         StringWriter output = Writer();
         var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
+        processes.StartedTimes[642] = 1000;
         var session = new ElevatedSession(new StringReader("\n"), output, new FakeHandleExe(OneLocker(), ""), processes);
 
         int exit = session.Run([Locked], null, null, null);
@@ -142,6 +143,7 @@ public sealed class ElevatedSessionTests
     {
         StringWriter output = Writer();
         var processes = new ScriptedProcessControl(Running(("code.exe", 200), ("pwsh.exe", 642)));
+        processes.StartedTimes[200] = 1000;
         var session = new ElevatedSession(
             new StringReader("\n4\n"),
             output,
@@ -199,7 +201,9 @@ public sealed class ElevatedSessionTests
     {
         StringWriter output = Writer();
         var handleExe = new FakeHandleExe(TwoHandles(), "");
-        var session = new ElevatedSession(new StringReader("2\ny\n"), output, handleExe, new ScriptedProcessControl(Running(("pwsh.exe", 642))));
+        var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
+        processes.StartedTimes[642] = 1000;
+        var session = new ElevatedSession(new StringReader("2\ny\n"), output, handleExe, processes);
 
         int exit = session.Run([Locked], null, null, null);
 
@@ -259,6 +263,7 @@ public sealed class ElevatedSessionTests
     {
         StringWriter output = Writer();
         var processes = new ScriptedProcessControl(Running(("code.exe", 800), ("worktree-sweep.exe", 900)));
+        processes.StartedTimes[800] = 1000;
         var session = new ElevatedSession(new StringReader("\n"), output, new FakeHandleExe(ExcludedAndKept(), ""), processes);
 
         int exit = session.Run([Locked], callerPid: null, callerStarted: null, sweepPid: 900);
@@ -301,6 +306,7 @@ public sealed class ElevatedSessionTests
     {
         StringWriter output = Writer();
         var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642))) { StopThrows = new Win32Exception("cannot open process 642") };
+        processes.StartedTimes[642] = 1000;
         var session = new ElevatedSession(new StringReader("\n"), output, new FakeHandleExe(OneLocker()), processes);
 
         int exit = session.Run([Locked], null, null, null);
@@ -319,6 +325,7 @@ public sealed class ElevatedSessionTests
         {
             StopThrows = new InvalidOperationException("process 642 is now other.exe, not pwsh.exe; not stopped"),
         };
+        processes.StartedTimes[642] = 1000;
         var session = new ElevatedSession(new StringReader("\n"), output, new FakeHandleExe(OneLocker()), processes);
 
         int exit = session.Run([Locked], null, null, null);
@@ -339,7 +346,9 @@ public sealed class ElevatedSessionTests
         StringWriter output = Writer();
         var handleExe = new FakeHandleExe(TwoHandles(), "");
         handleExe.Failing.Add(0x58);
-        var session = new ElevatedSession(new StringReader("2\ny\n"), output, handleExe, new ScriptedProcessControl(Running(("pwsh.exe", 642))));
+        var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
+        processes.StartedTimes[642] = 1000;
+        var session = new ElevatedSession(new StringReader("2\ny\n"), output, handleExe, processes);
 
         int exit = session.Run([Locked], null, null, null);
 
@@ -354,7 +363,9 @@ public sealed class ElevatedSessionTests
     {
         StringWriter output = Writer();
         var handleExe = new FakeHandleExe(TwoHandles()) { CloseThrows = new UnlockException("cannot run handle.exe: it went missing") };
-        var session = new ElevatedSession(new StringReader("2\ny\n"), output, handleExe, new ScriptedProcessControl(Running(("pwsh.exe", 642))));
+        var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
+        processes.StartedTimes[642] = 1000;
+        var session = new ElevatedSession(new StringReader("2\ny\n"), output, handleExe, processes);
 
         int exit = session.Run([Locked], null, null, null);
 
@@ -372,7 +383,9 @@ public sealed class ElevatedSessionTests
         {
             ProcessDump = Dump(("pwsh.exe", 642, "File", 0x1A0, @"D:\elsewhere\a.txt"), ("pwsh.exe", 642, "File", 0x58, @"D:\a.wt\x\b.txt")),
         };
-        var session = new ElevatedSession(new StringReader("2\ny\n"), output, handleExe, new ScriptedProcessControl(Running(("pwsh.exe", 642))));
+        var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
+        processes.StartedTimes[642] = 1000;
+        var session = new ElevatedSession(new StringReader("2\ny\n"), output, handleExe, processes);
 
         int exit = session.Run([Locked], null, null, null);
 
@@ -447,23 +460,28 @@ public sealed class ElevatedSessionTests
         Assert.Equal<ulong?>(1000, stop.Started);
     }
 
-    /// <summary>A locker whose start time could not be read at the scan is stopped by image name, as before.</summary>
+    /// <summary>A locker whose start time could not be read at the scan is not acted on: its PID cannot be confirmed.</summary>
     [Fact]
-    public void LockerWithAnUnreadableScanTimeIsStoppedByName()
+    public void LockerWithAnUnreadableScanTimeIsSkipped()
     {
         StringWriter output = Writer();
         var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
-        var session = new ElevatedSession(new StringReader("\n"), output, new FakeHandleExe(OneLocker(), ""), processes);
+        var session = new ElevatedSession(new StringReader("\n"), output, new FakeHandleExe(OneLocker()), processes);
 
         int exit = session.Run([Locked], null, null, null);
 
-        Assert.Equal(UnlockExit.AllClear, exit);
-        Assert.Null(Assert.Single(processes.Stops).Started);
+        Assert.Equal(UnlockExit.NothingDone, exit);
+        Assert.Empty(processes.Stopped);
+        Assert.Contains(
+            "pwsh.exe (pid 642) could not be confirmed as the process the scan saw; skipped.\n",
+            output.ToString(),
+            StringComparison.Ordinal
+        );
     }
 
-    /// <summary>A locker whose start time can no longer be read at the re-check counts as exited, so nothing is acted on.</summary>
+    /// <summary>A locker whose start time can no longer be read at the re-check cannot be confirmed, so nothing is acted on.</summary>
     [Fact]
-    public void LockerWhoseStartTimeBecomesUnreadableIsSkippedAsExited()
+    public void LockerWhoseStartTimeBecomesUnreadableIsSkippedAsUnconfirmed()
     {
         StringWriter output = Writer();
         var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
@@ -474,7 +492,11 @@ public sealed class ElevatedSessionTests
 
         Assert.Equal(UnlockExit.NothingDone, exit);
         Assert.Empty(processes.Stopped);
-        Assert.Contains("pwsh.exe (pid 642) has exited; skipped.\n", output.ToString(), StringComparison.Ordinal);
+        Assert.Contains(
+            "pwsh.exe (pid 642) could not be confirmed as the process the scan saw; skipped.\n",
+            output.ToString(),
+            StringComparison.Ordinal
+        );
     }
 
     /// <summary>The start times <see cref="ScriptedProcessControl.StartedAt"/> answers with, in turn, the last repeating.</summary>
