@@ -157,7 +157,7 @@ public sealed class AgentRemoverTests
         Assert.Equal(2, recycles);
         Assert.Equal([cargo], stopped);
         Assert.Equal([new ProcessRef { Pid = 4242, Exe = "cargo.exe" }], report.Stopped);
-        Assert.Equal([cargo], report.Holders);
+        Assert.Empty(report.Holders);
         Assert.True(report.BranchDeleted, string.Join("; ", report.Notes));
         Assert.DoesNotContain("feat", WorktreeList(repo), StringComparison.Ordinal);
     }
@@ -245,6 +245,92 @@ public sealed class AgentRemoverTests
 
         Assert.Equal(RemoveStatus.Released, report.Status);
         Assert.Contains("locked held by test", WorktreeList(repo), StringComparison.Ordinal);
+    }
+
+    /// <summary>A holder the run stopped leaves the report and the marker; a holder that could not be stopped stays in both.</summary>
+    [Fact]
+    public void StoppedHoldersAreNotReportedAsHolders()
+    {
+        using var fx = new Fixture();
+        (_, string worktree) = RepoWithWorktree(fx, @"x.wt\feat", "feat");
+        string admin = Discoverer.ReadGitdirFile(worktree) ?? throw new InvalidOperationException($"{worktree} has no admin dir");
+        var cargo = new Holder(4242, "cargo.exe", null, 0, null, [new Hold.OpenHandle(Path.Join(worktree, "README.md"))]);
+        var code = new Holder(99, "code.exe", null, 0, null, [new Hold.OpenHandle(Path.Join(worktree, "README.md"))]);
+        var stopped = new List<Holder>();
+
+        RemoveReport report = AgentRemover.Run(
+            worktree,
+            new AgentOptions(Force: false, StopBuildServers: true),
+            Seams(AlwaysLocked, (_, _) => new HolderReport([cargo, code], []), stopped.Add) with
+            {
+                StillSame = _ => true,
+            }
+        );
+
+        Assert.Equal(RemoveStatus.Released, report.Status);
+        Assert.Equal(Reason.Locked, report.Reason);
+        Assert.Equal([cargo], stopped);
+        Assert.Equal([new ProcessRef { Pid = 4242, Exe = "cargo.exe" }], report.Stopped);
+        Assert.Equal([code], report.Holders);
+        Released? marker = ReleasedMarker.Read(admin);
+        Assert.NotNull(marker);
+        Assert.Equal([new ProcessRef { Pid = 99, Exe = "code.exe" }], marker.Holders);
+    }
+
+    /// <summary>A recycle failure that is not a lock puts back the git lock <c>--force</c> lifted before it leaves the run.</summary>
+    [Fact]
+    public void RecycleFailureRestoresTheGitLock()
+    {
+        using var fx = new Fixture();
+        (string repo, string worktree) = RepoWithWorktree(fx, @"x.wt\feat", "feat");
+        _ = Fixture.Git(repo, ["worktree", "lock", "--reason", "held by test", worktree]);
+        var failure = new IOException("disk on fire");
+
+        IOException error = Assert.Throws<IOException>(() =>
+        {
+            _ = AgentRemover.Run(worktree, new AgentOptions(Force: true, StopBuildServers: false), Seams(_ => throw failure, NoHolders, NeverStop));
+        });
+
+        Assert.Same(failure, error);
+        Assert.Contains("locked held by test", WorktreeList(repo), StringComparison.Ordinal);
+    }
+
+    /// <summary>A recycle failure on the retry names the processes the run stopped before it failed.</summary>
+    [Fact]
+    public void RecycleFailureOnTheRetryNamesTheStoppedProcesses()
+    {
+        using var fx = new Fixture();
+        (_, string worktree) = RepoWithWorktree(fx, @"x.wt\feat", "feat");
+        var cargo = new Holder(4242, "cargo.exe", null, 0, null, [new Hold.OpenHandle(Path.Join(worktree, "README.md"))]);
+        var failure = new IOException("disk on fire");
+        int recycles = 0;
+        void Recycle(string path)
+        {
+            recycles++;
+            if (recycles == 1)
+            {
+                throw new LockedException(path, firstLockedFile: null);
+            }
+            throw failure;
+        }
+
+        IOException error = Assert.Throws<IOException>(() =>
+        {
+            _ = AgentRemover.Run(
+                worktree,
+                new AgentOptions(Force: false, StopBuildServers: true),
+                Seams(Recycle, (_, _) => new HolderReport([cargo], []), _ => { }) with
+                {
+                    StillSame = _ => true,
+                }
+            );
+        });
+
+        Assert.Equal(2, recycles);
+        Assert.Equal("disk on fire; stopped before the failure: pid 4242 (cargo.exe)", error.Message);
+        IOException inner = Assert.IsType<IOException>(error.InnerException);
+        Assert.Same(failure, inner);
+        Assert.Equal("disk on fire", inner.Message);
     }
 
     /// <summary>A report with every field set serialises to the spec's fields, in order; a refused report writes its absent fields as null.</summary>

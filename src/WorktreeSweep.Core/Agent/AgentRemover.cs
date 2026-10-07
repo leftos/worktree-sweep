@@ -137,17 +137,30 @@ public static class AgentRemover
         {
             CandidateRemover.GitUnlock(candidate);
         }
-        switch (RecycleWithTimeout(candidate.Path, seams))
+        try
         {
-            case Recycled.TimedOut:
-                Release(draft, candidate, Reason.ShellTimeout);
-                RestoreGitLock(candidate, options, draft);
-                return;
-            case Recycled.Locked when !RetryLocked(candidate, options, seams, draft):
-                RestoreGitLock(candidate, options, draft);
-                return;
-            default:
-                break;
+            switch (RecycleWithTimeout(candidate.Path, seams))
+            {
+                case Recycled.TimedOut:
+                    Release(draft, candidate, Reason.ShellTimeout);
+                    RestoreGitLock(candidate, options, draft);
+                    return;
+                case Recycled.Locked when !RetryLocked(candidate, options, seams, draft):
+                    RestoreGitLock(candidate, options, draft);
+                    return;
+                default:
+                    break;
+            }
+        }
+        catch (Exception error) when (error is not LockedException)
+        {
+            RestoreGitLock(candidate, options, draft);
+            if (draft.Stopped.Count == 0)
+            {
+                throw;
+            }
+            string stopped = string.Join(", ", draft.Stopped.Select(process => $"pid {process.Pid} ({process.Exe})"));
+            throw new IOException($"{error.Message}; stopped before the failure: {stopped}", error);
         }
         FinishRemoved(candidate, draft);
     }
@@ -238,8 +251,9 @@ public static class AgentRemover
         {
             StopBuildServers(scan, seams, draft);
         }
-        Reason reason = LockedReason.For(scan);
-        draft.TakeScan(scan);
+        HolderReport remaining = WithoutStopped(scan, draft);
+        Reason reason = LockedReason.For(remaining);
+        draft.TakeScan(remaining);
         switch (RecycleWithTimeout(candidate.Path, seams))
         {
             case Recycled.Done:
@@ -274,6 +288,15 @@ public static class AgentRemover
             }
         }
     }
+
+    /// <summary>The scan without the holders this run stopped, which no longer hold the folder; the same scan when none was stopped.</summary>
+    private static HolderReport WithoutStopped(HolderReport scan, Draft draft) =>
+        draft.Stopped.Count == 0
+            ? scan
+            : new HolderReport(
+                [.. scan.Holders.Where(holder => !draft.Stopped.Any(stopped => stopped.Pid == holder.Pid && stopped.Exe == holder.Exe))],
+                scan.MayHold
+            );
 
     /// <summary>Marks the report released and writes the marker; a marker that cannot be written is a note.</summary>
     private static void Release(Draft draft, RegisteredCandidate candidate, Reason reason)

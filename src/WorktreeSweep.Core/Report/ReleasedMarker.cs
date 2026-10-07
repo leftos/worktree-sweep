@@ -124,6 +124,7 @@ public static class ReleasedMarker
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
+            DeleteTemp(temp);
             throw new IOException($"cannot write {temp}: {error.Message}", error);
         }
         try
@@ -132,7 +133,21 @@ public static class ReleasedMarker
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
+            DeleteTemp(temp);
             throw new IOException($"cannot rename {temp} to {target}: {error.Message}", error);
+        }
+    }
+
+    /// <summary>Deletes the temporary file a failed write left behind; one that cannot be deleted is a trace warning.</summary>
+    private static void DeleteTemp(string temp)
+    {
+        try
+        {
+            File.Delete(temp);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            Trace.TraceWarning($"cannot delete {temp}: {error.Message}");
         }
     }
 
