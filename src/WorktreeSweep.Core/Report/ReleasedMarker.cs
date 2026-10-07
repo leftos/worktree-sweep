@@ -38,7 +38,10 @@ public static class ReleasedMarker
     /// <c>gitdir</c> (<c>worktree.useRelativePaths</c>) is resolved against the entry.
     /// </summary>
     /// <param name="commonDir">The repo's common git dir (<c>git rev-parse --git-common-dir</c>); <see langword="null"/> when unknown.</param>
-    /// <param name="worktree">The worktree folder; compared after <see cref="Path.GetFullPath(string)"/>, so <c>.</c> and <c>..</c> fold.</param>
+    /// <param name="worktree">
+    /// The worktree folder; compared after <see cref="PathResolver.Resolve"/>, so any spelling of the folder (<c>.</c> and <c>..</c>
+    /// folded, a subst drive, an 8.3 name, a <c>\\?\</c> prefix and a junction included) matches.
+    /// </param>
     /// <returns>The admin dir; <see langword="null"/> when none is found.</returns>
     /// <exception cref="ArgumentException"><paramref name="commonDir"/> is not a full path, as git prints it relative to where it ran.</exception>
     public static string? AdminDir(string? commonDir, string worktree)
@@ -53,7 +56,7 @@ public static class ReleasedMarker
         {
             return admin;
         }
-        string wanted = Discoverer.PathKey(Path.GetFullPath(worktree));
+        string wanted = Discoverer.PathKey(PathResolver.Resolve(worktree));
         return AdminEntries(Path.Join(commonDir, "worktrees")).FirstOrDefault(entry => PointsAt(entry, wanted));
     }
 
@@ -129,6 +132,6 @@ public static class ReleasedMarker
         string target = Discoverer.FromGitPath(text.Trim());
         string dotGit = Path.GetFullPath(Path.IsPathFullyQualified(target) ? target : Path.Join(entry, target));
         string? worktree = Path.GetDirectoryName(dotGit);
-        return worktree is not null && string.Equals(Discoverer.PathKey(worktree), wanted, StringComparison.Ordinal);
+        return worktree is not null && string.Equals(Discoverer.PathKey(PathResolver.Resolve(worktree)), wanted, StringComparison.Ordinal);
     }
 }

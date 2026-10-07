@@ -169,8 +169,9 @@ public sealed class ReportTableTests
     public void AgeSaturatesAnOverflowingGap() => Assert.Equal("292471208677y", ReportTable.Age(long.MinValue, Now));
 
     /// <summary>
-    /// A path under the root shows relative to it, compared with case folded and either separator; the root itself, a path elsewhere
-    /// and a sibling sharing the root's name as a prefix show whole.
+    /// A path under the root shows relative to it, the two compared resolved and case folded; the root itself, a path elsewhere and
+    /// a sibling sharing the root's name as a prefix show whole. The relative part is the resolved spelling, so a path given with
+    /// forward slashes shows backslashes.
     /// </summary>
     /// <param name="path">The path.</param>
     /// <param name="root">The root.</param>
@@ -179,9 +180,33 @@ public sealed class ReportTableTests
     [InlineData(@"D:\", @"D:\", @"D:\")]
     [InlineData(@"D:\yaat", @"D:\yaat\", @"D:\yaat")]
     [InlineData(@"d:\YAAT.wt\Feat", @"D:\yaat.WT", "Feat")]
-    [InlineData("D:/yaat.wt/feat/", @"D:\", "yaat.wt/feat")]
+    [InlineData("D:/yaat.wt/feat/", @"D:\", @"yaat.wt\feat")]
     [InlineData(@"E:\yaat.wt\feat", @"D:\", @"E:\yaat.wt\feat")]
     [InlineData(@"D:\yaat-server\feat", @"D:\yaat", @"D:\yaat-server\feat")]
     public void RelativePathIsRelativeOnlyUnderTheRoot(string path, string root, string expected) =>
         Assert.Equal(expected, ReportTable.RelativePath(path, root));
+
+    /// <summary>A path spelled as git spells it shows relative under a root given with a <c>\\?\</c> prefix.</summary>
+    [Fact]
+    public void RelativePathResolvesAVerbatimPrefixedRoot()
+    {
+        using var fx = new Fixture();
+        string path = fx.PathTo("repo.wt/feat");
+        Directory.CreateDirectory(path);
+
+        Assert.Equal(@"repo.wt\feat", ReportTable.RelativePath(path, @"\\?\" + fx.Root));
+    }
+
+    /// <summary>A path spelled through its real target shows relative to a root spelled through a junction to it.</summary>
+    [Fact]
+    public void RelativePathResolvesAJunctionRoot()
+    {
+        using var fx = new Fixture();
+        string path = fx.PathTo("repo.wt/feat");
+        Directory.CreateDirectory(path);
+        string link = fx.PathTo("link");
+        Assert.SkipUnless(Fixture.MakeJunction(link, fx.Root), "mklink /J is unavailable");
+
+        Assert.Equal(@"repo.wt\feat", ReportTable.RelativePath(path, link));
+    }
 }
