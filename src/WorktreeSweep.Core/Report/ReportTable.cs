@@ -86,9 +86,10 @@ public static class ReportTable
         message.Replace("\r\n", "; ", StringComparison.Ordinal).Replace("\n", "; ", StringComparison.Ordinal);
 
     /// <summary>
-    /// <paramref name="path"/> relative to <paramref name="root"/> when it lies under it, the two compared by
-    /// <see cref="Discoverer.PathKey"/>; else <paramref name="path"/> whole, as it is when it is the root itself. The relative part
-    /// keeps the separators <paramref name="path"/> was written with, without a trailing one.
+    /// <paramref name="path"/> relative to <paramref name="root"/> when it lies under it, the two compared resolved by
+    /// <see cref="PathResolver.Resolve"/> and keyed by <see cref="Discoverer.PathKey"/>; else <paramref name="path"/> whole, as it is
+    /// when it is the root itself. The relative part is the resolved path's tail, so it shows the same spelling whichever way
+    /// <paramref name="path"/> came in, without a trailing separator.
     /// </summary>
     /// <param name="path">The path to show.</param>
     /// <param name="root">The scanned root.</param>
@@ -97,11 +98,12 @@ public static class ReportTable
     {
         ArgumentNullException.ThrowIfNull(path);
         ArgumentNullException.ThrowIfNull(root);
-        string rootKey = Discoverer.PathKey(root);
+        string rootKey = Discoverer.PathKey(PathResolver.Resolve(root));
         string prefix = rootKey.EndsWith('\\') ? rootKey : rootKey + '\\';
-        string pathKey = Discoverer.PathKey(path);
+        string resolved = PathResolver.Resolve(path);
+        string pathKey = Discoverer.PathKey(resolved);
         bool under = pathKey.Length > prefix.Length && pathKey.StartsWith(prefix, StringComparison.Ordinal);
-        return under ? path[prefix.Length..pathKey.Length] : path;
+        return under ? resolved[prefix.Length..pathKey.Length] : path;
     }
 
     /// <summary>A byte count with one decimal in binary units (<c>512 B</c>, <c>1.5 KB</c>, <c>28.9 GB</c>), rounded half up.</summary>

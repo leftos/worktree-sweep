@@ -109,6 +109,21 @@ public sealed class ReleasedMarkerTests
         Assert.NotNull(ReleasedMarker.Read(admin));
     }
 
+    /// <summary>A worktree path written with a <c>\\?\</c> prefix finds the prunable entry it names.</summary>
+    [Fact]
+    public void VerbatimPrefixedWorktreePathFindsItsAdminDir()
+    {
+        using var fx = new Fixture();
+        string repo = fx.Repo("repo");
+        Fixture.AddWorktree(repo, fx.PathTo("repo.wt/feat"), "feat");
+        string worktree = MarkAndDelete(repo, fx.PathTo("repo.wt/feat"));
+
+        string? admin = ReleasedMarker.AdminDir(Path.Join(repo, ".git"), @"\\?\" + worktree);
+
+        Assert.NotNull(admin);
+        Assert.NotNull(ReleasedMarker.Read(admin));
+    }
+
     /// <summary>A relative common dir is refused rather than resolved against the current directory.</summary>
     [Fact]
     public void RelativeCommonDirIsRefused() => Assert.Throws<ArgumentException>(() => ReleasedMarker.AdminDir(".git", @"C:\nowhere\feat"));
