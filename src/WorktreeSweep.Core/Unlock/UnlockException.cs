@@ -1,7 +1,7 @@
 namespace WorktreeSweep.Unlock;
 
 /// <summary>Something in the unlock flow failed: <c>sudo</c> cannot be run, or the elevated side failed.</summary>
-public sealed class UnlockException : Exception
+public class UnlockException : Exception
 {
     /// <summary>Initializes a new instance of the <see cref="UnlockException"/> class.</summary>
     public UnlockException() { }

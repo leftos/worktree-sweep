@@ -1,0 +1,263 @@
+using System.ComponentModel;
+using System.Diagnostics;
+using WorktreeSweep.Processes;
+
+namespace WorktreeSweep.Unlock;
+
+/// <summary>
+/// The elevated side of the unlock flow: finds the processes holding files under the locked folders and offers, for each, to
+/// stop it, close its handles there, skip it, or end the session. After acting it scans again and offers what is left, until
+/// nothing holds files there or the user picks Done.
+/// </summary>
+/// <param name="input">Where the answers come from.</param>
+/// <param name="output">Where the session prints, flushed before every read.</param>
+/// <param name="handleExe">The <c>handle.exe</c> the session dumps and closes handles through.</param>
+/// <param name="processes">The process table and the stop operation.</param>
+public sealed class ElevatedSession(TextReader input, TextWriter output, IHandleExe handleExe, IProcessControl processes)
+{
+    /// <summary>How many of a locker's handles the description shows before it says how many it left out.</summary>
+    private const int ShownHandles = 5;
+
+    /// <summary>The actions the prompt offers, in the order it numbers them.</summary>
+    private static readonly LockerAction[] Actions = [LockerAction.Stop, LockerAction.CloseHandles, LockerAction.Skip, LockerAction.Done];
+
+    /// <summary>Runs the session, scanning, offering and acting until nothing holds the files or the user ends it.</summary>
+    /// <param name="paths">The folders whose open handles are cleared.</param>
+    /// <param name="callerPid">The process that started the unelevated run, usually the user's shell, whose stopping is not the
+    /// default; <see langword="null"/> when it is not known.</param>
+    /// <param name="sweepPid">The unelevated worktree-sweep, which with its children is never offered; <see langword="null"/>
+    /// when it is not known.</param>
+    /// <returns><see cref="UnlockExit.AllClear"/> when nothing holds the files, <see cref="UnlockExit.SomeLeft"/> when something
+    /// still does after an action, otherwise <see cref="UnlockExit.NothingDone"/>.</returns>
+    /// <exception cref="UnlockException"><c>handle.exe</c> is missing or fails.</exception>
+    /// <exception cref="Win32Exception">The process table cannot be read.</exception>
+    public int Run(IReadOnlyList<string> paths, int? callerPid, int? sweepPid)
+    {
+        ArgumentNullException.ThrowIfNull(paths);
+        IReadOnlySet<int> excluded = ProcessTable.ExcludedPids(Environment.ProcessId, sweepPid, processes.Snapshot());
+        bool acted = false;
+        bool finished = false;
+        while (true)
+        {
+            Say("Scanning open handles…");
+            IReadOnlyList<Locker> lockers = LockerFinder.Find(handleExe.Dump(), paths, excluded);
+            if (lockers.Count == 0)
+            {
+                Say("Nothing holds files under those folders.");
+                return UnlockExit.For(true, acted);
+            }
+            if (finished)
+            {
+                Say($"{lockers.Count} process(es) still hold files under those folders.");
+                return UnlockExit.For(false, acted);
+            }
+            Round round = OfferRound(lockers, callerPid, paths);
+            acted |= round.Acted;
+            finished = round.Done || !round.Acted;
+        }
+    }
+
+    /// <summary>Offers every locker in turn and applies the answer.</summary>
+    /// <param name="lockers">The processes holding files, in the order they are offered.</param>
+    /// <param name="callerPid">The PID of the process that started the unelevated run, or <see langword="null"/>.</param>
+    /// <param name="paths">The folders whose open handles are cleared.</param>
+    /// <returns>Whether anything was acted on, and whether the user ended the session.</returns>
+    private Round OfferRound(IReadOnlyList<Locker> lockers, int? callerPid, IReadOnlyList<string> paths)
+    {
+        bool acted = false;
+        foreach (Locker locker in lockers)
+        {
+            bool isCaller = callerPid == locker.Pid;
+            string label = $"{locker.Process} (pid {locker.Pid})";
+            Describe(locker, label, isCaller);
+            LockerAction action = Choose(label, isCaller);
+            if (action == LockerAction.Done)
+            {
+                Say("Done; leaving the rest alone.");
+                return new Round(acted, true);
+            }
+            Outcome outcome = Act(locker, label, action, paths);
+            acted |= outcome.Acted;
+            Say(outcome.Line);
+        }
+        return new Round(acted, false);
+    }
+
+    /// <summary>Prints what a locker holds: at most <see cref="ShownHandles"/> handle lines, and a note when the caller's
+    /// stopping would close the shell.</summary>
+    /// <param name="locker">The process and its handles.</param>
+    /// <param name="label">The process, as <c>{name} (pid {pid})</c>.</param>
+    /// <param name="isCaller">Whether it is the process that started the unelevated run.</param>
+    private void Describe(Locker locker, string label, bool isCaller)
+    {
+        Say($"{label} holds {locker.Handles.Count} handle(s) there:");
+        foreach (HeldHandle held in locker.Handles.Take(ShownHandles))
+        {
+            Say($"  {held.Kind, -8} {held.Name}");
+        }
+        if (locker.Handles.Count > ShownHandles)
+        {
+            Say($"  … and {locker.Handles.Count - ShownHandles} more");
+        }
+        if (isCaller)
+        {
+            Say("  This is the shell you started worktree-sweep from; stopping it closes that shell.");
+        }
+    }
+
+    /// <summary>Asks what to do with one locker, offering its default first.</summary>
+    /// <param name="label">The process, as <c>{name} (pid {pid})</c>.</param>
+    /// <param name="isCaller">Whether it is the process that started the unelevated run.</param>
+    /// <returns>The chosen action.</returns>
+    private LockerAction Choose(string label, bool isCaller)
+    {
+        string stop = isCaller ? "Stop process (closes your shell)" : "Stop process";
+        IReadOnlyList<string> labels = [stop, "Close its handles", "Skip", "Done"];
+        int defaultChoice = Array.IndexOf(Actions, LockerActions.DefaultAction(isCaller)) + 1;
+        Say($"What should happen to {label}?");
+        int choice = LinePrompt.AskChoice(input, output, new ChoicePrompt(labels, defaultChoice, EofChoice: 4, FallbackChoice: 3));
+        return Actions[choice - 1];
+    }
+
+    /// <summary>Applies one answer and returns the line reporting it.</summary>
+    /// <param name="locker">The process the answer is about.</param>
+    /// <param name="label">The process, as <c>{name} (pid {pid})</c>.</param>
+    /// <param name="action">The chosen action.</param>
+    /// <param name="paths">The folders whose open handles are cleared.</param>
+    /// <returns>The line and whether anything was acted on.</returns>
+    private Outcome Act(Locker locker, string label, LockerAction action, IReadOnlyList<string> paths) =>
+        action switch
+        {
+            LockerAction.Stop => StopLocker(locker, label),
+            LockerAction.CloseHandles => CloseHandles(locker, label, paths),
+            _ => new Outcome($"Skipped {label}.", false),
+        };
+
+    /// <summary>Stops a locker unless its PID no longer names the same program.</summary>
+    /// <param name="locker">The process to stop.</param>
+    /// <param name="label">The process, as <c>{name} (pid {pid})</c>.</param>
+    /// <returns>The line and whether it was stopped.</returns>
+    private Outcome StopLocker(Locker locker, string label)
+    {
+        if (!StillRunning(locker))
+        {
+            return new Outcome(ExitedLine(label), false);
+        }
+        try
+        {
+            processes.Stop(locker.Pid, locker.Process);
+            return new Outcome($"Stopped {label}.", true);
+        }
+        catch (Exception error) when (error is Win32Exception or InvalidOperationException)
+        {
+            return new Outcome($"Could not stop {label}: {error.Message}", false);
+        }
+    }
+
+    /// <summary>Warns about closing handles, asks (default no), then closes the locker's handles and reports how many.</summary>
+    /// <param name="locker">The process whose handles are closed.</param>
+    /// <param name="label">The process, as <c>{name} (pid {pid})</c>.</param>
+    /// <param name="paths">The folders whose open handles are cleared.</param>
+    /// <returns>The line and whether any handle was closed.</returns>
+    private Outcome CloseHandles(Locker locker, string label, IReadOnlyList<string> paths)
+    {
+        Say("Closing handles behind a program's back can make it crash or lose data.");
+        if (!LinePrompt.AskYesNo(input, output, $"Close {locker.Handles.Count} handle(s) of {label}?", defaultAnswer: false))
+        {
+            return new Outcome($"Left {label} alone.", false);
+        }
+        if (!StillRunning(locker))
+        {
+            return new Outcome(ExitedLine(label), false);
+        }
+        IReadOnlyList<HandleRow> now = HandleCsv.Parse(handleExe.DumpProcess(locker.Pid));
+        int closed = 0;
+        foreach (HeldHandle held in locker.Handles)
+        {
+            closed += CloseOne(held, locker.Pid, label, StillNamesALockedFile(now, locker.Pid, held, paths));
+        }
+        return new Outcome($"Closed {closed} of {locker.Handles.Count} handle(s) of {label}.", closed > 0);
+    }
+
+    /// <summary>
+    /// Whether a fresh dump of the locker's handles still shows this handle naming a file under the locked folders: a handle
+    /// value can be reused between the scan and the answer, so one that now names something else is never closed.
+    /// </summary>
+    /// <param name="now">The locker's handles as a fresh dump lists them.</param>
+    /// <param name="pid">The process holding the handle.</param>
+    /// <param name="held">The handle the scan saw.</param>
+    /// <param name="paths">The folders whose open handles are cleared.</param>
+    /// <returns><see langword="true"/> when the handle still names a locked file.</returns>
+    private static bool StillNamesALockedFile(IReadOnlyList<HandleRow> now, int pid, HeldHandle held, IReadOnlyList<string> paths) =>
+        now.Any(row => row.Pid == pid && row.Handle == held.Handle && LockedPaths.Matches(row.Name, paths));
+
+    /// <summary>Closes one handle, tracing a failure as a warning.</summary>
+    /// <param name="held">The handle to close.</param>
+    /// <param name="pid">The process holding it.</param>
+    /// <param name="label">The process, as <c>{name} (pid {pid})</c>.</param>
+    /// <param name="stillNamesALockedFile">Whether a fresh dump still shows the handle naming a locked file.</param>
+    /// <returns>1 when the handle was closed, otherwise 0.</returns>
+    private int CloseOne(HeldHandle held, int pid, string label, bool stillNamesALockedFile)
+    {
+        if (!stillNamesALockedFile)
+        {
+            Trace.TraceWarning($"handle {held.Handle:X} of {label} no longer names a locked file; not closed");
+            return 0;
+        }
+        try
+        {
+            if (handleExe.Close(held.Handle, pid, out string failure))
+            {
+                return 1;
+            }
+            Trace.TraceWarning($"handle.exe could not close {held.Kind} handle {held.Handle:X} ({held.Name}) of {label}: {failure.Trim()}");
+        }
+        catch (UnlockException error)
+        {
+            Trace.TraceWarning($"cannot close handle {held.Handle:X} of {label}: {error.Message}");
+        }
+        return 0;
+    }
+
+    /// <summary>
+    /// Whether the locker's PID still names the same program. A table that cannot be taken is traced and counts as exited, so
+    /// nothing is acted on behind a PID that may have been reused.
+    /// </summary>
+    /// <param name="locker">The process the scan saw.</param>
+    /// <returns><see langword="true"/> when the table still holds the PID under the same name.</returns>
+    private bool StillRunning(Locker locker)
+    {
+        try
+        {
+            return ProcessTable.IsSameProcess(locker.Pid, locker.Process, processes.Snapshot());
+        }
+        catch (Win32Exception error)
+        {
+            Trace.TraceWarning($"cannot check that pid {locker.Pid} is still {locker.Process}: {error.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>The line reporting a process that is gone.</summary>
+    /// <param name="label">The process, as <c>{name} (pid {pid})</c>.</param>
+    /// <returns>The line.</returns>
+    private static string ExitedLine(string label) => $"{label} has exited; skipped.";
+
+    /// <summary>Writes one line and flushes it, so a user sees it before the next read.</summary>
+    /// <param name="line">The line.</param>
+    private void Say(string line)
+    {
+        output.WriteLine(line);
+        output.Flush();
+    }
+
+    /// <summary>What one round of offers did.</summary>
+    /// <param name="Acted">Whether anything was stopped or had its handles closed.</param>
+    /// <param name="Done">Whether the user ended the session.</param>
+    private readonly record struct Round(bool Acted, bool Done);
+
+    /// <summary>What the answer to one locker's prompt did.</summary>
+    /// <param name="Line">The summary line to print.</param>
+    /// <param name="Acted">Whether the process was stopped or any of its handles were closed.</param>
+    private readonly record struct Outcome(string Line, bool Acted);
+}
