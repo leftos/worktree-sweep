@@ -1,4 +1,5 @@
 using WorktreeSweep.Discovery;
+using WorktreeSweep.Signals;
 
 namespace WorktreeSweep.Tests;
 
@@ -73,6 +74,8 @@ public sealed class DiscoveryTests
         Assert.True(Fixture.SamePath(orphan.Path, empty), orphan.ToString());
         Assert.Equal(OrphanKind.Folder, orphan.Kind);
         Assert.False(orphan.HasGitDir || orphan.StaleGitdir || orphan.LiveGitdir is not null, orphan.ToString());
+        SizeInfo size = SignalReader.WalkSize(orphan.Path);
+        Assert.True(size is { Files: 0, Bytes: 0 }, size.ToString());
     }
 
     /// <summary>An orphan whose <c>.git</c> file points at a missing git dir is flagged stale; a plain folder is not.</summary>
@@ -146,6 +149,8 @@ public sealed class DiscoveryTests
         Orphan orphan = Assert.Single(found.Orphans);
         Assert.True(Fixture.SamePath(orphan.Path, link), orphan.ToString());
         Assert.Equal(OrphanKind.Link, orphan.Kind);
+        SizeInfo size = SignalReader.WalkSize(orphan.Path);
+        Assert.True(size is { Files: 0, Bytes: 0 }, $"target was walked: {size}");
         Assert.NotNull(orphan.LinkTarget);
         Assert.True(Fixture.SamePath(orphan.LinkTarget, target), orphan.ToString());
     }
