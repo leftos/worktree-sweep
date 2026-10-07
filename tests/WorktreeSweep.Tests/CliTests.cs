@@ -149,6 +149,45 @@ public sealed class CliTests
         Assert.Equal(["registered"], Kinds(run.Stdout));
     }
 
+    /// <summary>The hidden <c>unlock</c> subcommand needs at least one path; without one it is a usage error.</summary>
+    [Fact]
+    public async Task UnlockWithNoPathsIsAUsageError()
+    {
+        Run run = await RunAsync("unlock");
+
+        Assert.Equal(2, run.Code);
+        Assert.StartsWith("error: ", run.Stderr, StringComparison.Ordinal);
+        Assert.Equal("", run.Stdout);
+    }
+
+    /// <summary><c>--help</c> does not list the hidden <c>unlock</c> subcommand.</summary>
+    [Fact]
+    public async Task HelpDoesNotListUnlock()
+    {
+        Run run = await RunAsync("--help");
+
+        Assert.Equal(0, run.Code);
+        Assert.Contains("--list", run.Stdout, StringComparison.Ordinal);
+        Assert.DoesNotContain("unlock", run.Stdout, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// <c>unlock</c> is the subcommand even when the current directory holds a folder named <c>unlock</c>: the error is the
+    /// subcommand's missing paths, not the root's missing mode flag.
+    /// </summary>
+    [Fact]
+    public async Task UnlockIsTheSubcommandOverAFolderNamedUnlock()
+    {
+        using var fx = new Fixture();
+        Directory.CreateDirectory(fx.PathTo("unlock"));
+
+        Run run = await RunInAsync(fx.Root, "unlock");
+
+        Assert.Equal(2, run.Code);
+        Assert.Equal("error: Required argument missing for command: 'unlock'.\n", run.Stderr);
+        Assert.Equal("", run.Stdout);
+    }
+
     private static List<string?> Kinds(string json)
     {
         using var document = JsonDocument.Parse(json);
@@ -157,14 +196,21 @@ public sealed class CliTests
 
     private static Task<Run> RunAsync(params string[] args) => RunWithEnvAsync(new Dictionary<string, string>(), args);
 
+    private static Task<Run> RunWithEnvAsync(IReadOnlyDictionary<string, string> env, params string[] args) =>
+        RunInWithEnvAsync(Environment.CurrentDirectory, env, args);
+
+    private static Task<Run> RunInAsync(string workingDirectory, params string[] args) =>
+        RunInWithEnvAsync(workingDirectory, new Dictionary<string, string>(), args);
+
     /// <summary>
-    /// Runs the exe with the repo-local git variables and <c>WORKTREE_SWEEP_LOG</c> cleared, then <paramref name="env"/> set, killing
-    /// it when it outlives <see cref="RunTimeout"/> or the test run is cancelled.
+    /// Runs the exe in <paramref name="workingDirectory"/> with the repo-local git variables and <c>WORKTREE_SWEEP_LOG</c> cleared,
+    /// then <paramref name="env"/> set, killing it when it outlives <see cref="RunTimeout"/> or the test run is cancelled.
     /// </summary>
-    private static async Task<Run> RunWithEnvAsync(IReadOnlyDictionary<string, string> env, params string[] args)
+    private static async Task<Run> RunInWithEnvAsync(string workingDirectory, IReadOnlyDictionary<string, string> env, params string[] args)
     {
         var startInfo = new ProcessStartInfo(Exe)
         {
+            WorkingDirectory = workingDirectory,
             UseShellExecute = false,
             CreateNoWindow = true,
             RedirectStandardOutput = true,

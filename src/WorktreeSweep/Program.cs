@@ -1,5 +1,6 @@
 using System.CommandLine;
 using System.CommandLine.Parsing;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
@@ -7,6 +8,7 @@ using System.Text;
 using WorktreeSweep.Git;
 using WorktreeSweep.Report;
 using WorktreeSweep.Scan;
+using WorktreeSweep.Unlock;
 
 namespace WorktreeSweep;
 
@@ -44,6 +46,7 @@ internal static class Program
             }
         });
         command.SetAction(parsed => Run(parsed.GetRequiredValue(root), parsed.GetValue(json), parsed.GetValue(list)));
+        command.Subcommands.Add(UnlockCommand());
 
         ParseResult parsed = command.Parse(args);
         if (parsed.Errors.Count > 0)
@@ -81,6 +84,35 @@ internal static class Program
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or GitException)
         {
             Console.Error.WriteLine($"Error: {error.Message}");
+            return Failure;
+        }
+    }
+
+    /// <summary>
+    /// The hidden <c>unlock PATHS... [--caller-pid PID] [--sweep-pid PID]</c> subcommand that <c>sudo</c> runs elevated: finds what
+    /// holds files under the paths and offers to stop it or close its handles.
+    /// </summary>
+    private static Command UnlockCommand()
+    {
+        Argument<string[]> paths = new("PATHS") { Arity = ArgumentArity.OneOrMore, Description = "The locked folders." };
+        Option<int?> callerPid = new("--caller-pid") { Hidden = true, Description = "The process that started the unelevated run." };
+        Option<int?> sweepPid = new("--sweep-pid") { Hidden = true, Description = "The unelevated worktree-sweep, never offered." };
+        Command unlock = new("unlock", "Find and clear what holds files under PATHS (run elevated by the sweep).") { paths, callerPid, sweepPid };
+        unlock.Hidden = true;
+        unlock.SetAction(parsed => RunUnlock(parsed.GetRequiredValue(paths), parsed.GetValue(callerPid), parsed.GetValue(sweepPid)));
+        return unlock;
+    }
+
+    private static int RunUnlock(string[] paths, int? callerPid, int? sweepPid)
+    {
+        try
+        {
+            var session = new ElevatedSession(Console.In, Console.Out, new HandleExe(), new ProcessControl());
+            return session.Run(paths, callerPid, sweepPid);
+        }
+        catch (Exception error) when (error is UnlockException or Win32Exception)
+        {
+            Console.Error.WriteLine($"error: {error.Message}");
             return Failure;
         }
     }
