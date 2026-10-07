@@ -115,6 +115,9 @@ public static partial class SignalReader
     /// Whether <c>git merge-tree --write-tree {default} {branch}</c> gives the default branch's own tree. The objects the merge writes
     /// go to a scratch object directory, so the repo is left untouched.
     /// </summary>
+    /// <exception cref="GitException">The default branch's tree cannot be read, or git cannot be started, does not exit within
+    /// <see cref="GitRunner.CallTimeout"/> or leaves its output open; a merge-tree exit code other than 0 or 1 is traced and read
+    /// as not contained.</exception>
     private static bool ContentContained(string dir, string branch, string defaultRef)
     {
         string defaultTree = GitRunner.Run(dir, ["rev-parse", $"{defaultRef}^{{tree}}"]);

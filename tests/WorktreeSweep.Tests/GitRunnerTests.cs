@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using WorktreeSweep.Git;
 
 namespace WorktreeSweep.Tests;
@@ -35,6 +36,80 @@ public sealed class GitRunnerTests
 
         Assert.True(status.Success, $"git exited with code {status.Code}: {status.Stderr}");
         Assert.Contains("GIT_OPTIONAL_LOCKS=0", status.Stdout.Split('\n'));
+    }
+
+    /// <summary>
+    /// Extra environment variables cannot turn git's prompts back on: git still runs with <c>GIT_TERMINAL_PROMPT=0</c> and
+    /// <c>GCM_INTERACTIVE=never</c>.
+    /// </summary>
+    [Fact]
+    public void PromptsAreDisabled()
+    {
+        using var fx = new Fixture();
+        string repo = fx.Repo("repo");
+
+        GitStatus status = GitRunner.RunStatusWithEnv(
+            repo,
+            ["-c", "alias.print-env=!env", "print-env"],
+            new Dictionary<string, string> { ["GIT_TERMINAL_PROMPT"] = "1", ["GCM_INTERACTIVE"] = "always" }
+        );
+
+        Assert.True(status.Success, $"git exited with code {status.Code}: {status.Stderr}");
+        string[] lines = status.Stdout.Split('\n');
+        Assert.Contains("GIT_TERMINAL_PROMPT=0", lines);
+        Assert.Contains("GCM_INTERACTIVE=never", lines);
+    }
+
+    /// <summary>
+    /// A git child that outlives the limit is killed with its whole process tree, so a grandchild holding the output pipes cannot
+    /// block the call, and the exception names the command and the limit.
+    /// </summary>
+    [Fact]
+    public void HungGitIsKilledAfterTheTimeout()
+    {
+        using var fx = new Fixture();
+        string repo = fx.Repo("repo");
+        var clock = Stopwatch.StartNew();
+
+        GitException error = Assert.Throws<GitException>(() =>
+            GitRunner.RunStatusWithEnv(
+                repo,
+                ["-c", "alias.hang=!sleep 30", "hang"],
+                new Dictionary<string, string>(),
+                TimeSpan.FromSeconds(1),
+                TimeSpan.FromSeconds(15)
+            )
+        );
+
+        clock.Stop();
+        Assert.Equal($"`git -C {repo} -c alias.hang=!sleep 30 hang` did not exit within 1 s and was killed", error.Message);
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(10), $"the call took {clock.Elapsed}");
+    }
+
+    /// <summary>
+    /// A git that exits while a process it started still holds its output open is reported once the grace runs out, instead of
+    /// waiting for that process to end.
+    /// </summary>
+    [Fact]
+    public void OutputHeldOpenAfterExitIsReported()
+    {
+        using var fx = new Fixture();
+        string repo = fx.Repo("repo");
+        var clock = Stopwatch.StartNew();
+
+        GitException error = Assert.Throws<GitException>(() =>
+            GitRunner.RunStatusWithEnv(
+                repo,
+                ["-c", "alias.bg=!cd / && sleep 30 &", "bg"],
+                new Dictionary<string, string>(),
+                TimeSpan.FromSeconds(10),
+                TimeSpan.FromSeconds(1)
+            )
+        );
+
+        clock.Stop();
+        Assert.Equal($"`git -C {repo} -c alias.bg=!cd / && sleep 30 & bg` exited but its output stayed open for 1 s", error.Message);
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(10), $"the call took {clock.Elapsed}");
     }
 
     /// <summary><see cref="GitRunner.RunStatus"/> returns a non-zero exit code and the trimmed standard error without throwing.</summary>
