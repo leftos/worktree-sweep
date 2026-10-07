@@ -19,10 +19,11 @@ public sealed class UnlockOffer(TextReader input, TextWriter output, ISudoRunner
 
     /// <summary>Offers to find and clear the locks other processes hold on files under the paths.</summary>
     /// <param name="paths">The locked paths.</param>
-    /// <returns><see cref="UnlockOutcome.Skipped"/> when <c>sudo</c> cannot be used or the user declines, otherwise the outcome
-    /// the elevated session's exit code names.</returns>
-    /// <exception cref="UnlockException">This program's path is unknown or is the <c>dotnet</c> host, <c>sudo</c> cannot be run,
-    /// or the elevated session ends with a code it never uses.</exception>
+    /// <returns><see cref="UnlockOutcome.Skipped"/> when <c>sudo</c> cannot be used, this program runs under the <c>dotnet</c>
+    /// host, the user declines, or the elevated session ends with a code it never uses (a declined UAC prompt included), each
+    /// but the decline with a line saying why; otherwise the outcome the elevated session's exit code names.</returns>
+    /// <exception cref="UnlockException">This program's path is unknown, <c>sudo config</c> cannot be run, or <c>sudo</c>
+    /// cannot be started.</exception>
     public UnlockOutcome Offer(IReadOnlyList<string> paths)
     {
         ArgumentNullException.ThrowIfNull(paths);
@@ -32,7 +33,7 @@ public sealed class UnlockOffer(TextReader input, TextWriter output, ISudoRunner
             output.WriteLine($"  {path}");
         }
         output.Flush();
-        string exe = ExePath();
+        string exe = self.ExePath ?? throw new UnlockException("cannot find the path of this program");
         SudoMode? mode = sudo.Mode();
         if (mode != SudoMode.Inline)
         {
@@ -42,30 +43,33 @@ public sealed class UnlockOffer(TextReader input, TextWriter output, ISudoRunner
                     : "sudo is not available on this machine."
             );
             SudoCommand.WriteManual(output, exe, paths);
-            output.Flush();
-            return UnlockOutcome.Skipped;
+            return Skip();
+        }
+        if (string.Equals(Path.GetFileNameWithoutExtension(exe), "dotnet", StringComparison.OrdinalIgnoreCase))
+        {
+            output.WriteLine($"worktree-sweep is running under {exe}, which sudo cannot run as this program; run {Apphost} instead");
+            return Skip();
         }
         if (!LinePrompt.AskYesNo(input, output, Question, defaultAnswer: true))
         {
             return UnlockOutcome.Skipped;
         }
         int code = sudo.Run(SudoCommand.Argv(exe, self.CallerPid, self.Pid, paths));
-        return UnlockOutcomes.ForExit(code)
-            ?? throw new UnlockException(
-                $"the elevated scan failed (exit code {code}); to retry, run in an administrator terminal: {SudoCommand.Manual(exe, paths)}"
-            );
+        if (UnlockOutcomes.ForExit(code) is UnlockOutcome outcome)
+        {
+            return outcome;
+        }
+        output.WriteLine(
+            $"the elevated scan failed (exit code {code}); to retry, run in an administrator terminal: {SudoCommand.Manual(exe, paths)}"
+        );
+        return Skip();
     }
 
-    /// <summary>The program <c>sudo</c> is to run: this one, unless it is the <c>dotnet</c> host, which would not run this program.</summary>
-    /// <returns>The path of this program.</returns>
-    /// <exception cref="UnlockException">The path is unknown, or it is <c>dotnet</c>.</exception>
-    private string ExePath()
+    /// <summary>Flushes what the offer wrote and skips the unlock.</summary>
+    /// <returns><see cref="UnlockOutcome.Skipped"/>.</returns>
+    private UnlockOutcome Skip()
     {
-        string exe = self.ExePath ?? throw new UnlockException("cannot find the path of this program");
-        if (string.Equals(Path.GetFileNameWithoutExtension(exe), "dotnet", StringComparison.OrdinalIgnoreCase))
-        {
-            throw new UnlockException($"worktree-sweep is running under {exe}, which sudo cannot run as this program; run {Apphost} instead");
-        }
-        return exe;
+        output.Flush();
+        return UnlockOutcome.Skipped;
     }
 }

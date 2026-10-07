@@ -103,35 +103,67 @@ public sealed class UnlockOfferTests
         Assert.Equal<string>([Exe, "unlock", "--caller-pid", "100", "--sweep-pid", "200", @"D:\a.wt\x", @"D:\b.wt\y"], run);
     }
 
-    /// <summary>An exit code the elevated side never ends with is a failure that names the command to retry by hand.</summary>
+    /// <summary>
+    /// An exit code the elevated side never ends with, a declined UAC prompt included, skips and says the scan failed, naming
+    /// the command to retry by hand; the sweep goes on.
+    /// </summary>
     [Theory]
     [InlineData(1)]
     [InlineData(2)]
     [InlineData(5)]
     [InlineData(-1)]
-    public void UnknownExitCodeThrows(int exitCode)
+    public void UnknownExitCodeSaysTheScanFailedAndSkips(int exitCode)
     {
         var sudo = new FakeSudo(SudoMode.Inline, exitCode);
 
-        UnlockException error = Assert.Throws<UnlockException>(() => Offer(sudo, "y\n", Exe));
+        (UnlockOutcome outcome, string output) = Offer(sudo, "y\n", Exe);
 
-        Assert.Contains($"exit code {exitCode}", error.Message, StringComparison.Ordinal);
-        Assert.Contains(SudoCommand.Manual(Exe, Paths), error.Message, StringComparison.Ordinal);
+        Assert.Equal(UnlockOutcome.Skipped, outcome);
+        Assert.Single(sudo.Runs);
+        Assert.EndsWith(
+            $"the elevated scan failed (exit code {exitCode}); to retry, run in an administrator terminal: {SudoCommand.Manual(Exe, Paths)}\n",
+            output,
+            StringComparison.Ordinal
+        );
     }
 
-    /// <summary>Run through <c>dotnet</c>, sudo would start dotnet rather than this program, so the offer fails naming the apphost.</summary>
+    /// <summary>
+    /// Run through <c>dotnet</c>, sudo would start dotnet rather than this program, so the offer names the apphost and skips
+    /// without asking or running sudo.
+    /// </summary>
     [Theory]
     [InlineData(@"C:\Program Files\dotnet\dotnet.exe")]
     [InlineData(@"C:\Program Files\dotnet\DOTNET.EXE")]
     [InlineData("/usr/share/dotnet/dotnet")]
-    public void DotnetHostThrowsNamingTheApphost(string processPath)
+    public void DotnetHostNamesTheApphostAndSkips(string processPath)
     {
         var sudo = new FakeSudo(SudoMode.Inline, 0);
 
-        UnlockException error = Assert.Throws<UnlockException>(() => Offer(sudo, "y\n", processPath));
+        (UnlockOutcome outcome, string output) = Offer(sudo, "y\n", processPath);
 
-        Assert.Contains("worktree-sweep.exe", error.Message, StringComparison.Ordinal);
+        Assert.Equal(UnlockOutcome.Skipped, outcome);
         Assert.Empty(sudo.Runs);
+        Assert.EndsWith(
+            $"worktree-sweep is running under {processPath}, which sudo cannot run as this program; run worktree-sweep.exe instead\n",
+            output,
+            StringComparison.Ordinal
+        );
+        Assert.DoesNotContain("[Y/n]", output, StringComparison.Ordinal);
+    }
+
+    /// <summary>Under <c>dotnet</c> with sudo not in Inline mode, the mode check comes first: the manual command, then skip.</summary>
+    [Fact]
+    public void DotnetHostWithSudoNotInlineWritesTheManualCommand()
+    {
+        const string dotnet = @"C:\Program Files\dotnet\dotnet.exe";
+        var sudo = new FakeSudo(SudoMode.ForceNewWindow, 0);
+
+        (UnlockOutcome outcome, string output) = Offer(sudo, "y\n", dotnet);
+
+        Assert.Equal(UnlockOutcome.Skipped, outcome);
+        Assert.Empty(sudo.Runs);
+        Assert.Contains($"  {SudoCommand.Manual(dotnet, Paths)}\n", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("worktree-sweep.exe instead", output, StringComparison.Ordinal);
     }
 
     /// <summary>The bound offer fits the sweep's offer callback.</summary>

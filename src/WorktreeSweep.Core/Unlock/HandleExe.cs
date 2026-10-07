@@ -52,18 +52,23 @@ public sealed class HandleExe : IHandleExe
     /// <exception cref="UnlockException"><c>handle.exe</c> is not on PATH, cannot be run, or does not finish in time.</exception>
     private static ChildResult Run(IReadOnlyList<string> arguments, TimeSpan limit)
     {
+        string program = ChildProcess.FindOnPath(Program, Environment.GetEnvironmentVariable("PATH")) ?? throw NotOnPath();
         try
         {
             // Decoded with the default encoding: handle.exe prints `?` for every character outside the machine's code
             // page, so no decoding of its output can recover such a name, and a measured Greek file name came back
             // mangled in UTF-8, in the OEM code page and in the ANSI code page alike.
-            return ChildProcess.Run(Program, arguments, limit, outputEncoding: null);
+            return ChildProcess.Run(program, arguments, limit, outputEncoding: null);
         }
         catch (ProgramNotFoundException)
         {
-            throw new UnlockException($"handle.exe is not on PATH; install it with `{Install}`");
+            throw NotOnPath();
         }
     }
+
+    /// <summary>The failure for a <c>handle.exe</c> the PATH search does not find, naming the command that installs it.</summary>
+    /// <returns>The failure.</returns>
+    private static UnlockException NotOnPath() => new($"handle.exe is not on PATH; install it with `{Install}`");
 
     /// <summary>The last <see cref="FailureLines"/> lines of a dump, so a failure message stays short.</summary>
     /// <param name="output">The dump's standard output.</param>
