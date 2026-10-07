@@ -147,16 +147,24 @@ public static class GitRunner
     /// </exception>
     public static string CommonDir(string dir)
     {
-        string[] args = ["rev-parse", "--path-format=absolute", "--git-common-dir"];
-        GitStatus status = RunStatus(dir, args);
-        if (!status.Success)
-        {
-            throw Failure(dir, args, status);
-        }
-        string path = status.Stdout.Trim().Replace('/', Path.DirectorySeparatorChar);
+        GitStatus status = RunStatus(dir, CommonDirArgs);
+        return status.Success ? FullCommonDir(dir, status.Stdout) : throw Failure(dir, CommonDirArgs, status);
+    }
+
+    /// <summary>The git arguments that print the common git dir as a full path.</summary>
+    internal static IReadOnlyList<string> CommonDirArgs { get; } = ["rev-parse", "--path-format=absolute", "--git-common-dir"];
+
+    /// <summary>The common git dir <see cref="CommonDirArgs"/> printed, with <c>\</c> separators.</summary>
+    /// <param name="dir">The directory git ran in.</param>
+    /// <param name="stdout">Git's standard output.</param>
+    /// <returns>The common git dir.</returns>
+    /// <exception cref="GitException">The path is not fully qualified, as a git without <c>--path-format</c> prints it.</exception>
+    internal static string FullCommonDir(string dir, string stdout)
+    {
+        string path = stdout.Trim().Replace('/', Path.DirectorySeparatorChar);
         if (!Path.IsPathFullyQualified(path))
         {
-            throw new GitException($"{Describe(dir, args)} printed \"{path}\", which is not a full path");
+            throw new GitException($"{Describe(dir, CommonDirArgs)} printed \"{path}\", which is not a full path");
         }
         return path;
     }

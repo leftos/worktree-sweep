@@ -163,7 +163,9 @@ public sealed class ReviewSession
         return hit is null ? null : $"{repo} may still use it: {hit.Message}";
     }
 
-    /// <summary>The comparison key of <paramref name="path"/>: resolved by <see cref="PathResolver.Resolve"/>, then <see cref="Discoverer.PathKey"/>.</summary>
+    /// <summary>
+    /// The comparison key of <paramref name="path"/>: resolved by <see cref="PathResolver.Resolve"/>, then <see cref="Discoverer.PathKey"/>.
+    /// </summary>
     /// <param name="path">A path.</param>
     /// <returns>The key.</returns>
     private static string Key(string path) => Discoverer.PathKey(PathResolver.Resolve(path));
