@@ -1,6 +1,8 @@
 # worktree-sweep — architecture
 
-`worktree-sweep` is a single Rust crate for Windows: a library (`src/lib.rs`) with a thin binary (`src/main.rs`) on top. The library scans a root for stale git worktrees and orphan folders, removes picks recoverably, escalates once per run through `sudo` and Sysinternals `handle.exe` to clear file locks, and offers an unattended `remove <PATH> --json` path for agents. The rule that shapes it: the scan writes nothing, and the parts of the interactive front end (`src/tui/`) are pure state machines that never touch the terminal, disk or git. Terms used in a project sense (candidate, orphan, locker, holder, released, Review) are in the glossary in [`README.md`](README.md).
+`worktree-sweep` is a single Rust crate for Windows: a library (`src/lib.rs`) with a thin binary (`src/main.rs`) on top. The library scans a root for stale git worktrees and orphan folders, removes picks recoverably, escalates once per run through `sudo` and Sysinternals `handle.exe` to clear file locks, and offers an unattended `remove <PATH> --json` path for agents. It is being rewritten in C# with a WPF window ([`plans/csharp-rewrite.md`](plans/csharp-rewrite.md)).
+
+The rule that shapes it: the scan writes nothing, and the parts of the interactive front end (`src/tui/`) are pure state machines that never touch the terminal, disk or git. Terms used in a project sense (candidate, orphan, locker, holder, released, Review) are in the glossary in [`README.md`](README.md).
 
 ## Task Index
 
@@ -10,12 +12,12 @@
 | Change what counts as a container dir or an orphan | `src/discover.rs` → `src/lib.rs` (`scan`, `container_repo`) → `tests/integration/discovery.rs` | [`README.md`](README.md) (glossary) |
 | Change the `git` calls the scan makes | `src/git.rs` → `tests/integration/git_env.rs` | [`design.md`](design.md) |
 | Change the table or the `--json` report | `src/report.rs` → `README.md` (`JSON report`) → `CHANGELOG.md` | none |
-| Change what removing a pick loses, or the Review questions | `src/pick.rs` (`loss_text`) → `src/tui/review.rs` → `src/remove.rs` (`Plan`, `Decision`) | [`plans/tui-picker.md`](plans/tui-picker.md) |
+| Change what removing a pick loses, or the Review questions | `src/pick.rs` (`loss_text`) → `src/tui/review.rs` → `src/remove.rs` (`Plan`, `Decision`) | [`plans/csharp-rewrite.md`](plans/csharp-rewrite.md) |
 | Change how a pick is removed (recycle, permanent delete, prune, branch) | `src/remove.rs` → `src/recycle.rs` → `tests/integration/removal.rs` | [`design.md`](design.md) |
 | Change the unlock flow (elevated `handle.exe`) | `src/unlock.rs` → `src/handle_csv.rs` → `src/main.rs` (`Command::Unlock`) | [`design.md`](design.md) |
 | Change how lock holders are found or which ones may be stopped | `src/holders.rs` (`find_holders`, `stoppable`) → `src/agent.rs` → `tests/integration/holders.rs` | [`agent-path.md`](agent-path.md) |
 | Change the agent `remove` command (statuses, refusals, exit codes, marker) | `src/agent.rs` → `src/lib.rs` (`resolve_one`, `RefusalReason`) → `src/main.rs` (`Command::Remove`) → `tests/integration/agent_remove.rs`, `released.rs` | [`agent-path.md`](agent-path.md) |
-| Change the full-screen picker | `src/tui/app.rs` → `src/tui/view.rs` → `src/tui/review.rs` → `src/tui/fixtures.rs` | [`plans/tui-picker.md`](plans/tui-picker.md) |
+| Port a module to C#, or list the tool's external surface (flags, subcommands, JSON, exit codes) | `README.md` (usage, JSON, exit codes) → `src/main.rs` → `src/report.rs` → `src/agent.rs` → `src/unlock.rs` → `src/holders.rs` → `tests/integration/main.rs` | [`plans/csharp-rewrite.md`](plans/csharp-rewrite.md) |
 | Add a CLI flag or subcommand | `src/main.rs` (`Cli`, `Command`) → `README.md` usage → `CHANGELOG.md` | none |
 
 ## Layers
@@ -34,7 +36,7 @@ One crate, `worktree-sweep` (`Cargo.toml`), with a library and a binary. Modules
 - **`recycle`** (`src/recycle.rs`): Recycle Bin capacity and moving a folder there through the Shell. References `remove` (`RemoveError`) and `report`.
 - **`unlock`** (`src/unlock.rs`): the unelevated `offer` and the elevated `run_elevated`; also owns `matches_locked_path`. References `handle_csv`.
 - **`handle_csv`** (`src/handle_csv.rs`): parses `handle.exe -nobanner -v` CSV. References nothing in the crate.
-- **`holders`** (`src/holders.rs`): finds holders without elevation (PEB current folder, disk handles) and the stop allowlist. References `unlock` (for `matches_locked_path`).
+- **`holders`** (`src/holders.rs`): finds holders without elevation (PEB current folder, disk handles) and the stop allowlist. References `unlock` (for `matches_locked_path` and `process_table`).
 - **`agent`** (`src/agent.rs`): the `remove <PATH> --json` flow and the released marker. References `holders`, `recycle`, `remove`, `report`, `signals`, `pick`, `unlock`, `discover` and `lib`.
 
 Rules the docs or code state: the scan writes nothing and every git call clears the repo-local env (`git::clear_repo_env`); junctions are links and are never sized, walked or deleted through; one elevation per run, for every locked pick together (see `.claude/skills/worktree-sweep-nextup/SKILL.md`, "Rulings every brief carries").
@@ -62,5 +64,5 @@ Rules the docs or code state: the scan writes nothing and every git call clears 
 - [`README.md`](README.md): glossary, start page.
 - [`agent-path.md`](agent-path.md): the agent `remove` path, lock-kind measurements, rulings.
 - [`design.md`](design.md): the approved v1 design, module list and test plan.
-- [`plans/tui-picker.md`](plans/tui-picker.md): the full-screen picker design.
+- [`plans/csharp-rewrite.md`](plans/csharp-rewrite.md): the C# rewrite with a WPF window, its rulings and items; the full-screen picker it replaces is archived in [`plans/archive/tui-picker.md`](plans/archive/tui-picker.md).
 - [`plans/MAIN.md`](plans/MAIN.md): the generated snapshot of the plan in Linear (team WTS).
