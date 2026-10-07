@@ -123,6 +123,60 @@ public sealed class AgentRemoverTests
     }
 
     /// <summary>
+    /// A recycle that moves the folder away and then outlives the timeout, as the Shell does on a large tree, is reported removed: the
+    /// record is pruned, the branch deleted, and no released marker is left.
+    /// </summary>
+    [Fact]
+    public void ATimedOutRecycleThatAlreadyMovedTheFolderIsRemoved()
+    {
+        using var fx = new Fixture();
+        (string repo, string worktree) = RepoWithWorktree(fx, @"x.wt\feat", "feat");
+        string admin = Discoverer.ReadGitdirFile(worktree) ?? throw new InvalidOperationException($"{worktree} has no admin dir");
+        string bin = fx.PathTo("bin-entry");
+
+        void MoveThenLinger(string path)
+        {
+            Directory.Move(path, bin);
+            Thread.Sleep(TimeSpan.FromSeconds(5));
+        }
+
+        RemoveReport report = AgentRemover.Run(worktree, Plain, Seams(MoveThenLinger, NoHolders, NeverStop));
+
+        Assert.Equal(RemoveStatus.Removed, report.Status);
+        Assert.Null(report.Reason);
+        Assert.Null(report.Released);
+        Assert.True(report.BranchDeleted, string.Join("; ", report.Notes));
+        Assert.Contains("the move to the Recycle Bin finished after the recycle timed out", report.Notes);
+        Assert.DoesNotContain("feat", WorktreeList(repo), StringComparison.Ordinal);
+        Assert.False(Directory.Exists(admin), "the record was not pruned");
+    }
+
+    /// <summary>
+    /// A completed recycle whose repo cannot be pruned afterwards, the folder already gone, still reports the worktree removed, with the
+    /// prune and branch failures as notes.
+    /// </summary>
+    [Fact]
+    public void RecycleThenBrokenRepoReportsRemovedWithPruneAndBranchNotes()
+    {
+        using var fx = new Fixture();
+        (string repo, string worktree) = RepoWithWorktree(fx, @"x.wt\feat", "feat");
+
+        void DeleteFolderThenBreakRepo(string path)
+        {
+            Directory.Delete(path, recursive: true);
+            Directory.Move(Path.Join(repo, ".git"), Path.Join(repo, ".git-broken"));
+        }
+
+        RemoveReport report = AgentRemover.Run(worktree, Plain, Seams(DeleteFolderThenBreakRepo, NoHolders, NeverStop));
+
+        Assert.Equal(RemoveStatus.Removed, report.Status);
+        Assert.False(report.BranchDeleted, string.Join("; ", report.Notes));
+        Assert.Single(report.Notes, note => note.StartsWith("prune failed:", StringComparison.Ordinal));
+        Assert.Single(report.Notes, note => note.StartsWith("branch feat kept:", StringComparison.Ordinal));
+        Assert.False(Directory.Exists(worktree), "the worktree folder is still there");
+    }
+
+    /// <summary>
     /// A locked recycle with <c>--stop-build-servers</c> stops the allowlisted holder, retries once, and removes the worktree when the
     /// retry goes through.
     /// </summary>

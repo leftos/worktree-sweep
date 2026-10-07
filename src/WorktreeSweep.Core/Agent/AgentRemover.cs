@@ -142,9 +142,12 @@ public static class AgentRemover
             switch (RecycleWithTimeout(candidate.Path, seams))
             {
                 case Recycled.TimedOut:
-                    Release(draft, candidate, Reason.ShellTimeout);
-                    RestoreGitLock(candidate, options, draft);
-                    return;
+                    if (!GoneAfterTimeout(candidate, draft))
+                    {
+                        RestoreGitLock(candidate, options, draft);
+                        return;
+                    }
+                    break;
                 case Recycled.Locked when !RetryLocked(candidate, options, seams, draft):
                     RestoreGitLock(candidate, options, draft);
                     return;
@@ -230,6 +233,34 @@ public static class AgentRemover
         return Recycled.Done;
     }
 
+    private const string MovedAfterTimeoutNote = "the move to the Recycle Bin finished after the recycle timed out";
+
+    /// <summary>
+    /// Handles a recycle that timed out: the Shell moves the folder into the Recycle Bin in one rename early in the call and keeps working
+    /// after, so the folder may already be gone. Releases the worktree only while the folder is still there.
+    /// </summary>
+    /// <returns><see langword="true"/> when the folder is gone and the removal should finish as removed.</returns>
+    private static bool GoneAfterTimeout(RegisteredCandidate candidate, Draft draft)
+    {
+        if (!Path.Exists(candidate.Path))
+        {
+            draft.Notes.Add(MovedAfterTimeoutNote);
+            return true;
+        }
+        int notesBeforeRelease = draft.Notes.Count;
+        Release(draft, candidate, Reason.ShellTimeout);
+        if (!Path.Exists(candidate.Path))
+        {
+            draft.Notes.RemoveRange(notesBeforeRelease, draft.Notes.Count - notesBeforeRelease);
+            draft.Status = RemoveStatus.Removed;
+            draft.Reason = null;
+            draft.Released = null;
+            draft.Notes.Add(MovedAfterTimeoutNote);
+            return true;
+        }
+        return false;
+    }
+
     /// <summary>
     /// On a lock: lists the holders, stops the allowlisted ones when asked, and retries once. Returns whether the folder is gone; when
     /// it is not, the worktree is released.
@@ -262,8 +293,7 @@ public static class AgentRemover
                 Release(draft, candidate, reason);
                 return false;
             default:
-                Release(draft, candidate, Reason.ShellTimeout);
-                return false;
+                return GoneAfterTimeout(candidate, draft);
         }
     }
 

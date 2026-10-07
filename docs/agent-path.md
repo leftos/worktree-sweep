@@ -28,6 +28,14 @@ A recycle on the same volume is a rename of the folder root. Win32 codes are in 
 
 What surprised us: a running exe or loaded DLL doesn't block a recycle; a delete-sharing handle below the root still does; pwsh `Set-Location` holds nothing, because it doesn't change the process cwd.
 
+### A recycle that outlives its timeout
+
+On one volume, `IFileOperation` moves a folder into the Recycle Bin as one atomic rename about 30% of the way through the call; for a tree of 100,000 small files the rename lands after 3-5 s and the call returns at about 13 s. A folder is therefore whole where it was or whole in the Bin, never split. The operation runs in the caller's process, so nothing finishes it after that process exits.
+
+So when the agent removal's 30 s recycle timeout fires, the folder has usually already gone. `AgentRemover` checks again before and after writing the released marker, and reports a folder that is gone as `removed`, with the note `the move to the Recycle Bin finished after the recycle timed out`, pruning the record and handling the branch as for any removal. A rename that lands in the last instant before the process exits can still leave a stale marker and an unpruned record; the next `remove` or sweep prunes both.
+
+A volume whose Recycle Bin is set to delete permanently (`NukeOnDelete`) never reaches the recycle: `RecycleDecider` asks for a permanent delete, which the agent path reports as `released` with `too_big_for_recycle_bin`.
+
 ### What finds holders unelevated
 
 | Method | Finds | Time |
