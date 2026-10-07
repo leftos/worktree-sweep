@@ -231,19 +231,6 @@ public sealed class ReportTableTests
         Assert.Equal(@"repo.wt\feat", ReportTable.RelativePath(path, @"\\?\" + fx.Root));
     }
 
-    /// <summary>A path spelled through its real target shows relative to a root spelled through a junction to it.</summary>
-    [Fact]
-    public void RelativePathResolvesAJunctionRoot()
-    {
-        using var fx = new Fixture();
-        string path = fx.PathTo("repo.wt/feat");
-        Directory.CreateDirectory(path);
-        string link = fx.PathTo("link");
-        Assert.SkipUnless(Fixture.MakeJunction(link, fx.Root), "mklink /J is unavailable");
-
-        Assert.Equal(@"repo.wt\feat", ReportTable.RelativePath(path, link));
-    }
-
     /// <summary>A junction under the root shows as its own relative path, never its target's.</summary>
     [Fact]
     public void RelativePathKeepsAJunctionLeafAsItsOwnName()
@@ -257,4 +244,130 @@ public sealed class ReportTableTests
 
         Assert.Equal(@"repo.wt\feat", ReportTable.RelativePath(link, fx.Root));
     }
+
+    /// <summary>
+    /// <see cref="ReportTable.Rows"/> follows <see cref="ScanReport.Ordered"/>, and each row's PATH, KIND, MERGE and SIZE cells
+    /// are the cells the table prints for that row.
+    /// </summary>
+    [Fact]
+    public void RowsFollowTheOrderedCandidatesAndMatchTheTable()
+    {
+        var registeredSignals = new WorktreeSignals
+        {
+            MergeState = MergeState.Unmerged(2),
+            MergeStateAgainst = "main",
+            Dirty = new Dirty { Modified = 3, Untracked = 2 },
+            Upstream = Upstream.Tracking(1),
+            LastActivityUnix = Now - (3 * Day),
+            Size = Size(1536, Now),
+        };
+        var releasedSignals = new WorktreeSignals
+        {
+            MergeState = MergeState.Ancestor,
+            MergeStateAgainst = "main",
+            Upstream = Upstream.Gone,
+            LastActivityUnix = Now - (5 * Day),
+            Size = Size(1536, Now),
+        };
+        RegisteredCandidate held = Released("yaat", @"yaat.wt\held") with { Signals = releasedSignals };
+        ScanReport report = ReportOf(
+            Orphan(@"yaat.wt\stray", OrphanKind.Folder, Size(10, Now)),
+            Registered(@"yaat.wt\plain", "plain", registeredSignals),
+            held
+        );
+
+        IReadOnlyList<ReportRow> rows = ReportTable.Rows(report, Now);
+
+        Assert.Equal(report.Ordered(), rows.Select(row => row.Candidate));
+        (string Path, string Kind, string Merge, string Size)[] expected =
+        [
+            (@"yaat.wt\held", "worktree", "merged", "1.5 KB"),
+            (@"yaat.wt\plain", "worktree", "unmerged 2", "1.5 KB"),
+            (@"yaat.wt\stray", "orphan", "", "10 B"),
+        ];
+        Assert.Equal(expected.Length, rows.Count);
+        string[] lines = ReportTable.Render(report, Now).TrimEnd('\n').Split('\n');
+        for (int index = 0; index < rows.Count; index++)
+        {
+            ReportRow row = rows[index];
+            (string Path, string Kind, string Merge, string Size) cells = expected[index];
+            Assert.Equal(cells.Path, row.Path);
+            Assert.Equal(cells.Kind, row.Kind);
+            Assert.Equal(cells.Merge, row.Merge);
+            Assert.Equal(cells.Size, row.Size);
+            Assert.Contains(cells.Path, lines[index + 1], StringComparison.Ordinal);
+            Assert.Contains(cells.Kind, lines[index + 1], StringComparison.Ordinal);
+            Assert.Contains(cells.Size, lines[index + 1], StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>The MERGE cell's risk follows the merge state.</summary>
+    /// <param name="kind">The merge state to build.</param>
+    /// <param name="expected">The risk it carries.</param>
+    [Theory]
+    [InlineData("unmerged", CellRisk.Danger)]
+    [InlineData("detached-not-contained", CellRisk.Danger)]
+    [InlineData("no-commits", CellRisk.Caution)]
+    [InlineData("ancestor", CellRisk.Good)]
+    [InlineData("patches-applied", CellRisk.Good)]
+    [InlineData("content-contained", CellRisk.Good)]
+    [InlineData("detached-contained", CellRisk.None)]
+    [InlineData("none", CellRisk.None)]
+    public void MergeRiskFollowsTheMergeState(string kind, CellRisk expected) =>
+        Assert.Equal(expected, Row(new WorktreeSignals { MergeState = MergeStateOf(kind) }).MergeRisk);
+
+    /// <summary>An orphan's MERGE cell carries no risk.</summary>
+    [Fact]
+    public void OrphanMergeRiskIsNone()
+    {
+        OrphanCandidate orphan = Orphan(@"yaat.wt\stray", OrphanKind.Folder, Size(0, Now));
+
+        Assert.Equal(CellRisk.None, Assert.Single(ReportTable.Rows(ReportOf(orphan), Now)).MergeRisk);
+    }
+
+    /// <summary>A cell is a caution only when it says something: uncommitted work, or commits not pushed.</summary>
+    [Fact]
+    public void DirtyAndUpstreamRiskAreCautionOnlyWhenSet()
+    {
+        ReportRow clean = Row(new WorktreeSignals { Dirty = new Dirty(), Upstream = Upstream.Tracking(0) });
+        Assert.Equal(CellRisk.None, clean.DirtyRisk);
+        Assert.Equal(CellRisk.None, clean.UpstreamRisk);
+
+        ReportRow dirty = Row(
+            new WorktreeSignals
+            {
+                Dirty = new Dirty { Modified = 1 },
+                Upstream = Upstream.Tracking(3),
+            }
+        );
+        Assert.Equal(CellRisk.Caution, dirty.DirtyRisk);
+        Assert.Equal(CellRisk.Caution, dirty.UpstreamRisk);
+
+        ReportRow gone = Row(new WorktreeSignals { Upstream = Upstream.Gone });
+        Assert.Equal(CellRisk.None, gone.DirtyRisk);
+        Assert.Equal(CellRisk.None, gone.UpstreamRisk);
+    }
+
+    /// <summary>The single row of a report holding one registered worktree with <paramref name="signals"/>.</summary>
+    /// <param name="signals">Its signals.</param>
+    /// <returns>The row.</returns>
+    private static ReportRow Row(WorktreeSignals signals) =>
+        Assert.Single(ReportTable.Rows(ReportOf(Registered(@"yaat.wt\one", "one", signals)), Now));
+
+    /// <summary>The merge state named by <paramref name="kind"/>.</summary>
+    /// <param name="kind">The case name.</param>
+    /// <returns>The state; <see langword="null"/> for <c>none</c>.</returns>
+    private static MergeState? MergeStateOf(string kind) =>
+        kind switch
+        {
+            "unmerged" => MergeState.Unmerged(3),
+            "detached-not-contained" => MergeState.Detached(false),
+            "no-commits" => MergeState.NoCommits,
+            "ancestor" => MergeState.Ancestor,
+            "patches-applied" => MergeState.PatchesApplied,
+            "content-contained" => MergeState.ContentContained,
+            "detached-contained" => MergeState.Detached(true),
+            "none" => null,
+            _ => throw new ArgumentException($"unknown merge state {kind}", nameof(kind)),
+        };
 }

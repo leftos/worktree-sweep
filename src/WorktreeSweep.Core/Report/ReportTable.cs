@@ -44,7 +44,7 @@ public static class ReportTable
         {
             return WithDiscoveryErrors($"No worktrees or orphan folders found under {report.Root}.\n", report, rootKey);
         }
-        Row[] rows = [.. candidates.Select(candidate => RowOf(candidate, rootKey, nowUnix))];
+        ReportRow[] rows = [.. RowsFor(candidates, rootKey, nowUnix)];
         Column[] columns =
         [
             new("#", true, [.. Enumerable.Range(1, rows.Length).Select(index => index.ToString(CultureInfo.InvariantCulture))]),
@@ -65,6 +65,28 @@ public static class ReportTable
         }
         return WithDiscoveryErrors(table.ToString(), report, rootKey);
     }
+
+    /// <summary>
+    /// The report's candidates as rows, in <see cref="ScanReport.Ordered"/> order: the cell texts <see cref="Render"/> prints for
+    /// each one, the risk of its MERGE, DIRTY and UPSTREAM cells, and the candidate itself.
+    /// </summary>
+    /// <param name="report">The report.</param>
+    /// <param name="nowUnix">The time ages are measured from, in Unix seconds.</param>
+    /// <returns>One row per candidate.</returns>
+    public static IReadOnlyList<ReportRow> Rows(ScanReport report, long nowUnix)
+    {
+        ArgumentNullException.ThrowIfNull(report);
+        string rootKey = Discoverer.PathKey(PathResolver.Resolve(report.Root));
+        return RowsFor(report.Ordered(), rootKey, nowUnix);
+    }
+
+    /// <summary>The rows for <paramref name="candidates"/>, in the given order, with the root's <see cref="Discoverer.PathKey"/> in hand.</summary>
+    /// <param name="candidates">The candidates, in table order.</param>
+    /// <param name="rootKey">The resolved root's <see cref="Discoverer.PathKey"/>.</param>
+    /// <param name="nowUnix">The time ages are measured from, in Unix seconds.</param>
+    /// <returns>One row per candidate.</returns>
+    private static IReadOnlyList<ReportRow> RowsFor(IReadOnlyList<Candidate> candidates, string rootKey, long nowUnix) =>
+        [.. candidates.Select(candidate => RowOf(candidate, rootKey, nowUnix))];
 
     /// <summary>Appends one <c>discovery error: {path}: {message}</c> line per <see cref="ScanReport.DiscoveryErrors"/> entry.</summary>
     /// <param name="text">What <see cref="Render"/> printed.</param>
@@ -190,7 +212,7 @@ public static class ReportTable
         return difference < 0 ? long.MaxValue : difference;
     }
 
-    private static Row RowOf(Candidate candidate, string rootKey, long nowUnix) =>
+    private static ReportRow RowOf(Candidate candidate, string rootKey, long nowUnix) =>
         candidate switch
         {
             RegisteredCandidate registered => RegisteredRow(registered, rootKey, nowUnix),
@@ -198,22 +220,43 @@ public static class ReportTable
             _ => throw new ArgumentException($"unknown candidate type {candidate.GetType().Name}", nameof(candidate)),
         };
 
-    private static Row RegisteredRow(RegisteredCandidate registered, string rootKey, long nowUnix)
+    private static ReportRow RegisteredRow(RegisteredCandidate registered, string rootKey, long nowUnix)
     {
         WorktreeSignals signals = registered.Signals;
-        return new Row
+        string dirty = signals.Dirty is null ? "" : DirtyCell(signals.Dirty);
+        string upstream = UpstreamCell(signals.Upstream);
+        return new ReportRow
         {
             Path = RelativePathToRootKey(registered.Path, rootKey),
             Kind = "worktree",
             Branch = TruncateEnd(registered.Record.Branch ?? "", MaxBranchWidth),
             Merge = signals.MergeState is null ? "" : MergeWord(signals.MergeState),
-            Dirty = signals.Dirty is null ? "" : DirtyCell(signals.Dirty),
-            Upstream = UpstreamCell(signals.Upstream),
+            Dirty = dirty,
+            Upstream = upstream,
             Active = signals.LastActivityUnix is long then ? Age(then, nowUnix) : "",
             Size = signals.Size is null ? "" : HumanBytes(signals.Size.Bytes),
             Flags = RegisteredFlags(registered),
+            MergeRisk = MergeRiskOf(signals.MergeState),
+            DirtyRisk = dirty.Length > 0 ? CellRisk.Caution : CellRisk.None,
+            UpstreamRisk = upstream.StartsWith('+') ? CellRisk.Caution : CellRisk.None,
+            Candidate = registered,
         };
     }
+
+    /// <summary>The risk of a MERGE cell, from the merge state.</summary>
+    /// <param name="state">The merge state; <see langword="null"/> when unknown.</param>
+    /// <returns>The risk.</returns>
+    private static CellRisk MergeRiskOf(MergeState? state) =>
+        state switch
+        {
+            null => CellRisk.None,
+            { Kind: MergeStateKind.Unmerged } or { Kind: MergeStateKind.Detached, Contained: false } => CellRisk.Danger,
+            { Kind: MergeStateKind.NoCommits } => CellRisk.Caution,
+            { Kind: MergeStateKind.Ancestor } or { Kind: MergeStateKind.PatchesApplied } or { Kind: MergeStateKind.ContentContained } =>
+                CellRisk.Good,
+            { Kind: MergeStateKind.Detached } => CellRisk.None,
+            _ => throw new ArgumentException($"unknown merge state kind {state.Kind}", nameof(state)),
+        };
 
     private static string RegisteredFlags(RegisteredCandidate registered)
     {
@@ -233,7 +276,7 @@ public static class ReportTable
         return string.Join(", ", flags);
     }
 
-    private static Row OrphanRow(OrphanCandidate candidate, string rootKey, long nowUnix)
+    private static ReportRow OrphanRow(OrphanCandidate candidate, string rootKey, long nowUnix)
     {
         Orphan orphan = candidate.Orphan;
         bool isLink = orphan.Kind == OrphanKind.Link;
@@ -246,13 +289,14 @@ public static class ReportTable
         {
             flags.Add("registered elsewhere");
         }
-        return new Row
+        return new ReportRow
         {
             Path = RelativePathToRootKey(orphan.Path, rootKey),
             Kind = isLink ? "link" : "orphan",
             Active = candidate.Size.LastWriteUnix is long then ? Age(then, nowUnix) : "",
             Size = isLink ? "" : HumanBytes(candidate.Size.Bytes),
             Flags = string.Join(", ", flags),
+            Candidate = candidate,
         };
     }
 
@@ -342,28 +386,6 @@ public static class ReportTable
         CharLen(text) <= width ? text : Concat(text.EnumerateRunes().Take(Math.Max(width - 1, 0))) + "…";
 
     private static string Concat(IEnumerable<Rune> runes) => string.Concat(runes.Select(rune => rune.ToString()));
-
-    /// <summary>The table cells of one candidate; a cell a candidate has no value for is empty.</summary>
-    private sealed record Row
-    {
-        public required string Path { get; init; }
-
-        public required string Kind { get; init; }
-
-        public string Branch { get; init; } = "";
-
-        public string Merge { get; init; } = "";
-
-        public string Dirty { get; init; } = "";
-
-        public string Upstream { get; init; } = "";
-
-        public string Active { get; init; } = "";
-
-        public string Size { get; init; } = "";
-
-        public string Flags { get; init; } = "";
-    }
 
     private sealed record Column(string Header, bool RightAligned, string[] Cells);
 }
