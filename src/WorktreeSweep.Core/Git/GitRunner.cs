@@ -8,8 +8,10 @@ namespace WorktreeSweep.Git;
 
 /// <summary>
 /// Runs <c>git</c> as a child process. Every call sets <c>GIT_OPTIONAL_LOCKS=0</c> and <c>core.fsmonitor=false</c>, so reading a
-/// repo never rewrites its index or starts a file-system monitor daemon in it, and removes <see cref="RepoLocalEnvVars"/> from the
-/// child's environment.
+/// repo never rewrites its index or starts a file-system monitor daemon in it; sets <c>GIT_TERMINAL_PROMPT=0</c> and
+/// <c>GCM_INTERACTIVE=never</c>, so git and Git Credential Manager fail instead of waiting for an answer nobody can type; removes
+/// <see cref="RepoLocalEnvVars"/> from the child's environment; and kills the child's process tree once it has run for
+/// <see cref="CallTimeout"/>.
 /// </summary>
 public static class GitRunner
 {
@@ -37,14 +39,27 @@ public static class GitRunner
         "GIT_COMMON_DIR",
     ];
 
+    /// <summary>
+    /// How long one git call may run before its process tree is killed: a stalled network share, a locked volume or a credential
+    /// prompt would otherwise hang the scan.
+    /// </summary>
+    public static readonly TimeSpan CallTimeout = TimeSpan.FromSeconds(60);
+
+    /// <summary>
+    /// Bounds each wait, after git exits or is killed, for its output pipes to close, which a process outside git's tree may still
+    /// hold.
+    /// </summary>
+    private static readonly TimeSpan ReadGrace = TimeSpan.FromSeconds(15);
+
     private static readonly UTF8Encoding Utf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: false);
 
     /// <summary>Runs <c>git -C {dir} {args}</c> and returns its trimmed standard output.</summary>
     /// <param name="dir">The directory git runs in.</param>
     /// <param name="args">The git arguments, after <c>-C {dir}</c>.</param>
     /// <returns>Standard output, trimmed.</returns>
-    /// <exception cref="GitException">Git cannot be started or exits with a non-zero code; the message names the command, the
-    /// exit code and git's standard error.</exception>
+    /// <exception cref="GitException">Git cannot be started, does not exit within <see cref="CallTimeout"/>, leaves its output open,
+    /// or exits with a non-zero code; the message names the command, and the exit code and git's standard error or the time limit.
+    /// </exception>
     public static string Run(string dir, IReadOnlyList<string> args) => RunRaw(dir, args).Trim();
 
     /// <summary>
@@ -54,8 +69,9 @@ public static class GitRunner
     /// <param name="dir">The directory git runs in.</param>
     /// <param name="args">The git arguments, after <c>-C {dir}</c>.</param>
     /// <returns>Standard output, untrimmed.</returns>
-    /// <exception cref="GitException">Git cannot be started or exits with a non-zero code; the message names the command, the
-    /// exit code and git's standard error.</exception>
+    /// <exception cref="GitException">Git cannot be started, does not exit within <see cref="CallTimeout"/>, leaves its output open,
+    /// or exits with a non-zero code; the message names the command, and the exit code and git's standard error or the time limit.
+    /// </exception>
     public static string RunRaw(string dir, IReadOnlyList<string> args)
     {
         GitStatus status = RunStatus(dir, args);
@@ -66,7 +82,8 @@ public static class GitRunner
     /// <param name="dir">The directory git runs in.</param>
     /// <param name="args">The git arguments, after <c>-C {dir}</c>.</param>
     /// <returns>The exit code and both streams.</returns>
-    /// <exception cref="GitException">Only when git cannot be started.</exception>
+    /// <exception cref="GitException">Only when git cannot be started, does not exit within <see cref="CallTimeout"/>, or leaves its
+    /// output open.</exception>
     public static GitStatus RunStatus(string dir, IReadOnlyList<string> args) =>
         RunStatusWithEnv(dir, args, ImmutableDictionary<string, string>.Empty);
 
@@ -75,17 +92,46 @@ public static class GitRunner
     /// <param name="args">The git arguments, after <c>-C {dir}</c>.</param>
     /// <param name="env">Variables to set for the child.</param>
     /// <returns>The exit code and both streams.</returns>
-    /// <exception cref="GitException">Only when git cannot be started.</exception>
-    public static GitStatus RunStatusWithEnv(string dir, IReadOnlyList<string> args, IReadOnlyDictionary<string, string> env)
+    /// <exception cref="GitException">Only when git cannot be started, does not exit within <see cref="CallTimeout"/>, or leaves its
+    /// output open.</exception>
+    public static GitStatus RunStatusWithEnv(string dir, IReadOnlyList<string> args, IReadOnlyDictionary<string, string> env) =>
+        RunStatusWithEnv(dir, args, env, CallTimeout, ReadGrace);
+
+    /// <summary>Like the public overload, with the time limit and the grace given instead of <see cref="CallTimeout"/> and
+    /// <see cref="ReadGrace"/>.</summary>
+    /// <param name="dir">The directory git runs in.</param>
+    /// <param name="args">The git arguments, after <c>-C {dir}</c>.</param>
+    /// <param name="env">Variables to set for the child.</param>
+    /// <param name="timeout">How long git may run before its process tree is killed.</param>
+    /// <param name="grace">How long each wait for git's output pipes to close may take, after it exits or is killed.</param>
+    /// <returns>The exit code and both streams.</returns>
+    /// <exception cref="GitException">Only when git cannot be started, does not exit within <paramref name="timeout"/>, or exits
+    /// with its output still held open after <paramref name="grace"/>.</exception>
+    internal static GitStatus RunStatusWithEnv(
+        string dir,
+        IReadOnlyList<string> args,
+        IReadOnlyDictionary<string, string> env,
+        TimeSpan timeout,
+        TimeSpan grace
+    )
     {
         ProcessStartInfo startInfo = StartInfo(dir, args, env);
         using Process process = Start(startInfo, dir, args);
         process.StandardInput.Close();
+        Task<byte[]> stdout = ReadAllAsync(process.StandardOutput.BaseStream);
         Task<byte[]> stderr = ReadAllAsync(process.StandardError.BaseStream);
-        byte[] stdout = ReadAll(process.StandardOutput.BaseStream);
+        Task reads = Observe(Task.WhenAll(stdout, stderr));
+        if (!process.WaitForExit(timeout))
+        {
+            throw Killed(process, reads, Describe(dir, args), timeout, grace);
+        }
+        if (!reads.Wait(grace))
+        {
+            throw new GitException($"{Describe(dir, args)} exited but its output stayed open for {Seconds(grace)} s");
+        }
+        byte[] stdoutBytes = stdout.GetAwaiter().GetResult();
         byte[] stderrBytes = stderr.GetAwaiter().GetResult();
-        process.WaitForExit();
-        return new GitStatus(process.ExitCode, Utf8.GetString(stdout), Utf8.GetString(stderrBytes).Trim());
+        return new GitStatus(process.ExitCode, Utf8.GetString(stdoutBytes), Utf8.GetString(stderrBytes).Trim());
     }
 
     /// <summary>Removes every <see cref="RepoLocalEnvVars"/> entry from a child's environment.</summary>
@@ -135,6 +181,8 @@ public static class GitRunner
             startInfo.Environment[pair.Key] = pair.Value;
         }
         startInfo.Environment["GIT_OPTIONAL_LOCKS"] = "0";
+        startInfo.Environment["GIT_TERMINAL_PROMPT"] = "0";
+        startInfo.Environment["GCM_INTERACTIVE"] = "never";
         return startInfo;
     }
 
@@ -150,12 +198,43 @@ public static class GitRunner
         }
     }
 
-    private static byte[] ReadAll(Stream stream)
+    /// <summary>
+    /// Kills a git child that outlived its limit, with its whole tree: a grandchild such as the shell running an alias holds the
+    /// output pipes open, so killing git alone would leave the reads waiting. Its exit and the reads are each waited for up to
+    /// <paramref name="grace"/>; the timeout is reported either way.
+    /// </summary>
+    private static GitException Killed(Process process, Task reads, string command, TimeSpan timeout, TimeSpan grace)
     {
-        using var buffer = new MemoryStream();
-        stream.CopyTo(buffer);
-        return buffer.ToArray();
+        string limit = $"{command} did not exit within {Seconds(timeout)} s";
+        try
+        {
+            process.Kill(entireProcessTree: true);
+        }
+        catch (Exception error) when (error is Win32Exception or InvalidOperationException or AggregateException)
+        {
+            return new GitException($"{limit}; killing it failed: {error.Message}", error);
+        }
+        _ = process.WaitForExit(grace);
+        _ = reads.Wait(grace);
+        return new GitException($"{limit} and was killed");
     }
+
+    /// <summary>
+    /// A task that ends when the reads do and observes any fault they end with, so waiting on it never throws and a fault after
+    /// the caller has stopped waiting is not left unobserved.
+    /// </summary>
+    private static Task Observe(Task reads) =>
+        reads.ContinueWith(
+            static task =>
+            {
+                _ = task.Exception;
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default
+        );
+
+    private static string Seconds(TimeSpan span) => span.TotalSeconds.ToString("0.##", CultureInfo.InvariantCulture);
 
     private static async Task<byte[]> ReadAllAsync(Stream stream)
     {

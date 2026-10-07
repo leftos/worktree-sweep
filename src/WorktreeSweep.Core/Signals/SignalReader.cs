@@ -139,7 +139,8 @@ public static partial class SignalReader
     /// <summary>The later of the HEAD commit time and the modification time of the worktree's index, in Unix seconds.</summary>
     /// <param name="dir">The worktree.</param>
     /// <returns>The time; <see langword="null"/> when neither can be read.</returns>
-    /// <exception cref="GitException">Only when git cannot be started.</exception>
+    /// <exception cref="GitException">Only when git cannot be started, does not exit within <see cref="GitRunner.CallTimeout"/>, or
+    /// leaves its output open.</exception>
     public static long? LastActivity(string dir)
     {
         ArgumentNullException.ThrowIfNull(dir);
@@ -176,7 +177,8 @@ public static partial class SignalReader
     private static bool RefExists(string dir, string refName) => ExitIsAnswer(dir, ["rev-parse", "--verify", "--quiet", refName]);
 
     /// <summary>Runs a git command whose exit code 0 means yes and 1 means no.</summary>
-    /// <exception cref="GitException">Git exits with any other code.</exception>
+    /// <exception cref="GitException">Git exits with any other code, cannot be started, does not exit within
+    /// <see cref="GitRunner.CallTimeout"/>, or leaves its output open.</exception>
     private static bool ExitIsAnswer(string dir, IReadOnlyList<string> args)
     {
         GitStatus status = GitRunner.RunStatus(dir, args);
