@@ -78,6 +78,29 @@ public sealed class ReleasedMarkerTests
         Assert.Equal(ReasonKind.NotRemovable, released.Reason.Kind);
     }
 
+    /// <summary>A marker written into an admin dir reads back with the same time, reason and holders, and leaves no temp file.</summary>
+    [Fact]
+    public void MarkerWriteThenReadRoundTrips()
+    {
+        using var fx = new Fixture();
+        (string Worktree, string Admin) wt = WorktreeWithAdmin(fx);
+        var written = new Released
+        {
+            ReleasedAtUnix = 1_790_000_000,
+            Reason = Reason.MayHold,
+            Holders = [new ProcessRef { Pid = 42, Exe = "devenv.exe" }, new ProcessRef { Pid = 7, Exe = "svchost.exe" }],
+        };
+
+        ReleasedMarker.Write(wt.Admin, written);
+        Released? read = ReleasedMarker.Read(wt.Admin);
+
+        Assert.NotNull(read);
+        Assert.Equal(written.ReleasedAtUnix, read.ReleasedAtUnix);
+        Assert.Equal(written.Reason, read.Reason);
+        Assert.Equal(written.Holders, read.Holders);
+        Assert.Equal([ReleasedMarker.FileName], Directory.GetFiles(wt.Admin, "worktree-sweep-*").Select(Path.GetFileName));
+    }
+
     /// <summary>A worktree whose folder is gone is found through the common dir's <c>worktrees</c> entries, marker and all.</summary>
     [Fact]
     public void PrunableWorktreeKeepsItsMarker()
