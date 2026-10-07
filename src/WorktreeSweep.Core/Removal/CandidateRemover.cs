@@ -15,10 +15,11 @@ public static class CandidateRemover
     /// </summary>
     /// <param name="candidate">The pick.</param>
     /// <param name="action">How to remove it.</param>
+    /// <param name="owner">The window that owns the Shell's prompts for a recycled pick, or <see cref="ShellRecycler.NoOwner"/>.</param>
     /// <exception cref="LockedException">A file or folder in the tree is in use.</exception>
     /// <exception cref="IOException">The removal failed for any other reason, or the pick was left in place; the message says which.</exception>
     /// <exception cref="GitException">A prune failed.</exception>
-    public static void Remove(Candidate candidate, RemoveAction action)
+    public static void Remove(Candidate candidate, RemoveAction action, nint owner)
     {
         ArgumentNullException.ThrowIfNull(candidate);
         ArgumentNullException.ThrowIfNull(action);
@@ -33,7 +34,7 @@ public static class CandidateRemover
                 break;
             case RemoveAction.Delete { Method: DeleteMethod.Recycle }:
                 PermanentDelete.RejectLink(path);
-                ShellRecycler.Recycle(path);
+                ShellRecycler.Recycle(path, owner);
                 break;
             case RemoveAction.Delete { Method: DeleteMethod.Permanent }:
                 PermanentDelete.RejectLink(path);

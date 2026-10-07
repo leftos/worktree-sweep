@@ -46,6 +46,9 @@ public enum ShellCall
     /// <summary><c>IFileOperation::SetOperationFlags</c>.</summary>
     SetOperationFlags,
 
+    /// <summary><c>IFileOperation::SetOwnerWindow</c>.</summary>
+    SetOwnerWindow,
+
     /// <summary><c>SHCreateItemFromParsingName</c>, which names the folder as a Shell item.</summary>
     SHCreateItemFromParsingName,
 

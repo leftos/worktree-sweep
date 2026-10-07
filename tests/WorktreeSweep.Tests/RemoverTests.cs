@@ -1,4 +1,5 @@
 using WorktreeSweep.Discovery;
+using WorktreeSweep.Recycle;
 using WorktreeSweep.Removal;
 using WorktreeSweep.Report;
 using WorktreeSweep.Unlock;
@@ -326,6 +327,7 @@ public sealed class RemoverTests
         public IReadOnlyList<Swept> Remove(IReadOnlyList<Decision> decisions, CancellationToken cancel) =>
             Remover.RemovePicks(
                 decisions,
+                ShellRecycler.NoOwner,
                 Progress.Add,
                 paths =>
                 {

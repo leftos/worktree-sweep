@@ -1,3 +1,4 @@
+using WorktreeSweep.Recycle;
 using WorktreeSweep.Removal;
 using WorktreeSweep.Report;
 using WorktreeSweep.Unlock;
@@ -27,7 +28,13 @@ public sealed class RemoverPruneTests
         IReadOnlyList<Swept> swept;
         using (new InheritedEnv(new Dictionary<string, string> { ["GIT_TRACE"] = trace }))
         {
-            swept = Remover.RemovePicks([decision], _ => { }, _ => UnlockOutcome.Skipped, TestContext.Current.CancellationToken);
+            swept = Remover.RemovePicks(
+                [decision],
+                ShellRecycler.NoOwner,
+                _ => { },
+                _ => UnlockOutcome.Skipped,
+                TestContext.Current.CancellationToken
+            );
         }
 
         Assert.Equal(new Outcome.Pruned(), swept[0].Outcome);

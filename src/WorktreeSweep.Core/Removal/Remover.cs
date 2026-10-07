@@ -16,6 +16,7 @@ public static class Remover
     /// worktree whose git lock was lifted and that was not removed gets its lock back, with its reason.
     /// </summary>
     /// <param name="decisions">The picks, each with its plan and branch choice.</param>
+    /// <param name="owner">The window that owns the Shell's prompts for a recycled pick, or <see cref="Recycle.ShellRecycler.NoOwner"/>.</param>
     /// <param name="onProgress">
     /// Hears each runnable pick start and finish, by index into <paramref name="decisions"/>, synchronously on this thread; a retried
     /// pick reports both again. What it throws, other than <see cref="OperationCanceledException"/>, is traced and ignored.
@@ -28,6 +29,7 @@ public static class Remover
     /// <returns>One entry per decision, in order.</returns>
     public static IReadOnlyList<Swept> RemovePicks(
         IReadOnlyList<Decision> decisions,
+        nint owner,
         Action<Progress> onProgress,
         Func<IReadOnlyList<string>, UnlockOutcome> offerUnlock,
         CancellationToken cancel
@@ -37,7 +39,7 @@ public static class Remover
         ArgumentNullException.ThrowIfNull(onProgress);
         ArgumentNullException.ThrowIfNull(offerUnlock);
         List<int> runnable = [.. Enumerable.Range(0, decisions.Count).Where(index => decisions[index].Plan is Plan.Run)];
-        var sweeper = new LiveSweeper(decisions, runnable, onProgress, offerUnlock);
+        var sweeper = new LiveSweeper(decisions, runnable, owner, onProgress, offerUnlock);
         IReadOnlyList<SweepResult> results = TwoPassSweep.Run(runnable.Count, sweeper, cancel);
 
         var swept = new Swept[decisions.Count];
@@ -120,11 +122,13 @@ public static class Remover
     /// </summary>
     /// <param name="decisions">Every decision.</param>
     /// <param name="runnable">The indices of the runnable ones, in order.</param>
+    /// <param name="owner">The window that owns the Shell's prompts for a recycled pick.</param>
     /// <param name="onProgress">The progress callback.</param>
     /// <param name="offerUnlock">The unlock offer callback.</param>
     private sealed class LiveSweeper(
         IReadOnlyList<Decision> decisions,
         List<int> runnable,
+        nint owner,
         Action<Progress> onProgress,
         Func<IReadOnlyList<string>, UnlockOutcome> offerUnlock
     ) : ISweeper
@@ -185,7 +189,7 @@ public static class Remover
                 CandidateRemover.GitUnlock(registered);
                 _ = gitUnlocked.Add(index);
             }
-            CandidateRemover.Remove(decision.Candidate, ActionOf(decision));
+            CandidateRemover.Remove(decision.Candidate, ActionOf(decision), owner);
         }
 
         /// <summary>Tells the progress callback; what it throws, other than a cancellation, is traced and ignored.</summary>
