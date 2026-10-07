@@ -36,3 +36,5 @@ Start here. Plans live in [plans/MAIN.md](./plans/MAIN.md).
 - **Caller**: the shell that started worktree-sweep; it is flagged as a locker, never stopped by default.
 - **Feature marker**: `branch: feat/<name>` in a Linear project's content; every item under it lands on the `feat/<name>` branch instead of `main` (user-level `nextup` §3, "Feature branches").
 - **Feature PR**: the draft pull request from a marker's `feat/<name>` into `main`, opened with the marker and merged with `--rebase` by `/ship` once every issue in the marker's project has landed.
+- **Decision round**: the step before an item's briefs where every open design choice its exploration found is settled, from the docs and code or by asking; for the C# rewrite the orchestrator settles them (owner-delegated).
+- **Settle**: record a ruling in the Linear issue's description (and the design doc it belongs to), replacing the open question, so later sessions read it there.

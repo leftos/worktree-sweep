@@ -23,6 +23,7 @@ The whole tool is rewritten in C# on .NET 10 with a WPF window for the interacti
   - An unexpected `merge-tree` exit is a signal error, not a silent "not contained" (WTS-25).
   - Each worktree uses one scratch object folder for all its defaults (WTS-27).
 - **Scan JSON (C4):** snake_case keys (`JsonNamingPolicy.SnakeCaseLower`); one flat `candidates` array tagged by `"kind": "registered"|"orphan"`; every timestamp an ISO 8601 UTC string whose key drops the `_unix` suffix (`last_activity`, `size.last_write`, `released.released_at`); a top-level `discovery_errors` array (`[{repo, path, message}]`, between `repos` and `candidates`, `[]` when empty) lists the discovery errors (WTS-28).
+- **Agent report (C13, settled by the orchestrator, owner-delegated):** `remove <PATH> --json [--force] [--stop-build-servers]`, `--json` required. The report keeps the Rust fields, flat, in the scan JSON's style (snake_case, indented, `null` for absent, `\n`): `status` (`removed`, `released`, `refused`), `reason` (the `Reason` converter's snake_case name), `path` (resolved when the target resolves, else the absolute path given), `repo`, `branch`, `branch_deleted`, `loss`, `cd_to`, `holders`, `may_hold`, `stopped`, `released`, `notes`. Changed from Rust: a holder's `started` is an ISO 8601 UTC string (was a FILETIME), and `released` is an object `{released_at, reason, holders}` when a marker was written, else `null` (was a boolean). A holder keeps `image`, `command_line` and `holds` (`{kind: current_folder|open_handle, path}`). Exit codes stay 0 removed, 5 released, 6 refused, 2 usage; any other failure, an unexpected exception included, prints `error: <message>` on stderr, nothing on stdout, and exits 1. The marker file on disk keeps the Rust shape (Unix seconds). The branch rule is the Rust `branch_action` (`-d` for `Ancestor` and `NoCommits` only, a squash-merged branch kept with a note), not `BranchOffers`. The 30 s recycle timeout runs `ShellRecycler.Recycle` on a dedicated thread abandoned on timeout.
 
 Carried over from the full-screen picker's design (`archive/tui-picker.md`, "Rulings from the review"): every question is asked up front in Review (loss, then permanent delete, then branch, per pick in list order), and a branch answer applies only if its removal succeeds.
 
@@ -86,5 +87,4 @@ C2–C5 are a chain, as are C6–C8 and C9–C11; the chains meet at C11–C13, 
 
 ## Open decisions, asked in the item's decision round
 
-- C13: the agent report's shape and exit codes.
 - C15: the window's layout (a `DataGrid` with a checkbox column above a detail pane is the default), and whether it remembers its size.
