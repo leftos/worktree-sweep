@@ -26,6 +26,12 @@ public static class Discoverer
     /// <summary>Lists every entry, hidden and system ones included, and fails on a folder it cannot read rather than skipping it.</summary>
     internal static EnumerationOptions AllEntries { get; } = new() { AttributesToSkip = 0, IgnoreInaccessible = false };
 
+    /// <summary>
+    /// The name endings, compared ignoring case, of a container folder beside its repo, longest first where one ends another:
+    /// <c>x.wt</c> sits beside <c>x</c>.
+    /// </summary>
+    internal static IReadOnlyList<string> ContainerSuffixes { get; } = [".wt", "-wt", ".worktrees", "-worktrees", "worktrees"];
+
     /// <summary>Finds the repos, registered worktrees, container dirs and orphans under <paramref name="root"/>.</summary>
     /// <remarks>
     /// A child that cannot be read (such as <c>System Volume Information</c>) is skipped with a trace line, and a repo whose
@@ -515,9 +521,8 @@ public static class Discoverer
 
     private static bool IsContainerName(string path)
     {
-        string name = Path.GetFileName(path).ToLowerInvariant();
-        bool wtSuffix = name.EndsWith(".wt", StringComparison.Ordinal) || name.EndsWith("-wt", StringComparison.Ordinal);
-        return wtSuffix || name.EndsWith("worktrees", StringComparison.Ordinal);
+        string name = Path.GetFileName(path);
+        return ContainerSuffixes.Any(suffix => name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>A folder's entries, sorted by path; throws when the folder cannot be listed.</summary>
@@ -531,7 +536,7 @@ public static class Discoverer
     /// <summary>
     /// A path's attributes without following links; <see langword="null"/> when it is missing, or (with a trace line) unreadable.
     /// </summary>
-    private static FileAttributes? AttributesOrSkip(string path)
+    internal static FileAttributes? AttributesOrSkip(string path)
     {
         try
         {
@@ -548,7 +553,8 @@ public static class Discoverer
         }
     }
 
-    private static bool IsPlainDir(FileAttributes? attributes) =>
+    /// <summary>Whether attributes read by <see cref="AttributesOrSkip"/> are a folder's that is not a reparse point.</summary>
+    internal static bool IsPlainDir(FileAttributes? attributes) =>
         attributes is { } found && found.HasFlag(FileAttributes.Directory) && !found.HasFlag(FileAttributes.ReparsePoint);
 
     /// <summary>Whether a reparse point is a symbolic link or a junction, the kinds <see cref="FileSystemInfo.LinkTarget"/> resolves.</summary>

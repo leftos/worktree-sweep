@@ -1,4 +1,5 @@
 using WorktreeSweep.Agent;
+using WorktreeSweep.Git;
 using WorktreeSweep.Report;
 using WorktreeSweep.Signals;
 
@@ -140,6 +141,60 @@ public sealed class AgentResolveTests
         Assert.True(Fixture.SamePath(found.Candidate.Path, worktree), found.Candidate.Path);
         Assert.True(Fixture.SamePath(found.MainWorktree, repo), found.MainWorktree);
         Assert.NotNull(found.Candidate.Record.Prunable);
+        Assert.Equal(MergeState.NoCommits, found.Candidate.Signals.MergeState);
+    }
+
+    /// <summary>
+    /// A missing path whose repo's worktree list times out throws instead of being reported not found: every repo near the path
+    /// sits on the same volume, so none could be read.
+    /// </summary>
+    [Fact]
+    public void MissingPathOnAStalledVolumeThrowsInsteadOfNotFound()
+    {
+        using var fx = new Fixture();
+        (_, string worktree) = RepoWithWorktree(fx);
+        Directory.Delete(worktree, recursive: true);
+
+        _ = Assert.Throws<GitTimeoutException>(() =>
+            PathResolution.ResolveOne(worktree, new VolumeStalls(), _ => throw new GitTimeoutException("worktree list timed out"))
+        );
+    }
+
+    /// <summary>
+    /// A worktree folder whose <c>.git</c> file is gone is prunable to git but still on disk: it is refused as an orphan, as no live
+    /// registration backs the folder.
+    /// </summary>
+    [Fact]
+    public void PrunableRecordWhoseFolderRemainsIsRefused()
+    {
+        using var fx = new Fixture();
+        string repo = fx.Repo("x");
+        string worktree = fx.PathTo(@"x\.claude\worktrees\a");
+        Fixture.AddWorktree(repo, worktree, "a");
+        File.Delete(Path.Join(worktree, ".git"));
+
+        Assert.Equal(RefusalReason.Orphan, Refusal(worktree));
+    }
+
+    /// <summary>
+    /// A worktree registered beside its repo (<c>x-feature</c> next to <c>x</c>), its folder deleted, has the fixture root as its
+    /// nearest existing ancestor, so its record is found through the root's child repos.
+    /// </summary>
+    [Fact]
+    public void MissingSiblingWorktreeResolvesThroughTheParentsChildRepos()
+    {
+        using var fx = new Fixture();
+        string repo = fx.Repo("x");
+        string worktree = fx.PathTo("x-feature");
+        Fixture.AddWorktree(repo, worktree, "feature");
+        Directory.Delete(worktree, recursive: true);
+
+        Resolution.Resolved found = Resolved(worktree);
+
+        Assert.True(Fixture.SamePath(found.Candidate.Path, worktree), found.Candidate.Path);
+        Assert.True(Fixture.SamePath(found.MainWorktree, repo), found.MainWorktree);
+        Assert.NotNull(found.Candidate.Record.Prunable);
+        Assert.Equal("feature", found.Candidate.Record.Branch);
         Assert.Equal(MergeState.NoCommits, found.Candidate.Signals.MergeState);
     }
 

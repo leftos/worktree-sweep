@@ -10,11 +10,6 @@ namespace WorktreeSweep.Agent;
 /// <summary>Resolves a path an agent asks to remove to the registered linked worktree whose root it is.</summary>
 public static class PathResolution
 {
-    /// <summary>The name endings of a container folder beside its repo, tried in order: <c>x.wt</c> sits beside <c>x</c>.</summary>
-    private static readonly string[] ContainerSuffixes = [".wt", "-wt", ".worktrees", "-worktrees", "worktrees"];
-
-    private static readonly EnumerationOptions AllEntries = new() { AttributesToSkip = 0 };
-
     /// <summary>
     /// Resolves <paramref name="path"/> to the registered linked worktree whose root it is. A registered record whose folder is gone
     /// resolves as prunable, with the merge state of its branch read from the main worktree.
@@ -35,13 +30,29 @@ public static class PathResolution
     /// <param name="path">The path given for removal; relative paths are made absolute against the current folder.</param>
     /// <returns>The resolved worktree, or the refusal.</returns>
     /// <exception cref="ArgumentException"><paramref name="path"/> is empty or not a valid path.</exception>
-    /// <exception cref="GitException">Git cannot be started, times out, or fails listing a repo's worktrees.</exception>
+    /// <exception cref="GitTimeoutException">A git read times out or its volume is stalled, so a repo that may register the path
+    /// cannot be read; a missing path is never reported not found for that.</exception>
+    /// <exception cref="GitException">Git cannot be started, or fails listing the worktrees of the repo holding an existing
+    /// folder.</exception>
     /// <exception cref="IOException">The path's attributes cannot be read for a reason other than its absence.</exception>
     /// <exception cref="UnauthorizedAccessException">The path's attributes cannot be read for lack of access.</exception>
-    public static Resolution ResolveOne(string path)
+    public static Resolution ResolveOne(string path) => ResolveOne(path, new VolumeStalls(), Discoverer.ListWorktrees);
+
+    /// <summary>Resolves what <see cref="ResolveOne(string)"/> resolves, listing each repo's worktrees with <paramref name="listWorktrees"/>.</summary>
+    /// <param name="path">The path given for removal; relative paths are made absolute against the current folder.</param>
+    /// <param name="stalls">The volumes an earlier git call has stalled, shared by the whole call.</param>
+    /// <param name="listWorktrees">Lists a repo's worktrees, as <see cref="Discoverer.ListWorktrees"/> does.</param>
+    /// <returns>The resolved worktree, or the refusal.</returns>
+    /// <exception cref="ArgumentException"><paramref name="path"/> is empty or not a valid path.</exception>
+    /// <exception cref="GitTimeoutException">A git read times out or its volume is stalled, so a repo that may register the path
+    /// cannot be read; a missing path is never reported not found for that.</exception>
+    /// <exception cref="GitException">Git cannot be started, or fails listing the worktrees of the repo holding an existing
+    /// folder.</exception>
+    /// <exception cref="IOException">The path's attributes cannot be read for a reason other than its absence.</exception>
+    /// <exception cref="UnauthorizedAccessException">The path's attributes cannot be read for lack of access.</exception>
+    internal static Resolution ResolveOne(string path, VolumeStalls stalls, Func<string, IReadOnlyList<WorktreeRecord>> listWorktrees)
     {
         ArgumentNullException.ThrowIfNull(path);
-        var stalls = new VolumeStalls();
         string absolute = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
         FileAttributes attributes;
         try
@@ -50,7 +61,7 @@ public static class PathResolution
         }
         catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException)
         {
-            return ResolveMissing(absolute, stalls);
+            return ResolveMissing(absolute, stalls, listWorktrees);
         }
         bool isDirectory = attributes.HasFlag(FileAttributes.Directory);
         FileSystemInfo info = isDirectory ? new DirectoryInfo(absolute) : new FileInfo(absolute);
@@ -58,32 +69,33 @@ public static class PathResolution
         {
             return Refuse(RefusalReason.Link, null);
         }
-        return isDirectory ? ResolveFolder(PathResolver.Resolve(absolute), stalls) : Refuse(RefusalReason.NotAWorktree, null);
+        return isDirectory ? ResolveFolder(PathResolver.Resolve(absolute), stalls, listWorktrees) : Refuse(RefusalReason.NotAWorktree, null);
     }
 
     /// <summary>Resolves an existing folder that is not a link, already resolved to the name the system gives it.</summary>
-    private static Resolution ResolveFolder(string target, VolumeStalls stalls)
+    private static Resolution ResolveFolder(string target, VolumeStalls stalls, Func<string, IReadOnlyList<WorktreeRecord>> listWorktrees)
     {
         bool hasGitFile = File.Exists(Path.Join(target, ".git"));
-        if (CommonDirOrNull(target, stalls) is not { } common)
+        if (Scanner.CommonDirOrNull(target, stalls) is not { } common)
         {
             return Refuse(hasGitFile ? RefusalReason.Orphan : RefusalReason.NotAWorktree, null);
         }
-        IReadOnlyList<WorktreeRecord> records = Discoverer.ListWorktrees(common);
+        IReadOnlyList<WorktreeRecord> records = listWorktrees(common);
         if (records.Count == 0)
         {
             return Refuse(RefusalReason.NotAWorktree, null);
         }
         string mainWorktree = records[0].Path;
         string key = Discoverer.PathKey(target);
-        int index = IndexOf(records, key);
+        List<string> recordKeys = RecordKeys(records);
+        int index = recordKeys.IndexOf(key);
         if (index >= 0)
         {
             // Git calls it prunable (its .git file is gone) while the folder is still here: no live registration backs the folder,
             // so removing it is not a prune.
             return records[index].Prunable is not null ? Refuse(RefusalReason.Orphan, mainWorktree) : ResolveRecord(records, index, common, stalls);
         }
-        bool underRecord = records.Any(record => key.StartsWith(RecordKey(record) + Path.DirectorySeparatorChar, StringComparison.Ordinal));
+        bool underRecord = recordKeys.Exists(recordKey => key.StartsWith(recordKey + Path.DirectorySeparatorChar, StringComparison.Ordinal));
         RefusalReason reason =
             hasGitFile ? RefusalReason.Orphan
             : underRecord ? RefusalReason.Subfolder
@@ -95,7 +107,9 @@ public static class PathResolution
     /// Resolves a path with nothing on disk: a prunable record of the repo holding its nearest existing ancestor, of the repo a
     /// container ancestor sits beside, or of one of the ancestor's direct child repos.
     /// </summary>
-    private static Resolution ResolveMissing(string absolute, VolumeStalls stalls)
+    /// <exception cref="GitTimeoutException">A repo's git read times out or its volume is stalled; every repo near the path sits on
+    /// the same volume, so none of the rest could be read either.</exception>
+    private static Resolution ResolveMissing(string absolute, VolumeStalls stalls, Func<string, IReadOnlyList<WorktreeRecord>> listWorktrees)
     {
         string? existing = Path.GetDirectoryName(absolute);
         while (existing is not null && !Directory.Exists(existing))
@@ -110,25 +124,26 @@ public static class PathResolution
         string key = Discoverer.PathKey(Path.Join(canonical, Path.GetRelativePath(existing, absolute)));
         foreach (string repo in ReposNear(canonical))
         {
-            if (CommonDirOrNull(repo, stalls) is not { } common)
+            if (Scanner.CommonDirOrNull(repo, stalls) is not { } common)
             {
                 continue;
             }
             IReadOnlyList<WorktreeRecord> records;
             try
             {
-                records = Discoverer.ListWorktrees(common);
+                records = listWorktrees(common);
             }
             catch (GitException error)
             {
                 if (error is GitTimeoutException)
                 {
                     stalls.Mark(repo);
+                    throw;
                 }
                 Trace.TraceWarning($"skipping repo {repo}: {error.Message}");
                 continue;
             }
-            int index = IndexOf(records, key);
+            int index = RecordKeys(records).IndexOf(key);
             if (index >= 0)
             {
                 return ResolveRecord(records, index, common, stalls);
@@ -170,7 +185,7 @@ public static class PathResolution
             return
             [
                 .. Directory
-                    .EnumerateDirectories(dir, "*", AllEntries)
+                    .EnumerateDirectories(dir, "*", Discoverer.AllEntries)
                     .Where(child => IsPlainDir(child) && IsPlainDir(Path.Join(child, ".git")))
                     .Order(StringComparer.Ordinal),
             ];
@@ -182,26 +197,14 @@ public static class PathResolution
         }
     }
 
-    /// <summary>Whether <paramref name="path"/> is a folder that is not a reparse point; <see langword="false"/> when unreadable.</summary>
-    private static bool IsPlainDir(string path)
-    {
-        try
-        {
-            FileAttributes attributes = File.GetAttributes(path);
-            return attributes.HasFlag(FileAttributes.Directory) && !attributes.HasFlag(FileAttributes.ReparsePoint);
-        }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-        {
-            return false;
-        }
-    }
+    private static bool IsPlainDir(string path) => Discoverer.IsPlainDir(Discoverer.AttributesOrSkip(path));
 
     /// <summary>The repo a container folder sits beside: <c>D:\x</c> for <c>D:\x.wt</c>, <c>D:\x-wt</c> or <c>D:\x.worktrees</c>.</summary>
     /// <returns>The repo's path; <see langword="null"/> when the folder's name has no container ending, or nothing before it.</returns>
     private static string? ContainerRepo(string dir)
     {
         string name = Path.GetFileName(dir);
-        string? suffix = Array.Find(ContainerSuffixes, ending => name.EndsWith(ending, StringComparison.OrdinalIgnoreCase));
+        string? suffix = Discoverer.ContainerSuffixes.FirstOrDefault(ending => name.EndsWith(ending, StringComparison.OrdinalIgnoreCase));
         if (suffix is null || name.Length == suffix.Length || Path.GetDirectoryName(dir) is not { } parent)
         {
             return null;
@@ -265,30 +268,9 @@ public static class PathResolution
         return candidate with { Signals = signals };
     }
 
-    /// <summary>The repo's common git dir as seen from <paramref name="dir"/>; <see langword="null"/> when git finds no repo there.</summary>
-    /// <exception cref="GitException">Git cannot be started or times out, or the volume is stalled.</exception>
-    private static string? CommonDirOrNull(string dir, VolumeStalls stalls)
-    {
-        stalls.ThrowIfStalled(dir);
-        GitStatus status = GitRunner.RunStatus(dir, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
-        return status.Success ? Discoverer.FromGitPath(status.Stdout.Trim()) : null;
-    }
-
-    /// <summary>The index of the record whose <see cref="RecordKey"/> is <paramref name="key"/>; -1 when none is.</summary>
-    private static int IndexOf(IReadOnlyList<WorktreeRecord> records, string key)
-    {
-        for (int index = 0; index < records.Count; index++)
-        {
-            if (RecordKey(records[index]) == key)
-            {
-                return index;
-            }
-        }
-        return -1;
-    }
-
-    /// <summary>A record's comparison key, from its path resolved (its nearest existing ancestor when the folder is gone).</summary>
-    private static string RecordKey(WorktreeRecord record) => Discoverer.PathKey(PathResolver.Resolve(record.Path));
+    /// <summary>Each record's comparison key, from its path resolved (its nearest existing ancestor when the folder is gone), in order.</summary>
+    private static List<string> RecordKeys(IReadOnlyList<WorktreeRecord> records) =>
+        [.. records.Select(record => Discoverer.PathKey(PathResolver.Resolve(record.Path)))];
 
     private static Resolution.Refusal Refuse(RefusalReason reason, string? repo) => new(reason, repo);
 }

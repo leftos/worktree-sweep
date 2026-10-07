@@ -122,8 +122,12 @@ public static class Scanner
     {
         try
         {
-            stalls.ThrowIfStalled(repo);
-            return GitRunner.CommonDir(repo);
+            if (CommonDirOrNull(repo, stalls) is { } common)
+            {
+                return common;
+            }
+            Trace.TraceWarning($"cannot find the git dir of {repo}: git finds no repo there");
+            return null;
         }
         catch (GitException error)
         {
@@ -134,6 +138,19 @@ public static class Scanner
             Trace.TraceWarning($"cannot find the git dir of {repo}: {error.Message}");
             return null;
         }
+    }
+
+    /// <summary>The common git dir of the repo <paramref name="dir"/> lies in, unless its volume is stalled.</summary>
+    /// <param name="dir">A folder inside the repo or one of its worktrees.</param>
+    /// <param name="stalls">The volumes an earlier git call has stalled.</param>
+    /// <returns>The common git dir; <see langword="null"/> when git finds no repo there.</returns>
+    /// <exception cref="GitTimeoutException">The volume is stalled, or git does not exit within its time limit.</exception>
+    /// <exception cref="GitException">Git cannot be started, or prints a path that is not fully qualified.</exception>
+    internal static string? CommonDirOrNull(string dir, VolumeStalls stalls)
+    {
+        stalls.ThrowIfStalled(dir);
+        GitStatus status = GitRunner.RunStatus(dir, GitRunner.CommonDirArgs);
+        return status.Success ? GitRunner.FullCommonDir(dir, status.Stdout) : null;
     }
 
     private sealed record RepoLookup(Repo Repo, DefaultBranches Defaults, string? CommonDir);
