@@ -39,7 +39,7 @@ public static class ProcessStopper
     /// <exception cref="InvalidOperationException">The PID now belongs to another image, or to a process that started at another
     /// time; nothing was stopped.</exception>
     /// <exception cref="Win32Exception">
-    /// The process cannot be opened, its image name read or it terminated, or it has not exited within the wait.
+    /// The process cannot be opened, its image name or start time read or it terminated, or it has not exited within the wait.
     /// </exception>
     public static void Stop(int pid, string expectedExe, ulong? expectedStart, TimeSpan wait)
     {
@@ -72,9 +72,18 @@ public static class ProcessStopper
         if (expectedStart is ulong expected)
         {
             ulong? started = ProcessQuery.CreationTime(process);
+            if (started is null)
+            {
+                int error = Marshal.GetLastPInvokeError();
+                if (HasExited(process))
+                {
+                    return;
+                }
+                throw new Win32Exception(error, $"cannot read the start time of process {pid}");
+            }
             if (started != expected)
             {
-                throw new InvalidOperationException(NotSeenMessage(pid, started, expected));
+                throw new InvalidOperationException(NotSeenMessage(pid, started.Value, expected));
             }
         }
         if (!PInvoke.TerminateProcess(process, StoppedExitCode))
@@ -91,16 +100,16 @@ public static class ProcessStopper
 
     /// <summary>The message for a PID that no longer names the process the caller saw.</summary>
     /// <param name="pid">The process.</param>
-    /// <param name="actual">The creation time read from the open handle, or <see langword="null"/> when it could not be read.</param>
+    /// <param name="actual">The creation time read from the open handle.</param>
     /// <param name="expected">The creation time the caller saw.</param>
     /// <returns>The message.</returns>
-    private static string NotSeenMessage(int pid, ulong? actual, ulong expected) =>
+    private static string NotSeenMessage(int pid, ulong actual, ulong expected) =>
         $"process {pid} is not the process that was seen (started {StartedText(actual)}, expected {StartedText(expected)}); not stopped";
 
-    /// <summary>A creation time as text, or <c>unknown</c> when it could not be read.</summary>
-    /// <param name="started">The creation time, or <see langword="null"/>.</param>
+    /// <summary>A creation time as text.</summary>
+    /// <param name="started">The creation time.</param>
     /// <returns>The text.</returns>
-    private static string StartedText(ulong? started) => started is ulong value ? value.ToString(CultureInfo.InvariantCulture) : "unknown";
+    private static string StartedText(ulong started) => started.ToString(CultureInfo.InvariantCulture);
 
     private static bool TryImageName(SafeFileHandle process, [NotNullWhen(true)] out string? image)
     {

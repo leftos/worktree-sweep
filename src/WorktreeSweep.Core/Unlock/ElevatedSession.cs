@@ -73,7 +73,7 @@ public sealed class ElevatedSession(TextReader input, TextWriter output, IHandle
         bool acted = false;
         foreach (Locker locker in lockers)
         {
-            bool isCaller = IsCaller(locker.Pid, callerPid, callerStarted);
+            bool isCaller = IsCaller(locker, callerPid, callerStarted);
             string label = $"{locker.Process} (pid {locker.Pid})";
             Describe(locker, label, isCaller);
             LockerAction action = Choose(label, isCaller);
@@ -93,32 +93,32 @@ public sealed class ElevatedSession(TextReader input, TextWriter output, IHandle
     /// Whether the locker is the caller, judged once per PID per session so a PID offered again in a later round reuses the
     /// verdict and its warning is written once.
     /// </summary>
-    /// <param name="pid">The locker's PID.</param>
+    /// <param name="locker">The process the scan saw, with the creation time it read then.</param>
     /// <param name="callerPid">The PID of the process that started the unelevated run, or <see langword="null"/>.</param>
     /// <param name="callerStarted">That process's creation time, or <see langword="null"/> when it is not known.</param>
     /// <returns><see langword="true"/> when the locker is the process that started the unelevated run.</returns>
-    private bool IsCaller(int pid, int? callerPid, ulong? callerStarted)
+    private bool IsCaller(Locker locker, int? callerPid, ulong? callerStarted)
     {
-        if (!callerVerdicts.TryGetValue(pid, out bool verdict))
+        if (!callerVerdicts.TryGetValue(locker.Pid, out bool verdict))
         {
-            verdict = JudgeCaller(pid, callerPid, callerStarted);
-            callerVerdicts[pid] = verdict;
+            verdict = JudgeCaller(locker, callerPid, callerStarted);
+            callerVerdicts[locker.Pid] = verdict;
         }
         return verdict;
     }
 
     /// <summary>
-    /// Judges one locker: the PIDs must match, and when the caller's creation time is known so must the locker's. A known
-    /// different time means the PID was reused by another process, and the locker is an ordinary one, with a warning; an
-    /// unreadable time keeps it the caller, whose default of Skip is the safe one.
+    /// Judges one locker: the PIDs must match, and when the caller's creation time is known so must the locker's, as the scan
+    /// read it. A known different time means the PID was reused by another process, and the locker is an ordinary one, with a
+    /// warning; a time the scan could not read keeps it the caller, whose default of Skip is the safe one.
     /// </summary>
-    /// <param name="pid">The locker's PID.</param>
+    /// <param name="locker">The process the scan saw, with the creation time it read then.</param>
     /// <param name="callerPid">The PID of the process that started the unelevated run, or <see langword="null"/>.</param>
     /// <param name="callerStarted">That process's creation time, or <see langword="null"/> when it is not known.</param>
     /// <returns><see langword="true"/> when the locker is the process that started the unelevated run.</returns>
-    private bool JudgeCaller(int pid, int? callerPid, ulong? callerStarted)
+    private static bool JudgeCaller(Locker locker, int? callerPid, ulong? callerStarted)
     {
-        if (callerPid != pid)
+        if (callerPid != locker.Pid)
         {
             return false;
         }
@@ -126,9 +126,9 @@ public sealed class ElevatedSession(TextReader input, TextWriter output, IHandle
         {
             return true;
         }
-        if (processes.StartedAt(pid) is ulong started && started != expected)
+        if (locker.Started is ulong started && started != expected)
         {
-            Trace.TraceWarning($"pid {pid} is no longer the process that started worktree-sweep");
+            Trace.TraceWarning($"pid {locker.Pid} is no longer the process that started worktree-sweep");
             return false;
         }
         return true;
@@ -273,9 +273,10 @@ public sealed class ElevatedSession(TextReader input, TextWriter output, IHandle
     }
 
     /// <summary>
-    /// What a fresh look at the locker's PID finds: the process the scan saw, one that is gone, or another process that has taken
-    /// the PID since. A table that cannot be taken is traced and counts as gone, as does a creation time that can no longer be
-    /// read, so nothing is acted on behind a PID that may have been reused.
+    /// What a fresh look at the locker's PID finds: the process the scan saw, one that is gone, another process that has taken
+    /// the PID since, or one that cannot be confirmed to be either. A table that cannot be taken is traced and counts as gone; a
+    /// creation time that was not read at the scan, or cannot be read now, counts as unconfirmed, so nothing is acted on behind a
+    /// PID that may have been reused.
     /// </summary>
     /// <param name="locker">The process the scan saw.</param>
     /// <returns>The verdict.</returns>
@@ -295,22 +296,30 @@ public sealed class ElevatedSession(TextReader input, TextWriter output, IHandle
         }
         if (locker.Started is not ulong expected)
         {
-            return LockerState.Same;
+            return LockerState.Unconfirmed;
         }
         return processes.StartedAt(locker.Pid) switch
         {
-            null => LockerState.Exited,
+            null => LockerState.Unconfirmed,
             ulong started when started == expected => LockerState.Same,
             _ => LockerState.Replaced,
         };
     }
 
-    /// <summary>The outcome for a locker the re-check found gone or taken by another process: nothing was acted on.</summary>
+    /// <summary>The outcome for a locker the re-check would not act on: nothing was acted on.</summary>
     /// <param name="label">The process, as <c>{name} (pid {pid})</c>.</param>
     /// <param name="state">What the re-check found; never <see cref="LockerState.Same"/>.</param>
     /// <returns>The line and that nothing was acted on.</returns>
     private static Outcome Skipped(string label, LockerState state) =>
-        new(state == LockerState.Replaced ? ReplacedLine(label) : ExitedLine(label), false);
+        new(
+            state switch
+            {
+                LockerState.Replaced => ReplacedLine(label),
+                LockerState.Unconfirmed => UnconfirmedLine(label),
+                _ => ExitedLine(label),
+            },
+            false
+        );
 
     /// <summary>The line reporting a process that is gone.</summary>
     /// <param name="label">The process, as <c>{name} (pid {pid})</c>.</param>
@@ -321,6 +330,11 @@ public sealed class ElevatedSession(TextReader input, TextWriter output, IHandle
     /// <param name="label">The process, as <c>{name} (pid {pid})</c>.</param>
     /// <returns>The line.</returns>
     private static string ReplacedLine(string label) => $"{label} is no longer the process the scan saw; skipped.";
+
+    /// <summary>The line reporting a PID that could not be confirmed as the process the scan saw.</summary>
+    /// <param name="label">The process, as <c>{name} (pid {pid})</c>.</param>
+    /// <returns>The line.</returns>
+    private static string UnconfirmedLine(string label) => $"{label} could not be confirmed as the process the scan saw; skipped.";
 
     /// <summary>Writes one line and flushes it, so a user sees it before the next read.</summary>
     /// <param name="line">The line.</param>
@@ -336,11 +350,14 @@ public sealed class ElevatedSession(TextReader input, TextWriter output, IHandle
         /// <summary>The PID still names the process the scan saw.</summary>
         Same,
 
-        /// <summary>The process is gone, or nothing could confirm it is still there.</summary>
+        /// <summary>The process is gone, or the process table could not be read.</summary>
         Exited,
 
         /// <summary>Another process has taken the PID since the scan.</summary>
         Replaced,
+
+        /// <summary>The PID cannot be confirmed, at either reading, as the process the scan saw.</summary>
+        Unconfirmed,
     }
 
     /// <summary>What one round of offers did.</summary>
