@@ -56,15 +56,41 @@ public static class Scanner
     private static Candidate ReadCandidate(ScanJob job, VolumeStalls stalls) =>
         job switch
         {
-            RegisteredJob registered => new RegisteredCandidate
-            {
-                Record = registered.Record,
-                Repo = registered.Repo.Repo.Path,
-                Released = ReleasedMarker.Find(registered.Repo.CommonDir, registered.Record.Path),
-                Signals = SignalReader.ReadWorktreeSignals(registered.Repo.Defaults, registered.Record, stalls),
-            },
+            RegisteredJob registered => ReadRegistered(
+                registered.Repo.Repo.Path,
+                registered.Repo.Defaults,
+                registered.Repo.CommonDir,
+                registered.Record,
+                stalls
+            ),
             OrphanJob orphan => new OrphanCandidate { Orphan = orphan.Orphan, Size = SignalReader.WalkSize(orphan.Orphan.Path) },
             _ => throw new UnreachableException($"unknown scan job {job}"),
+        };
+
+    /// <summary>
+    /// The candidate for a registered linked worktree: its record, its released marker and its signals, read against the repo's
+    /// default branches. A prunable registration's signals are all unknown, as its folder is gone.
+    /// </summary>
+    /// <param name="repo">The main worktree of the repo that registers it.</param>
+    /// <param name="defaults">The repo's default branches, from <see cref="DefaultBranchesOrNone"/>.</param>
+    /// <param name="commonDir">The repo's common git dir, where a prunable worktree's released marker is found; <see langword="null"/>
+    /// when unknown.</param>
+    /// <param name="record">The worktree's record.</param>
+    /// <param name="stalls">The volumes an earlier git call has stalled.</param>
+    /// <returns>The candidate.</returns>
+    internal static RegisteredCandidate ReadRegistered(
+        string repo,
+        DefaultBranches defaults,
+        string? commonDir,
+        WorktreeRecord record,
+        VolumeStalls stalls
+    ) =>
+        new()
+        {
+            Record = record,
+            Repo = repo,
+            Released = ReleasedMarker.Find(commonDir, record.Path),
+            Signals = SignalReader.ReadWorktreeSignals(defaults, record, stalls),
         };
 
     /// <summary>A repo's default branches, or none when git cannot give them, a stalled volume included.</summary>
