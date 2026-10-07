@@ -28,8 +28,8 @@ public static class RemovalPlanner
         {
             return new PlanNeed.Run(new RemoveAction.PruneRegistration());
         }
-        long? size = candidate.SizeBytes;
-        ulong bytes = size is null || size < 0 ? ulong.MaxValue : (ulong)size.Value;
+        KnownSize? size = candidate.KnownSize;
+        ulong bytes = size is null ? ulong.MaxValue : (ulong)size.Bytes;
         RecycleDecision decision = RecycleDecider.Decide(bytes, capacity);
         return decision switch
         {

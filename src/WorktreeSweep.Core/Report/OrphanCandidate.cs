@@ -17,4 +17,7 @@ public sealed record OrphanCandidate : Candidate
 
     /// <inheritdoc/>
     public override long? SizeBytes => Size.Bytes;
+
+    /// <inheritdoc/>
+    protected override int Unreadable => Size.Unreadable;
 }

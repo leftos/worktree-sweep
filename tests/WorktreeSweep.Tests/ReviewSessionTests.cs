@@ -245,6 +245,14 @@ public sealed class ReviewSessionTests
 
         ReviewTotals permanent = new() { Permanent = 1, PermanentUnknown = 1 };
         Assert.Equal($"Remove 1 item: 1 permanently (at least {ReportTable.HumanBytes(0)}; 1 of unknown size).", permanent.FinalSentence());
+
+        ReviewTotals partial = new()
+        {
+            Recycle = 1,
+            RecycleBytes = Mb,
+            RecyclePartial = 1,
+        };
+        Assert.Equal($"Remove 1 item: 1 to the Recycle Bin (at least {ReportTable.HumanBytes(Mb)}).", partial.FinalSentence());
     }
 
     /// <summary>A pick whose size the scan could not read counts in its part's unknown total and reads "at least" in the sentence.</summary>
@@ -260,6 +268,31 @@ public sealed class ReviewSessionTests
         ReviewTotals totals = review.Totals() ?? throw new InvalidOperationException("every question is answered");
         Assert.Equal(new ReviewTotals { Permanent = 1, PermanentUnknown = 1 }, totals);
         Assert.Equal("Remove 1 item: 1 permanently (at least 0 B; 1 of unknown size).", totals.FinalSentence());
+    }
+
+    /// <summary>A partly read size counts in its part's partial total and reads "at least" even when nothing is unknown.</summary>
+    [Fact]
+    public void ReviewPartialSizeReadsAsAtLeast()
+    {
+        OrphanCandidate partial = Orphan(OrphanKind.Folder) with
+        {
+            Size = new SizeInfo { Bytes = 10, Unreadable = 1 },
+        };
+
+        ReviewSession review = Session([partial], _ => Roomy);
+
+        Assert.Null(review.Current);
+        ReviewTotals totals = review.Totals() ?? throw new InvalidOperationException("every question is answered");
+        Assert.Equal(
+            new ReviewTotals
+            {
+                Recycle = 1,
+                RecycleBytes = 10,
+                RecyclePartial = 1,
+            },
+            totals
+        );
+        Assert.Equal("Remove 1 item: 1 to the Recycle Bin (at least 10 B).", totals.FinalSentence());
     }
 
     /// <summary>A failed worktree list in the orphan's repo plans it as skipped and asks nothing about it.</summary>

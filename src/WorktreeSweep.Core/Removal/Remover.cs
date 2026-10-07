@@ -76,20 +76,19 @@ public static class Remover
             _ => throw new UnreachableException($"unknown sweep result {result}"),
         };
 
-    /// <summary>The outcome of a pick removed by <paramref name="action"/>; a size that is unknown or negative reports no bytes.</summary>
+    /// <summary>The outcome of a pick removed by <paramref name="action"/>; its unknown or negative size reports no size.</summary>
     /// <param name="action">How it was removed.</param>
     /// <param name="candidate">The pick.</param>
     /// <returns>Its outcome.</returns>
     private static Outcome Removed(RemoveAction action, Candidate candidate)
     {
-        long? size = candidate.SizeBytes;
-        long? bytes = size is null || size < 0 ? null : size;
+        KnownSize? size = candidate.KnownSize;
         return action switch
         {
             RemoveAction.RemoveLink => new Outcome.LinkRemoved(),
             RemoveAction.PruneRegistration => new Outcome.Pruned(),
-            RemoveAction.Delete { Method: DeleteMethod.Recycle } => new Outcome.Recycled(bytes),
-            RemoveAction.Delete { Method: DeleteMethod.Permanent } => new Outcome.Permanent(bytes),
+            RemoveAction.Delete { Method: DeleteMethod.Recycle } => new Outcome.Recycled(size),
+            RemoveAction.Delete { Method: DeleteMethod.Permanent } => new Outcome.Permanent(size),
             _ => throw new UnreachableException($"unknown remove action {action}"),
         };
     }

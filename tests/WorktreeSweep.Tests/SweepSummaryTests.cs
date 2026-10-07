@@ -1,5 +1,6 @@
 using WorktreeSweep.Discovery;
 using WorktreeSweep.Removal;
+using WorktreeSweep.Report;
 
 namespace WorktreeSweep.Tests;
 
@@ -14,8 +15,8 @@ public sealed class SweepSummaryTests
     {
         Swept[] swept =
         [
-            Entry(@"yaat.wt\recycled", new Outcome.Recycled(3 * Mib / 2)),
-            Entry(@"yaat.wt\permanent", new Outcome.Permanent(2 * Mib), "branch feat deleted", "prune failed: boom"),
+            Entry(@"yaat.wt\recycled", new Outcome.Recycled(Size(3 * Mib / 2))),
+            Entry(@"yaat.wt\permanent", new Outcome.Permanent(Size(2 * Mib)), "branch feat deleted", "prune failed: boom"),
             Entry(@"yaat.wt\link", new Outcome.LinkRemoved()),
             Entry(@"yaat.wt\gone", new Outcome.Pruned()),
             Entry(@"yaat.wt\skipped", new Outcome.Skipped("not confirmed")),
@@ -41,7 +42,7 @@ public sealed class SweepSummaryTests
     [Fact]
     public void TotalWithoutRecyclingHasNoBinShare()
     {
-        Swept[] swept = [Entry(@"yaat.wt\permanent", new Outcome.Permanent(512)), Entry(@"yaat.wt\skipped", new Outcome.Skipped("cancelled"))];
+        Swept[] swept = [Entry(@"yaat.wt\permanent", new Outcome.Permanent(Size(512))), Entry(@"yaat.wt\skipped", new Outcome.Skipped("cancelled"))];
 
         IReadOnlyList<string> lines = SweepSummary.Lines(swept, ReportSamples.Root);
 
@@ -51,11 +52,11 @@ public sealed class SweepSummaryTests
         );
     }
 
-    /// <summary>A removed folder whose size is unknown makes the total read "at least" and count it, and the bin share too.</summary>
+    /// <summary>An unknown size reads "at least" and is counted, joined with the bin share in one parenthetical.</summary>
     [Fact]
     public void UnknownSizeReadsAsAtLeastAndIsCounted()
     {
-        Swept[] swept = [Entry(@"yaat.wt\recycled", new Outcome.Recycled(Mib)), Entry(@"yaat.wt\unknown", new Outcome.Recycled(null))];
+        Swept[] swept = [Entry(@"yaat.wt\recycled", new Outcome.Recycled(Size(Mib))), Entry(@"yaat.wt\unknown", new Outcome.Recycled(null))];
 
         IReadOnlyList<string> lines = SweepSummary.Lines(swept, ReportSamples.Root);
 
@@ -63,7 +64,7 @@ public sealed class SweepSummaryTests
             [
                 @"yaat.wt\recycled: removed (recycled)",
                 @"yaat.wt\unknown: removed (recycled)",
-                "2 removed, 0 skipped, 0 failed; at least 1.0 MB freed (1 of unknown size) (at least 1.0 MB of it in the Recycle Bin)",
+                "2 removed, 0 skipped, 0 failed; at least 1.0 MB freed (1 of unknown size; at least 1.0 MB of it in the Recycle Bin)",
             ],
             lines
         );
@@ -79,6 +80,53 @@ public sealed class SweepSummaryTests
 
         Assert.Equal([@"yaat.wt\unknown: removed (permanent)", "1 removed, 0 skipped, 0 failed; at least 0 B freed (1 of unknown size)"], lines);
     }
+
+    /// <summary>A permanent delete of a partly read tree alone reads as at least its bytes, with nothing unknown to count.</summary>
+    [Fact]
+    public void PartialSizePermanentDeleteReadsAsAtLeastWithNoUnknownCount()
+    {
+        Swept[] swept = [Entry(@"yaat.wt\partial", new Outcome.Permanent(PartialSize(512)))];
+
+        IReadOnlyList<string> lines = SweepSummary.Lines(swept, ReportSamples.Root);
+
+        Assert.Equal([@"yaat.wt\partial: removed (permanent)", "1 removed, 0 skipped, 0 failed; at least 512 B freed"], lines);
+    }
+
+    /// <summary>A partly read recycled pick makes the bin share "at least", beside the unknown count, in one parenthetical.</summary>
+    [Fact]
+    public void PartialRecycleJoinsTheUnknownCountWithAnAtLeastBinShare()
+    {
+        Swept[] swept =
+        [
+            Entry(@"yaat.wt\recycled", new Outcome.Recycled(Size(Mib))),
+            Entry(@"yaat.wt\partial", new Outcome.Recycled(PartialSize(Mib / 2))),
+            Entry(@"yaat.wt\permanent", new Outcome.Permanent(Size(Mib))),
+            Entry(@"yaat.wt\unknown", new Outcome.Permanent(null)),
+        ];
+
+        IReadOnlyList<string> lines = SweepSummary.Lines(swept, ReportSamples.Root);
+
+        Assert.Equal(
+            [
+                @"yaat.wt\recycled: removed (recycled)",
+                @"yaat.wt\partial: removed (recycled)",
+                @"yaat.wt\permanent: removed (permanent)",
+                @"yaat.wt\unknown: removed (permanent)",
+                "4 removed, 0 skipped, 0 failed; at least 2.5 MB freed (1 of unknown size; at least 1.5 MB of it in the Recycle Bin)",
+            ],
+            lines
+        );
+    }
+
+    /// <summary>A size the scan read completely.</summary>
+    /// <param name="bytes">The bytes.</param>
+    /// <returns>The size.</returns>
+    private static KnownSize Size(long bytes) => new(bytes, Partial: false);
+
+    /// <summary>A size the scan could read only partly, so the real one is larger.</summary>
+    /// <param name="bytes">The bytes read.</param>
+    /// <returns>The size.</returns>
+    private static KnownSize PartialSize(long bytes) => new(bytes, Partial: true);
 
     /// <summary>One pick under the sample root with its outcome and notes.</summary>
     /// <param name="path">The pick's path relative to the root.</param>

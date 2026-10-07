@@ -1,3 +1,5 @@
+using WorktreeSweep.Report;
+
 namespace WorktreeSweep.Removal;
 
 /// <summary>What happened to one pick.</summary>
@@ -6,12 +8,12 @@ public abstract record Outcome
     private protected Outcome() { }
 
     /// <summary>Moved to the Recycle Bin.</summary>
-    /// <param name="Bytes">Its size; <see langword="null"/> when unknown.</param>
-    public sealed record Recycled(long? Bytes) : Outcome;
+    /// <param name="Size">The size the scan read; <see langword="null"/> when unknown.</param>
+    public sealed record Recycled(KnownSize? Size) : Outcome;
 
     /// <summary>Deleted for good.</summary>
-    /// <param name="Bytes">Its size; <see langword="null"/> when unknown.</param>
-    public sealed record Permanent(long? Bytes) : Outcome;
+    /// <param name="Size">The size the scan read; <see langword="null"/> when unknown.</param>
+    public sealed record Permanent(KnownSize? Size) : Outcome;
 
     /// <summary>The link was deleted; its target was not touched.</summary>
     public sealed record LinkRemoved : Outcome;

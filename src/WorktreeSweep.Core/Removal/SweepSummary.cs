@@ -10,10 +10,11 @@ public static class SweepSummary
     /// <summary>
     /// One line per pick (<c>&lt;path&gt;: removed (recycled)</c>, <c>removed (permanent)</c>, <c>removed (link only)</c>,
     /// <c>removed (registration pruned)</c>, <c>skipped (&lt;why&gt;)</c>, <c>failed: &lt;why&gt;</c>), its follow-up notes each after
-    /// <c>; </c>, then a total: <c>&lt;n&gt; removed, &lt;n&gt; skipped, &lt;n&gt; failed; &lt;bytes&gt; freed</c>, which reads
-    /// <c>at least &lt;bytes&gt; freed (&lt;n&gt; of unknown size)</c> when any removed folder's size is unknown, and ends with
-    /// <c> (&lt;bytes&gt; of it in the Recycle Bin)</c> when anything was recycled, <c>at least</c> inside it when a recycled folder's
-    /// size is unknown.
+    /// <c>; </c>, then a total: <c>&lt;n&gt; removed, &lt;n&gt; skipped, &lt;n&gt; failed; &lt;bytes&gt; freed</c>, with <c>at least</c>
+    /// before the bytes when any removed folder's size is unknown or only partly read. The unknown ones and the Recycle Bin share
+    /// follow in one parenthetical, each only when it applies:
+    /// <c> (&lt;k&gt; of unknown size; &lt;bytes&gt; of it in the Recycle Bin)</c>, the share with <c>at least</c> of its own when a
+    /// recycled folder's size is unknown or partial.
     /// </summary>
     /// <param name="swept">What happened to each pick.</param>
     /// <param name="root">The scanned root; each path is shown relative to it.</param>
@@ -43,7 +44,8 @@ public static class SweepSummary
         private long freed;
         private long recycled;
         private int unknown;
-        private int recycledUnknown;
+        private int approximate;
+        private int recycledApproximate;
 
         /// <summary>Counts one outcome and describes it.</summary>
         /// <param name="outcome">What happened to the pick.</param>
@@ -54,26 +56,37 @@ public static class SweepSummary
             {
                 case Outcome.Recycled recycledOutcome:
                     removed++;
-                    if (recycledOutcome.Bytes is { } recycledBytes)
+                    if (recycledOutcome.Size is { } recycledSize)
                     {
-                        freed += recycledBytes;
-                        recycled += recycledBytes;
+                        freed += recycledSize.Bytes;
+                        recycled += recycledSize.Bytes;
+                        if (recycledSize.Partial)
+                        {
+                            approximate++;
+                            recycledApproximate++;
+                        }
                     }
                     else
                     {
                         unknown++;
-                        recycledUnknown++;
+                        approximate++;
+                        recycledApproximate++;
                     }
                     return "removed (recycled)";
                 case Outcome.Permanent permanent:
                     removed++;
-                    if (permanent.Bytes is { } permanentBytes)
+                    if (permanent.Size is { } permanentSize)
                     {
-                        freed += permanentBytes;
+                        freed += permanentSize.Bytes;
+                        if (permanentSize.Partial)
+                        {
+                            approximate++;
+                        }
                     }
                     else
                     {
                         unknown++;
+                        approximate++;
                     }
                     return "removed (permanent)";
                 case Outcome.LinkRemoved:
@@ -94,22 +107,25 @@ public static class SweepSummary
         }
 
         /// <summary>The total line.</summary>
-        /// <returns>The counts, the bytes freed and any unknown size.</returns>
+        /// <returns>The counts, the bytes freed and what their sum leaves out.</returns>
         public string Total()
         {
-            string freedText =
-                unknown > 0
-                    ? string.Create(CultureInfo.InvariantCulture, $"at least {ReportTable.HumanBytes(freed)} freed ({unknown} of unknown size)")
-                    : string.Create(CultureInfo.InvariantCulture, $"{ReportTable.HumanBytes(freed)} freed");
-            string total = string.Create(CultureInfo.InvariantCulture, $"{removed} removed, {skipped} skipped, {failed} failed; {freedText}");
-            return recycled == 0 && recycledUnknown == 0 ? total : $"{total} ({BinShare()})";
+            string total = string.Create(
+                CultureInfo.InvariantCulture,
+                $"{removed} removed, {skipped} skipped, {failed} failed; {ReportTable.SizeText(freed, approximate > 0)} freed"
+            );
+            var notes = new List<string>(2);
+            if (unknown > 0)
+            {
+                notes.Add(string.Create(CultureInfo.InvariantCulture, $"{unknown} of unknown size"));
+            }
+            if (recycled > 0 || recycledApproximate > 0)
+            {
+                notes.Add(
+                    string.Create(CultureInfo.InvariantCulture, $"{ReportTable.SizeText(recycled, recycledApproximate > 0)} of it in the Recycle Bin")
+                );
+            }
+            return notes.Count == 0 ? total : $"{total} ({string.Join("; ", notes)})";
         }
-
-        /// <summary>The Recycle Bin share that ends the total line.</summary>
-        /// <returns>The share, <c>at least</c> first when any recycled folder's size is unknown.</returns>
-        private string BinShare() =>
-            recycledUnknown > 0
-                ? string.Create(CultureInfo.InvariantCulture, $"at least {ReportTable.HumanBytes(recycled)} of it in the Recycle Bin")
-                : string.Create(CultureInfo.InvariantCulture, $"{ReportTable.HumanBytes(recycled)} of it in the Recycle Bin");
     }
 }
