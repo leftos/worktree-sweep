@@ -2,6 +2,7 @@ using System.Globalization;
 using WorktreeSweep.Discovery;
 using WorktreeSweep.Git;
 using WorktreeSweep.Report;
+using WorktreeSweep.Scan;
 
 namespace WorktreeSweep.Tests;
 
@@ -28,6 +29,26 @@ public sealed class ScanTests
         Assert.Single(report.Candidates.OfType<RegisteredCandidate>(), candidate => Fixture.SamePath(candidate.Path, worktree));
         Assert.Single(report.Candidates.OfType<OrphanCandidate>(), candidate => Fixture.SamePath(candidate.Path, orphan));
         Assert.DoesNotContain(report.Candidates, candidate => Fixture.SamePath(candidate.Path, repo));
+    }
+
+    /// <summary>
+    /// A pin: a scan of a root given by its 8.3 short name finds the registered worktree as a candidate and no orphan. It held before
+    /// paths were resolved too, because <see cref="Path.GetFullPath(string)"/> already expands a short root.
+    /// </summary>
+    [Fact]
+    public void ShortNameRootFindsTheRegisteredWorktreeAndNoOrphan()
+    {
+        using var fx = new Fixture();
+        string repo = fx.Repo("repo");
+        string worktree = fx.PathTo("repo.wt/feat");
+        Fixture.AddWorktree(repo, worktree, "feat");
+        string shortRoot = NativeMethods.ShortPath(fx.Root);
+        Assert.SkipWhen(shortRoot.Equals(fx.Root, StringComparison.OrdinalIgnoreCase), $"{fx.Root} has no 8.3 name");
+
+        ScanReport report = Scanner.Scan(shortRoot);
+
+        _ = Registered(report, worktree);
+        Assert.Empty(report.Candidates.OfType<OrphanCandidate>());
     }
 
     /// <summary>A registration whose folder is gone is a candidate whose signals are not read, and not an orphan.</summary>

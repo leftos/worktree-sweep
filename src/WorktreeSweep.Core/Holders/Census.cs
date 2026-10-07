@@ -51,7 +51,7 @@ internal sealed class Census
         }
         else
         {
-            string cwd = ProcessQuery.LongPath(peb.CurrentFolder);
+            string cwd = Discovery.PathResolver.LongPath(peb.CurrentFolder);
             if (LockedPaths.Matches(cwd, roots))
             {
                 holds.Add(new Hold.CurrentFolder(cwd));

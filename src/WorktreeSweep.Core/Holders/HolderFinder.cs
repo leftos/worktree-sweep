@@ -143,9 +143,9 @@ public static class HolderFinder
     /// <exception cref="IOException">The folder cannot be opened or resolved.</exception>
     internal static IReadOnlyList<string> FolderForms(string folder)
     {
-        string resolved = ProcessQuery.FinalPath(folder);
+        string resolved = Discovery.PathResolver.FinalPath(folder);
         string absolute = Path.GetFullPath(folder);
-        string[] others = [absolute, ProcessQuery.LongPath(absolute)];
+        string[] others = [absolute, Discovery.PathResolver.LongPath(absolute)];
         var forms = new List<string> { resolved };
         foreach (string form in others)
         {

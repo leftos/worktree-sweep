@@ -4,13 +4,12 @@ using Microsoft.Win32.SafeHandles;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.Security;
-using Windows.Win32.Storage.FileSystem;
 using Windows.Win32.System.Threading;
 using FILETIME = System.Runtime.InteropServices.ComTypes.FILETIME;
 
 namespace WorktreeSweep.Holders;
 
-/// <summary>What the holder finder reads about a process, and the path spellings it compares.</summary>
+/// <summary>What the holder finder reads about a process.</summary>
 internal static class ProcessQuery
 {
     /// <summary>Room for a <c>TOKEN_USER</c> and the SID it points to; a SID is at most 68 bytes.</summary>
@@ -114,66 +113,5 @@ internal static class ProcessQuery
         }
         ulong started = ((ulong)(uint)created.dwHighDateTime << 32) | (uint)created.dwLowDateTime;
         return started == 0 ? null : started;
-    }
-
-    /// <summary><paramref name="path"/> with 8.3 names expanded, or as given when that fails.</summary>
-    /// <param name="path">A path.</param>
-    /// <returns>The long form.</returns>
-    internal static string LongPath(string path)
-    {
-        char[] buffer = new char[PathBufferSize];
-        for (int attempt = 0; attempt < 2; attempt++)
-        {
-            uint length = PInvoke.GetLongPathName(path, buffer);
-            if (length == 0)
-            {
-                break;
-            }
-            if (length < buffer.Length)
-            {
-                return new string(buffer, 0, (int)length);
-            }
-            buffer = new char[length];
-        }
-        return path;
-    }
-
-    /// <summary>
-    /// The folder fully resolved, junctions, symbolic links, subst drives and 8.3 names included, as the system names it: with a
-    /// <c>\\?\</c> prefix.
-    /// </summary>
-    /// <param name="folder">An existing folder.</param>
-    /// <returns>The resolved path.</returns>
-    /// <exception cref="IOException">The folder cannot be opened or its final path read.</exception>
-    internal static string FinalPath(string folder)
-    {
-        using SafeFileHandle handle = PInvoke.CreateFile(
-            folder,
-            0,
-            FILE_SHARE_MODE.FILE_SHARE_READ | FILE_SHARE_MODE.FILE_SHARE_WRITE | FILE_SHARE_MODE.FILE_SHARE_DELETE,
-            null,
-            FILE_CREATION_DISPOSITION.OPEN_EXISTING,
-            FILE_FLAGS_AND_ATTRIBUTES.FILE_FLAG_BACKUP_SEMANTICS,
-            null
-        );
-        if (handle.IsInvalid)
-        {
-            throw new IOException($"cannot resolve {folder}", new Win32Exception(Marshal.GetLastPInvokeError()));
-        }
-        char[] buffer = new char[PathBufferSize];
-        for (int attempt = 0; attempt < 2; attempt++)
-        {
-            uint length = PInvoke.GetFinalPathNameByHandle(handle, buffer, GETFINALPATHNAMEBYHANDLE_FLAGS.FILE_NAME_NORMALIZED);
-            if (length == 0)
-            {
-                throw new IOException($"cannot resolve {folder}", new Win32Exception(Marshal.GetLastPInvokeError()));
-            }
-            if (length < buffer.Length)
-            {
-                return new string(buffer, 0, (int)length);
-            }
-            buffer = new char[length];
-        }
-        throw new IOException($"cannot resolve {folder}: its resolved path kept growing");
     }
 }

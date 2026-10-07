@@ -1,7 +1,7 @@
 namespace WorktreeSweep.Discovery;
 
 /// <summary>Everything <see cref="Discoverer.Discover"/> found under a root.</summary>
-/// <param name="Root">The root, made absolute.</param>
+/// <param name="Root">The root, made absolute; an 8.3 root comes back in its long form, as <see cref="Path.GetFullPath(string)"/> gives it.</param>
 /// <param name="Repos">Repos at depth 1 of the root.</param>
 /// <param name="Containers">Container dirs that were walked for orphans.</param>
 /// <param name="Orphans">Orphans found in the container dirs.</param>

@@ -12,7 +12,10 @@ namespace WorktreeSweep.Discovery;
 /// <para>The walk never follows a symbolic link or junction: a link inside a container is reported as an orphan of its own kind and
 /// never entered, walked or sized. A reparse point is detected by its attribute.</para>
 /// <para>Children are listed with <c>AttributesToSkip = 0</c>, so hidden and system entries are seen, and sorted with
-/// <see cref="StringComparer.Ordinal"/>. Paths are compared by <see cref="PathKey"/>, which folds case.</para>
+/// <see cref="StringComparer.Ordinal"/>. Paths are compared resolved, by <see cref="PathKey"/>, which folds case: the root and each
+/// registered worktree's parent folder are resolved (subst drive, 8.3 name, <c>\\?\</c> prefix), and a walked path is keyed below
+/// the resolved root without being resolved itself. A walked path also matches a registered path spelled the same way, so a
+/// resolution that fails never adds an orphan.</para>
 /// <para>Diagnostics go to <see cref="Trace"/>: a skipped repo as a warning, a skipped entry as a plain line.</para>
 /// </remarks>
 public static class Discoverer
@@ -25,12 +28,24 @@ public static class Discoverer
     /// <summary>Finds the repos, registered worktrees, container dirs and orphans under <paramref name="root"/>.</summary>
     /// <remarks>
     /// A child that cannot be read (such as <c>System Volume Information</c>) is skipped with a trace line, and a repo whose
-    /// worktrees git cannot list is skipped with a trace warning.
+    /// worktrees git cannot list is skipped with a trace warning. A walked folder matches a registered worktree when its path below
+    /// <paramref name="root"/>, put below the resolved root, names the registered path with its parent resolved; so a substed,
+    /// 8.3-spelled or <c>\\?\</c>-prefixed root matches the paths git prints, while a link inside a container never matches through
+    /// its target, and a registered worktree folder that is itself a junction still matches. A walked folder spelled as git spells a
+    /// registered path matches too.
+    /// Every path in the result keeps the spelling of <paramref name="root"/> made absolute.
     /// </remarks>
     /// <param name="root">The folder to scan; made absolute.</param>
     /// <returns>What was found.</returns>
     /// <exception cref="IOException"><paramref name="root"/> itself cannot be listed; the message names it.</exception>
-    public static DiscoveryResult Discover(string root)
+    public static DiscoveryResult Discover(string root) => Discover(root, PathResolver.Resolve);
+
+    /// <summary>Finds what <see cref="Discover(string)"/> finds, resolving paths with <paramref name="resolve"/>.</summary>
+    /// <param name="root">The folder to scan; made absolute.</param>
+    /// <param name="resolve">Resolves the root and each registered worktree's parent folder, as <see cref="PathResolver.Resolve"/> does.</param>
+    /// <returns>What was found.</returns>
+    /// <exception cref="IOException"><paramref name="root"/> itself cannot be listed; the message names it.</exception>
+    internal static DiscoveryResult Discover(string root, Func<string, string> resolve)
     {
         ArgumentNullException.ThrowIfNull(root);
         string full = Path.GetFullPath(root);
@@ -54,14 +69,13 @@ public static class Discoverer
             }
         }
 
-        var known = new HashSet<string>(repos.SelectMany(repo => repo.Worktrees).Select(record => PathKey(record.Path)), StringComparer.Ordinal);
-        _ = containers.RemoveAll(container => known.Contains(PathKey(container)));
+        var registered = new RegisteredPaths(full, repos.SelectMany(repo => repo.Worktrees), resolve);
+        _ = containers.RemoveAll(registered.IsRegistered);
 
-        HashSet<string> ancestors = AncestorKeys(known);
         var orphans = new List<Orphan>();
         foreach (string container in containers)
         {
-            WalkContainer(container, container, known, ancestors, orphans);
+            WalkContainer(container, container, registered, orphans);
         }
         return new DiscoveryResult(full, repos, containers, orphans);
     }
@@ -114,7 +128,11 @@ public static class Discoverer
 
     /// <summary>A comparison key for a path: separators unified and case folded; no trailing separator except a drive root's.</summary>
     /// <param name="path">The path; <c>/</c> and <c>\</c> both separate.</param>
-    /// <returns>The key; two paths naming the same folder the same way have equal keys under ordinal comparison.</returns>
+    /// <returns>
+    /// The key; two paths naming the same folder the same way have equal keys under ordinal comparison. It resolves nothing, so
+    /// discovery keys resolved paths: the root resolved, the registered paths with their parents resolved, and walked paths below
+    /// the resolved root.
+    /// </returns>
     public static string PathKey(string path)
     {
         ArgumentNullException.ThrowIfNull(path);
@@ -261,7 +279,7 @@ public static class Discoverer
         return ancestors;
     }
 
-    private static void WalkContainer(string container, string dir, HashSet<string> known, HashSet<string> ancestors, List<Orphan> orphans)
+    private static void WalkContainer(string container, string dir, RegisteredPaths registered, List<Orphan> orphans)
     {
         List<FileSystemInfo> children;
         try
@@ -275,8 +293,7 @@ public static class Discoverer
         }
         foreach (FileSystemInfo child in children)
         {
-            string key = PathKey(child.FullName);
-            if (known.Contains(key))
+            if (registered.IsRegistered(child.FullName))
             {
                 continue;
             }
@@ -288,9 +305,9 @@ public static class Discoverer
             {
                 Trace.WriteLine($"skipping file {child.FullName} in a container");
             }
-            else if (ancestors.Contains(key))
+            else if (registered.HoldsRegistered(child.FullName))
             {
-                WalkContainer(container, child.FullName, known, ancestors, orphans);
+                WalkContainer(container, child.FullName, registered, orphans);
             }
             else
             {
@@ -426,4 +443,85 @@ public static class Discoverer
     }
 
     private static FileSystemInfo EntryAt(string path, bool isDirectory) => isDirectory ? new DirectoryInfo(path) : new FileInfo(path);
+
+    /// <summary>
+    /// The registered worktree paths and the keys a walk compares with them. Each registered path is held twice: as spelled, and with
+    /// its parent folder resolved and its own name in long form, never resolved through, so a worktree folder that is itself a
+    /// junction keeps the key the walk gives it. A walked path matches when either its own spelling or its part below the typed root,
+    /// put below the resolved root, is held, so resolution can only remove an orphan, never add one. A walked path is never resolved
+    /// itself, so a link inside the walk keeps its own key.
+    /// </summary>
+    private sealed class RegisteredPaths
+    {
+        private readonly string typedRoot;
+        private readonly Func<string, string> resolve;
+        private readonly string resolvedRoot;
+        private readonly Dictionary<string, string> resolvedParents = new(StringComparer.Ordinal);
+        private readonly HashSet<string> known = new(StringComparer.Ordinal);
+        private readonly HashSet<string> ancestors;
+
+        /// <summary>Initializes a new instance of the <see cref="RegisteredPaths"/> class, resolving the root and every record's parent.</summary>
+        /// <param name="typedRoot">The root as the walk spells it.</param>
+        /// <param name="records">Every registered worktree, main worktrees included.</param>
+        /// <param name="resolve">Resolves the root and each record's parent folder.</param>
+        public RegisteredPaths(string typedRoot, IEnumerable<WorktreeRecord> records, Func<string, string> resolve)
+        {
+            this.typedRoot = typedRoot;
+            this.resolve = resolve;
+            resolvedRoot = resolve(typedRoot);
+            foreach (WorktreeRecord record in records)
+            {
+                _ = known.Add(PathKey(record.Path));
+                _ = known.Add(ResolvedRecordKey(record.Path));
+            }
+            ancestors = AncestorKeys(known);
+        }
+
+        /// <summary>Whether a walked path is a registered worktree.</summary>
+        /// <param name="walked">A path under the root, as the walk spells it.</param>
+        /// <returns><see langword="true"/> when it is one.</returns>
+        public bool IsRegistered(string walked) => known.Contains(PathKey(walked)) || known.Contains(ResolvedKey(walked));
+
+        /// <summary>Whether a registered worktree lies below a walked path.</summary>
+        /// <param name="walked">A path under the root, as the walk spells it.</param>
+        /// <returns><see langword="true"/> when one does.</returns>
+        public bool HoldsRegistered(string walked) => ancestors.Contains(PathKey(walked)) || ancestors.Contains(ResolvedKey(walked));
+
+        /// <summary>A registered path's resolved key: its parent resolved, joined with its own name in long form.</summary>
+        private string ResolvedRecordKey(string path)
+        {
+            string trimmed = Path.TrimEndingDirectorySeparator(path);
+            string? parent = Path.GetDirectoryName(trimmed);
+            if (parent is null)
+            {
+                return PathKey(resolve(trimmed));
+            }
+            string name = Path.GetFileName(PathResolver.LongPath(trimmed));
+            return PathKey(Path.Join(ResolvedParent(parent), name));
+        }
+
+        /// <summary>A record's parent folder resolved, once per folder: worktrees sharing a container resolve it once.</summary>
+        private string ResolvedParent(string parent)
+        {
+            string key = PathKey(parent);
+            if (!resolvedParents.TryGetValue(key, out string? resolved))
+            {
+                resolved = resolve(parent);
+                resolvedParents.Add(key, resolved);
+            }
+            return resolved;
+        }
+
+        /// <summary>A walked path's part below the typed root, put below the resolved root; its own key when it is not below the root.</summary>
+        private string ResolvedKey(string walked)
+        {
+            if (!walked.StartsWith(typedRoot, StringComparison.Ordinal))
+            {
+                Trace.WriteLine($"walked path {walked} is not under the root {typedRoot}; comparing it as spelled");
+                return PathKey(walked);
+            }
+            string below = walked[typedRoot.Length..].TrimStart(Separator);
+            return PathKey(Path.Join(resolvedRoot, below));
+        }
+    }
 }
