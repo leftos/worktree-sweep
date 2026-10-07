@@ -16,12 +16,11 @@ public sealed class ElevatedSessionTests
     public void NothingHeldExitsAllClear()
     {
         StringWriter output = Writer();
-        var session = new ElevatedSession(
+        ElevatedSession session = Session(
             new StringReader(""),
             output,
             new FakeHandleExe("No matching handles found.\n"),
-            new ScriptedProcessControl(Running()),
-            _ => true
+            new ScriptedProcessControl(Running())
         );
 
         int exit = session.Run([Locked], null, null, null);
@@ -38,7 +37,7 @@ public sealed class ElevatedSessionTests
         StringWriter output = Writer();
         var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
         processes.StartedTimes[642] = 1000;
-        var session = new ElevatedSession(new StringReader("\n"), output, new FakeHandleExe(OneLocker(), ""), processes, _ => true);
+        ElevatedSession session = Session(new StringReader("\n"), output, new FakeHandleExe(OneLocker(), ""), processes);
 
         int exit = session.Run([Locked], null, null, null);
 
@@ -53,7 +52,7 @@ public sealed class ElevatedSessionTests
     {
         StringWriter output = Writer();
         var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
-        var session = new ElevatedSession(new StringReader("\n"), output, new FakeHandleExe(OneLocker(), OneLocker()), processes, _ => true);
+        ElevatedSession session = Session(new StringReader("\n"), output, new FakeHandleExe(OneLocker(), OneLocker()), processes);
 
         int exit = session.Run([Locked], callerPid: 642, callerStarted: null, sweepPid: null);
 
@@ -72,7 +71,7 @@ public sealed class ElevatedSessionTests
         StringWriter output = Writer();
         var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
         processes.StartedTimes[642] = 1000;
-        var session = new ElevatedSession(new StringReader("\n"), output, new FakeHandleExe(OneLocker(), OneLocker()), processes, _ => true);
+        ElevatedSession session = Session(new StringReader("\n"), output, new FakeHandleExe(OneLocker(), OneLocker()), processes);
 
         int exit = session.Run([Locked], callerPid: 642, callerStarted: 1000, sweepPid: null);
 
@@ -90,7 +89,7 @@ public sealed class ElevatedSessionTests
         StringWriter output = Writer();
         var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
         processes.StartedTimes[642] = 2000;
-        var session = new ElevatedSession(new StringReader("\n"), output, new FakeHandleExe(OneLocker(), ""), processes, _ => true);
+        ElevatedSession session = Session(new StringReader("\n"), output, new FakeHandleExe(OneLocker(), ""), processes);
 
         int exit = session.Run([Locked], callerPid: 642, callerStarted: 1000, sweepPid: null);
 
@@ -107,7 +106,7 @@ public sealed class ElevatedSessionTests
     {
         StringWriter output = Writer();
         var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
-        var session = new ElevatedSession(new StringReader("\n"), output, new FakeHandleExe(OneLocker(), OneLocker()), processes, _ => true);
+        ElevatedSession session = Session(new StringReader("\n"), output, new FakeHandleExe(OneLocker(), OneLocker()), processes);
 
         int exit = session.Run([Locked], callerPid: 642, callerStarted: 1000, sweepPid: null);
 
@@ -123,12 +122,11 @@ public sealed class ElevatedSessionTests
     public void SkipEverythingExitsNothingDone()
     {
         StringWriter output = Writer();
-        var session = new ElevatedSession(
+        ElevatedSession session = Session(
             new StringReader("3\n"),
             output,
             new FakeHandleExe(OneLocker()),
-            new ScriptedProcessControl(Running(("pwsh.exe", 642))),
-            _ => true
+            new ScriptedProcessControl(Running(("pwsh.exe", 642)))
         );
 
         int exit = session.Run([Locked], null, null, null);
@@ -146,12 +144,11 @@ public sealed class ElevatedSessionTests
         StringWriter output = Writer();
         var processes = new ScriptedProcessControl(Running(("code.exe", 200), ("pwsh.exe", 642)));
         processes.StartedTimes[200] = 1000;
-        var session = new ElevatedSession(
+        ElevatedSession session = Session(
             new StringReader("\n4\n"),
             output,
             new FakeHandleExe(TwoLockers(), OneLockerFor("pwsh.exe", 642)),
-            processes,
-            _ => true
+            processes
         );
 
         int exit = session.Run([Locked], null, null, null);
@@ -169,12 +166,11 @@ public sealed class ElevatedSessionTests
     public void EofMeansDone()
     {
         StringWriter output = Writer();
-        var session = new ElevatedSession(
+        ElevatedSession session = Session(
             new StringReader(""),
             output,
             new FakeHandleExe(OneLocker()),
-            new ScriptedProcessControl(Running(("pwsh.exe", 642))),
-            _ => true
+            new ScriptedProcessControl(Running(("pwsh.exe", 642)))
         );
 
         int exit = session.Run([Locked], null, null, null);
@@ -189,7 +185,7 @@ public sealed class ElevatedSessionTests
     {
         StringWriter output = Writer();
         var processes = new ScriptedProcessControl(Running());
-        var session = new ElevatedSession(new StringReader("\n"), output, new FakeHandleExe(OneLocker()), processes, _ => true);
+        ElevatedSession session = Session(new StringReader("\n"), output, new FakeHandleExe(OneLocker()), processes);
 
         int exit = session.Run([Locked], null, null, null);
 
@@ -207,7 +203,7 @@ public sealed class ElevatedSessionTests
         var handleExe = new FakeHandleExe(TwoHandles(), "");
         var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
         processes.StartedTimes[642] = 1000;
-        var session = new ElevatedSession(new StringReader("2\ny\n"), output, handleExe, processes, _ => true);
+        ElevatedSession session = Session(new StringReader("2\ny\n"), output, handleExe, processes);
 
         int exit = session.Run([Locked], null, null, null);
 
@@ -225,13 +221,7 @@ public sealed class ElevatedSessionTests
     {
         StringWriter output = Writer();
         var handleExe = new FakeHandleExe(TwoHandles());
-        var session = new ElevatedSession(
-            new StringReader("2\n\n"),
-            output,
-            handleExe,
-            new ScriptedProcessControl(Running(("pwsh.exe", 642))),
-            _ => true
-        );
+        ElevatedSession session = Session(new StringReader("2\n\n"), output, handleExe, new ScriptedProcessControl(Running(("pwsh.exe", 642))));
 
         int exit = session.Run([Locked], null, null, null);
 
@@ -249,12 +239,11 @@ public sealed class ElevatedSessionTests
     public void ShowsAtMostFiveHandles()
     {
         StringWriter output = Writer();
-        var session = new ElevatedSession(
+        ElevatedSession session = Session(
             new StringReader("3\n"),
             output,
             new FakeHandleExe(SevenHandles()),
-            new ScriptedProcessControl(Running(("pwsh.exe", 642))),
-            _ => true
+            new ScriptedProcessControl(Running(("pwsh.exe", 642)))
         );
 
         int exit = session.Run([Locked], null, null, null);
@@ -275,7 +264,7 @@ public sealed class ElevatedSessionTests
         StringWriter output = Writer();
         var processes = new ScriptedProcessControl(Running(("code.exe", 800), ("worktree-sweep.exe", 900)));
         processes.StartedTimes[800] = 1000;
-        var session = new ElevatedSession(new StringReader("\n"), output, new FakeHandleExe(ExcludedAndKept(), ""), processes, _ => true);
+        ElevatedSession session = Session(new StringReader("\n"), output, new FakeHandleExe(ExcludedAndKept(), ""), processes);
 
         int exit = session.Run([Locked], callerPid: null, callerStarted: null, sweepPid: 900);
 
@@ -302,7 +291,7 @@ public sealed class ElevatedSessionTests
         processes.StartedTimes[600] = 60;
         processes.StartedTimes[500] = 200; // newer than its child 600: the PID no longer names the sudo.exe
         processes.StartedTimes[400] = 50;
-        var session = new ElevatedSession(new StringReader("3\n"), output, new FakeHandleExe(OneLockerFor("code.exe", 500)), processes, _ => true);
+        ElevatedSession session = Session(new StringReader("3\n"), output, new FakeHandleExe(OneLockerFor("code.exe", 500)), processes);
 
         int exit = session.Run([Locked], null, null, null);
 
@@ -318,7 +307,7 @@ public sealed class ElevatedSessionTests
         StringWriter output = Writer();
         var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642))) { StopThrows = new Win32Exception("cannot open process 642") };
         processes.StartedTimes[642] = 1000;
-        var session = new ElevatedSession(new StringReader("\n"), output, new FakeHandleExe(OneLocker()), processes, _ => true);
+        ElevatedSession session = Session(new StringReader("\n"), output, new FakeHandleExe(OneLocker()), processes);
 
         int exit = session.Run([Locked], null, null, null);
 
@@ -337,7 +326,7 @@ public sealed class ElevatedSessionTests
             StopThrows = new InvalidOperationException("process 642 is now other.exe, not pwsh.exe; not stopped"),
         };
         processes.StartedTimes[642] = 1000;
-        var session = new ElevatedSession(new StringReader("\n"), output, new FakeHandleExe(OneLocker()), processes, _ => true);
+        ElevatedSession session = Session(new StringReader("\n"), output, new FakeHandleExe(OneLocker()), processes);
 
         int exit = session.Run([Locked], null, null, null);
 
@@ -359,7 +348,7 @@ public sealed class ElevatedSessionTests
         handleExe.Failing.Add(0x58);
         var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
         processes.StartedTimes[642] = 1000;
-        var session = new ElevatedSession(new StringReader("2\ny\n"), output, handleExe, processes, _ => true);
+        ElevatedSession session = Session(new StringReader("2\ny\n"), output, handleExe, processes);
 
         int exit = session.Run([Locked], null, null, null);
 
@@ -376,7 +365,7 @@ public sealed class ElevatedSessionTests
         var handleExe = new FakeHandleExe(TwoHandles()) { CloseThrows = new UnlockException("cannot run handle.exe: it went missing") };
         var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
         processes.StartedTimes[642] = 1000;
-        var session = new ElevatedSession(new StringReader("2\ny\n"), output, handleExe, processes, _ => true);
+        ElevatedSession session = Session(new StringReader("2\ny\n"), output, handleExe, processes);
 
         int exit = session.Run([Locked], null, null, null);
 
@@ -396,7 +385,7 @@ public sealed class ElevatedSessionTests
         };
         var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
         processes.StartedTimes[642] = 1000;
-        var session = new ElevatedSession(new StringReader("2\ny\n"), output, handleExe, processes, _ => true);
+        ElevatedSession session = Session(new StringReader("2\ny\n"), output, handleExe, processes);
 
         int exit = session.Run([Locked], null, null, null);
 
@@ -411,7 +400,7 @@ public sealed class ElevatedSessionTests
     {
         StringWriter output = Writer();
         var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642))) { SnapshotThrowsOn = 2 };
-        var session = new ElevatedSession(new StringReader("\n"), output, new FakeHandleExe(OneLocker()), processes, _ => true);
+        ElevatedSession session = Session(new StringReader("\n"), output, new FakeHandleExe(OneLocker()), processes);
 
         int exit = session.Run([Locked], null, null, null);
 
@@ -427,7 +416,7 @@ public sealed class ElevatedSessionTests
         StringWriter output = Writer();
         var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
         processes.StartedTimeSequence[642] = StartTimes(1000, 2000);
-        var session = new ElevatedSession(new StringReader("1\n"), output, new FakeHandleExe(OneLocker()), processes, _ => true);
+        ElevatedSession session = Session(new StringReader("1\n"), output, new FakeHandleExe(OneLocker()), processes);
 
         int exit = session.Run([Locked], null, null, null);
 
@@ -444,7 +433,7 @@ public sealed class ElevatedSessionTests
         var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
         processes.StartedTimeSequence[642] = StartTimes(1000, 2000);
         var handleExe = new FakeHandleExe(OneLocker(), OneLocker());
-        var session = new ElevatedSession(new StringReader("2\ny\n"), output, handleExe, processes, _ => true);
+        ElevatedSession session = Session(new StringReader("2\ny\n"), output, handleExe, processes);
 
         int exit = session.Run([Locked], null, null, null);
 
@@ -460,7 +449,7 @@ public sealed class ElevatedSessionTests
         StringWriter output = Writer();
         var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
         processes.StartedTimeSequence[642] = StartTimes(1000);
-        var session = new ElevatedSession(new StringReader("\n"), output, new FakeHandleExe(OneLocker(), ""), processes, _ => true);
+        ElevatedSession session = Session(new StringReader("\n"), output, new FakeHandleExe(OneLocker(), ""), processes);
 
         int exit = session.Run([Locked], null, null, null);
 
@@ -477,7 +466,7 @@ public sealed class ElevatedSessionTests
     {
         StringWriter output = Writer();
         var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
-        var session = new ElevatedSession(new StringReader("\n"), output, new FakeHandleExe(OneLocker()), processes, _ => true);
+        ElevatedSession session = Session(new StringReader("\n"), output, new FakeHandleExe(OneLocker()), processes);
 
         int exit = session.Run([Locked], null, null, null);
 
@@ -497,7 +486,7 @@ public sealed class ElevatedSessionTests
         StringWriter output = Writer();
         var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
         processes.StartedTimeSequence[642] = StartTimes(1000, null);
-        var session = new ElevatedSession(new StringReader("1\n"), output, new FakeHandleExe(OneLocker()), processes, _ => true);
+        ElevatedSession session = Session(new StringReader("1\n"), output, new FakeHandleExe(OneLocker()), processes);
 
         int exit = session.Run([Locked], null, null, null);
 
@@ -526,9 +515,9 @@ public sealed class ElevatedSessionTests
         int exit = session.Run([Locked], null, null, null);
 
         string text = output.ToString();
-        Assert.Equal(UnlockExit.NothingDone, exit);
+        Assert.Equal(UnlockExit.SomeLeft, exit);
         Assert.Contains(
-            @"handle.exe cannot name files under D:\a.wt\x: its path holds characters outside this machine's code pages; close what holds it by hand."
+            @"handle.exe cannot name files under D:\a.wt\x: its path holds characters outside this machine's code pages; close what holds it, then run the sweep again."
                 + "\n",
             text,
             StringComparison.Ordinal
@@ -563,10 +552,41 @@ public sealed class ElevatedSessionTests
         Assert.Contains("Nothing handle.exe can see holds files under those folders.\n", text, StringComparison.Ordinal);
     }
 
+    /// <summary>A nameable path that is clear and one <c>handle.exe</c> cannot name still leave the session at some left, so the
+    /// sweep retries every locked pick rather than believing the unnameable one is clear.</summary>
+    [Fact]
+    public void UnnameablePathWithANameableOneExitsSomeLeft()
+    {
+        const string Other = @"D:\b.wt\y";
+        StringWriter output = Writer();
+        var session = new ElevatedSession(
+            new StringReader(""),
+            output,
+            new FakeHandleExe("No matching handles found.\n"),
+            new ScriptedProcessControl(Running()),
+            path => path == Other
+        );
+
+        int exit = session.Run([Locked, Other], null, null, null);
+
+        string text = output.ToString();
+        Assert.Equal(UnlockExit.SomeLeft, exit);
+        Assert.Contains("Nothing handle.exe can see holds files under those folders.\n", text, StringComparison.Ordinal);
+    }
+
     /// <summary>The start times <see cref="ScriptedProcessControl.StartedAt"/> answers with, in turn, the last repeating.</summary>
     /// <param name="times">The times, in the order they are read.</param>
     /// <returns>The queue.</returns>
     private static Queue<ulong?> StartTimes(params ulong?[] times) => new(times);
+
+    /// <summary>An elevated session whose <c>handle.exe</c> can name every path, driven through the given seams.</summary>
+    /// <param name="input">Where the answers come from.</param>
+    /// <param name="output">Where the session prints.</param>
+    /// <param name="handleExe">The <c>handle.exe</c> the session dumps and closes handles through.</param>
+    /// <param name="processes">The process table and the stop operation.</param>
+    /// <returns>The session.</returns>
+    private static ElevatedSession Session(TextReader input, TextWriter output, IHandleExe handleExe, IProcessControl processes) =>
+        new(input, output, handleExe, processes, _ => true);
 
     /// <summary>A <c>StringWriter</c> that ends its lines with <c>\n</c>.</summary>
     private static StringWriter Writer() => new() { NewLine = "\n" };

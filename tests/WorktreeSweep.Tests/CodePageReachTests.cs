@@ -26,15 +26,15 @@ public sealed class CodePageReachTests
     [Fact]
     public void AsciiPathIsNameable() => Assert.True(CodePageReach.CanName(@"X:\tmp\plain\x.txt", CodePages(1252, 437)));
 
-    /// <summary>The machine's own code pages are its ANSI and OEM ones, in that order.</summary>
+    /// <summary>The machine's code pages are its ANSI, OEM and console output ones, with any repeat dropped.</summary>
     [Fact]
-    public void SystemCodePagesAreAnsiAndOem()
+    public void SystemCodePagesHoldAnsiOemAndConsole()
     {
+        CodePageReach.RegisterProvider();
         IReadOnlyList<Encoding> pages = CodePageReach.SystemCodePages();
 
-        Assert.Equal(2, pages.Count);
-        Assert.Equal((int)PInvoke.GetACP(), pages[0].CodePage);
-        Assert.Equal((int)PInvoke.GetOEMCP(), pages[1].CodePage);
+        int[] expected = [.. new[] { (int)PInvoke.GetACP(), (int)PInvoke.GetOEMCP(), (int)PInvoke.GetConsoleOutputCP() }.Distinct()];
+        Assert.Equal<int[]>(expected, [.. pages.Select(page => page.CodePage)]);
     }
 
     /// <summary>
@@ -45,7 +45,7 @@ public sealed class CodePageReachTests
     /// <returns>The encodings.</returns>
     private static IReadOnlyList<Encoding> CodePages(params int[] codePages)
     {
-        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        CodePageReach.RegisterProvider();
         return [.. codePages.Select(Encoding.GetEncoding)];
     }
 }
