@@ -2,6 +2,7 @@ using System.Text.Json;
 using WorktreeSweep.Agent;
 using WorktreeSweep.Discovery;
 using WorktreeSweep.Holders;
+using WorktreeSweep.Recycle;
 using WorktreeSweep.Removal;
 using WorktreeSweep.Report;
 
@@ -11,6 +12,8 @@ namespace WorktreeSweep.Tests;
 public sealed class AgentRemoverTests
 {
     private static readonly AgentOptions Plain = new(Force: false, StopBuildServers: false);
+
+    private static readonly BinCapacity Fits = new(uint.MaxValue, NukeOnDelete: false);
 
     /// <summary>A repo's main worktree is refused, and nothing is touched.</summary>
     [Fact]
@@ -144,7 +147,10 @@ public sealed class AgentRemoverTests
         RemoveReport report = AgentRemover.Run(
             worktree,
             new AgentOptions(Force: false, StopBuildServers: true),
-            Seams(Recycle, (_, _) => new HolderReport([cargo], []), stopped.Add)
+            Seams(Recycle, (_, _) => new HolderReport([cargo], []), stopped.Add) with
+            {
+                StillSame = _ => true,
+            }
         );
 
         Assert.Equal(RemoveStatus.Removed, report.Status);
@@ -154,6 +160,91 @@ public sealed class AgentRemoverTests
         Assert.Equal([cargo], report.Holders);
         Assert.True(report.BranchDeleted, string.Join("; ", report.Notes));
         Assert.DoesNotContain("feat", WorktreeList(repo), StringComparison.Ordinal);
+    }
+
+    /// <summary>An allowlisted holder whose PID may now name another process is never stopped, and the run says why.</summary>
+    [Fact]
+    public void StopBuildServersSkipsAHolderThatIsNoLongerTheSame()
+    {
+        using var fx = new Fixture();
+        (_, string worktree) = RepoWithWorktree(fx, @"x.wt\feat", "feat");
+        var cargo = new Holder(4242, "cargo.exe", null, 0, null, [new Hold.OpenHandle(Path.Join(worktree, "README.md"))]);
+        var stopped = new List<Holder>();
+
+        RemoveReport report = AgentRemover.Run(
+            worktree,
+            new AgentOptions(Force: false, StopBuildServers: true),
+            Seams(AlwaysLocked, (_, _) => new HolderReport([cargo], []), stopped.Add) with
+            {
+                StillSame = _ => false,
+            }
+        );
+
+        Assert.Equal(RemoveStatus.Released, report.Status);
+        Assert.Empty(stopped);
+        Assert.Empty(report.Stopped);
+        Assert.Contains("pid 4242 (cargo.exe) not stopped: it is no longer the same process", report.Notes);
+    }
+
+    /// <summary>A worktree bigger than its volume's Recycle Bin is released without a recycle.</summary>
+    [Fact]
+    public void TooBigForTheBinIsReleased()
+    {
+        using var fx = new Fixture();
+        (_, string worktree) = RepoWithWorktree(fx, @"x.wt\feat", "feat");
+
+        RemoveReport report = AgentRemover.Run(
+            worktree,
+            Plain,
+            Seams(NeverRecycle, NoHolders, NeverStop) with
+            {
+                ReadCapacity = _ => new BinCapacity(0, NukeOnDelete: false),
+            }
+        );
+
+        Assert.Equal(RemoveStatus.Released, report.Status);
+        Assert.Equal(Reason.TooBigForRecycleBin, report.Reason);
+        Assert.True(Directory.Exists(worktree));
+    }
+
+    /// <summary>A holder scan refused on the retry is a note, and the locked worktree is released.</summary>
+    [Fact]
+    public void RetryNotesAHolderScanThatIsRefused()
+    {
+        using var fx = new Fixture();
+        (_, string worktree) = RepoWithWorktree(fx, @"x.wt\feat", "feat");
+
+        // The caller's own scan excludes this process; the retry's scan excludes nothing, and that one is refused.
+        RemoveReport report = AgentRemover.Run(
+            worktree,
+            Plain,
+            Seams(
+                AlwaysLocked,
+                (_, exclude) => exclude.Count == 0 ? throw new UnauthorizedAccessException("access denied") : new HolderReport([], []),
+                NeverStop
+            )
+        );
+
+        Assert.Equal(RemoveStatus.Released, report.Status);
+        Assert.Contains(report.Notes, note => note.StartsWith("cannot list the processes holding it:", StringComparison.Ordinal));
+    }
+
+    /// <summary>A git lock <c>--force</c> lifted is put back, with its reason, when the worktree stays and is released.</summary>
+    [Fact]
+    public void ForceRelocksAWorktreeItReleases()
+    {
+        using var fx = new Fixture();
+        (string repo, string worktree) = RepoWithWorktree(fx, @"x.wt\feat", "feat");
+        _ = Fixture.Git(repo, ["worktree", "lock", "--reason", "held by test", worktree]);
+
+        RemoveReport report = AgentRemover.Run(
+            worktree,
+            new AgentOptions(Force: true, StopBuildServers: false),
+            Seams(AlwaysLocked, NoHolders, NeverStop)
+        );
+
+        Assert.Equal(RemoveStatus.Released, report.Status);
+        Assert.Contains("locked held by test", WorktreeList(repo), StringComparison.Ordinal);
     }
 
     /// <summary>A report with every field set serialises to the spec's fields, in order; a refused report writes its absent fields as null.</summary>
@@ -331,11 +422,18 @@ public sealed class AgentRemoverTests
 
     private static void NeverRecycle(string path) => throw new InvalidOperationException($"{path} must not be recycled");
 
+    private static void AlwaysLocked(string path) => throw new LockedException(path, firstLockedFile: null);
+
     private static HolderReport NoHolders(string folder, IReadOnlyCollection<int> exclude) => new([], []);
 
     private static void NeverStop(Holder holder) => throw new InvalidOperationException($"pid {holder.Pid} must not be stopped");
 
-    /// <summary>Test seams: a 200 ms recycle timeout, the caller's chain this process alone, and the current folder left alone.</summary>
+    private static bool NeverChecked(Holder holder) => throw new InvalidOperationException($"pid {holder.Pid} must not be checked");
+
+    /// <summary>
+    /// Test seams: a 200 ms recycle timeout, the caller's chain this process alone, the current folder left alone, and a Recycle Bin
+    /// that takes anything, so no test reads the real one.
+    /// </summary>
     private static AgentSeams Seams(Action<string> recycle, Func<string, IReadOnlyCollection<int>, HolderReport> findHolders, Action<Holder> stop) =>
         new()
         {
@@ -344,7 +442,9 @@ public sealed class AgentRemoverTests
             RecycleTimeout = TimeSpan.FromMilliseconds(200),
             FindHolders = findHolders,
             OwnChain = () => new HashSet<int> { Environment.ProcessId },
+            StillSame = NeverChecked,
             Stop = stop,
+            ReadCapacity = _ => Fits,
         };
 
     /// <summary>A repo <c>x</c> under the fixture root with a clean worktree at <paramref name="relative"/> on a new branch.</summary>

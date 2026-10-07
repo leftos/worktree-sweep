@@ -1,6 +1,7 @@
 using WorktreeSweep.Holders;
 using WorktreeSweep.Processes;
 using WorktreeSweep.Recycle;
+using WorktreeSweep.Removal;
 
 namespace WorktreeSweep.Agent;
 
@@ -16,7 +17,9 @@ internal sealed record AgentSeams
             RecycleTimeout = TimeSpan.FromSeconds(30),
             FindHolders = HolderFinder.Find,
             OwnChain = () => HolderFinder.Ancestors(Environment.ProcessId, HolderFinder.ProcessTimes()).ToHashSet(),
-            Stop = holder => ProcessStopper.Stop(holder.Pid, holder.Exe, holder.Started == 0 ? null : holder.Started, ProcessStopper.DefaultWait),
+            StillSame = HolderFinder.StillSame,
+            Stop = holder => ProcessStopper.Stop(holder.Pid, holder.Exe, holder.Started, ProcessStopper.DefaultWait),
+            ReadCapacity = RemovalPlanner.ReadCapacity,
         };
 
     /// <summary>Gets what makes the main worktree the process's current folder, so the process itself never holds the worktree.</summary>
@@ -34,6 +37,15 @@ internal sealed record AgentSeams
     /// <summary>Gets what lists the PIDs of this process and its ancestors.</summary>
     public required Func<IReadOnlySet<int>> OwnChain { get; init; }
 
+    /// <summary>
+    /// Gets what checks a holder's PID still names the process the scan found, so a reused PID is never stopped; <see langword="false"/>
+    /// when that cannot be checked.
+    /// </summary>
+    public required Func<Holder, bool> StillSame { get; init; }
+
     /// <summary>Gets what stops a holder, throwing <see cref="InvalidOperationException"/> or a Win32 exception when it cannot.</summary>
     public required Action<Holder> Stop { get; init; }
+
+    /// <summary>Gets what reads the Recycle Bin settings of a path's volume; <see langword="null"/> when they cannot be read.</summary>
+    public required Func<string, BinCapacity?> ReadCapacity { get; init; }
 }
