@@ -101,6 +101,48 @@ public sealed class ReleasedMarkerTests
         Assert.Equal([ReleasedMarker.FileName], Directory.GetFiles(wt.Admin, "worktree-sweep-*").Select(Path.GetFileName));
     }
 
+    /// <summary>A marker write whose rename fails leaves no temporary file behind.</summary>
+    [Fact]
+    public void FailedRenameLeavesNoTempFile()
+    {
+        using var fx = new Fixture();
+        (string Worktree, string Admin) wt = WorktreeWithAdmin(fx);
+        string target = Path.Join(wt.Admin, ReleasedMarker.FileName);
+        Directory.CreateDirectory(target);
+        var written = new Released
+        {
+            ReleasedAtUnix = 1_790_000_000,
+            Reason = Reason.Locked,
+            Holders = [],
+        };
+
+        _ = Assert.Throws<IOException>(() => ReleasedMarker.Write(wt.Admin, written));
+
+        Assert.False(File.Exists(target + ".tmp"), "the temporary file was left behind");
+    }
+
+    /// <summary>
+    /// A marker write that fails throws its <c>cannot write</c> IOException; with a directory standing in the temporary file's place,
+    /// the cleanup's delete cannot succeed, so it traces rather than throwing over the original error.
+    /// </summary>
+    [Fact]
+    public void FailedWriteLeavesNoTempFile()
+    {
+        using var fx = new Fixture();
+        (string Worktree, string Admin) wt = WorktreeWithAdmin(fx);
+        Directory.CreateDirectory(Path.Join(wt.Admin, ReleasedMarker.FileName + ".tmp"));
+        var written = new Released
+        {
+            ReleasedAtUnix = 1_790_000_000,
+            Reason = Reason.Locked,
+            Holders = [],
+        };
+
+        IOException error = Assert.Throws<IOException>(() => ReleasedMarker.Write(wt.Admin, written));
+
+        Assert.StartsWith("cannot write ", error.Message, StringComparison.Ordinal);
+    }
+
     /// <summary>A worktree whose folder is gone is found through the common dir's <c>worktrees</c> entries, marker and all.</summary>
     [Fact]
     public void PrunableWorktreeKeepsItsMarker()
