@@ -32,6 +32,9 @@ public sealed class WindowWorkers
         main.PropertyChanged += OnMainChanged;
     }
 
+    /// <summary>Gets or sets the window that owns the Shell's prompts during removal; <see cref="ShellRecycler.NoOwner"/> until the window has a handle.</summary>
+    public nint OwnerWindow { get; set; } = ShellRecycler.NoOwner;
+
     /// <summary>Scans <paramref name="root"/> in the background, then shows what it found or why it failed.</summary>
     /// <param name="root">The folder to scan.</param>
     public void Start(string root) => seams.RunInBackground(() => Scan(root));
@@ -160,24 +163,27 @@ public sealed class WindowWorkers
         }
     }
 
-    /// <summary>Starts <paramref name="removing"/>'s removal on its own STA thread.</summary>
+    /// <summary>Starts <paramref name="removing"/>'s removal on its own STA thread, reading the owner window on this UI thread.</summary>
     /// <param name="removing">The Removing screen, captured once so every callback reaches this removal.</param>
     private void StartRemoval(RemovingViewModel removing)
     {
         CancellationToken token = removing.Token;
-        seams.RunOnStaThread(() => Remove(removing, token));
+        nint owner = OwnerWindow;
+        seams.RunOnStaThread(() => Remove(removing, owner, token));
     }
 
     /// <summary>Runs the removal and posts its results, or its failure, to the window.</summary>
     /// <param name="removing">The Removing screen.</param>
+    /// <param name="owner">The window that owns the Shell's prompts.</param>
     /// <param name="token">The removal's cancellation.</param>
-    private void Remove(RemovingViewModel removing, CancellationToken token)
+    private void Remove(RemovingViewModel removing, nint owner, CancellationToken token)
     {
         Action show;
         try
         {
             IReadOnlyList<Swept> swept = seams.RemovePicks(
                 removing.Decisions,
+                owner,
                 progress => seams.Dispatcher.Post(Guarded(() => removing.OnProgress(progress), RemovalFailure)),
                 paths => OfferUnlock(removing, paths),
                 token

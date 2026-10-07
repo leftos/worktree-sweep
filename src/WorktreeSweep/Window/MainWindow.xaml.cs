@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Windows;
+using System.Windows.Interop;
 using WorktreeSweep.ViewModels;
 
 namespace WorktreeSweep.Window;
@@ -24,6 +25,7 @@ public partial class MainWindow
         DataContext = main;
         Title = $"worktree-sweep — {root}";
         ScanningText.Text = $"Scanning {root}…";
+        SourceInitialized += (_, _) => workers.OwnerWindow = new WindowInteropHelper(this).Handle;
         Closing += OnClosing;
     }
 

@@ -1,3 +1,4 @@
+using WorktreeSweep.Recycle;
 using WorktreeSweep.Removal;
 using WorktreeSweep.Report;
 using WorktreeSweep.Signals;
@@ -93,7 +94,7 @@ public sealed class WindowWorkersTests
                 action();
                 onSta = false;
             },
-            RemovePicks = (decisions, _, _, _) =>
+            RemovePicks = (decisions, _, _, _, _) =>
             {
                 removedOnSta = onSta;
                 return Recycled(decisions);
@@ -107,6 +108,50 @@ public sealed class WindowWorkersTests
         Assert.Equal(Screen.Results, main.Screen);
     }
 
+    /// <summary>The window's handle reaches the removal, so the Shell owns its prompts by the window.</summary>
+    [Fact]
+    public void RemovalPassesTheOwnerWindowToTheRemoval()
+    {
+        var main = new MainViewModel(_ => TimeSpan.Zero);
+        nint seen = -1;
+        WindowSeams seams = Seams(A) with
+        {
+            RemovePicks = (decisions, owner, _, _, _) =>
+            {
+                seen = owner;
+                return Recycled(decisions);
+            },
+        };
+        var workers = new WindowWorkers(main, seams) { OwnerWindow = 4242 };
+        workers.Start(ReportSamples.Root);
+
+        Confirm(main);
+
+        Assert.Equal((nint)4242, seen);
+    }
+
+    /// <summary>A removal before the window has a handle passes no owner, so nothing owns the Shell's prompts.</summary>
+    [Fact]
+    public void RemovalWithoutAWindowHandlePassesNoOwner()
+    {
+        var main = new MainViewModel(_ => TimeSpan.Zero);
+        nint seen = -1;
+        WindowSeams seams = Seams(A) with
+        {
+            RemovePicks = (decisions, owner, _, _, _) =>
+            {
+                seen = owner;
+                return Recycled(decisions);
+            },
+        };
+        var workers = new WindowWorkers(main, seams);
+        workers.Start(ReportSamples.Root);
+
+        Confirm(main);
+
+        Assert.Equal(ShellRecycler.NoOwner, seen);
+    }
+
     /// <summary>The window shows the unlock step before the offer runs and its outcome after.</summary>
     [Fact]
     public void UnlockStartedIsShownBeforeTheOfferAndDoneAfter()
@@ -115,7 +160,7 @@ public sealed class WindowWorkersTests
         var calls = new List<string>();
         WindowSeams seams = Seams(A) with
         {
-            RemovePicks = (decisions, _, offerUnlock, _) =>
+            RemovePicks = (decisions, _, _, offerUnlock, _) =>
             {
                 offerUnlock([A.Path]);
                 return Recycled(decisions);
@@ -156,7 +201,7 @@ public sealed class WindowWorkersTests
     public void RemovalThatThrowsShowsRemovalFailed()
     {
         var main = new MainViewModel(_ => TimeSpan.Zero);
-        WindowSeams seams = Seams(A) with { RemovePicks = (_, _, _, _) => throw new InvalidOperationException("boom") };
+        WindowSeams seams = Seams(A) with { RemovePicks = (_, _, _, _, _) => throw new InvalidOperationException("boom") };
         new WindowWorkers(main, seams).Start(ReportSamples.Root);
 
         Confirm(main);
@@ -206,7 +251,7 @@ public sealed class WindowWorkersTests
         bool cancelled = true;
         WindowSeams seams = Seams(A) with
         {
-            RemovePicks = (decisions, _, offerUnlock, _) =>
+            RemovePicks = (decisions, _, _, offerUnlock, _) =>
             {
                 offerUnlock([A.Path]);
                 return Recycled(decisions);
@@ -278,7 +323,7 @@ public sealed class WindowWorkersTests
     public void FinishedThatThrowsShowsRemovalFailed()
     {
         var main = new MainViewModel(_ => TimeSpan.Zero);
-        WindowSeams seams = Seams(A) with { RemovePicks = (_, _, _, _) => null! };
+        WindowSeams seams = Seams(A) with { RemovePicks = (_, _, _, _, _) => null! };
         new WindowWorkers(main, seams).Start(ReportSamples.Root);
 
         Confirm(main);
@@ -302,7 +347,7 @@ public sealed class WindowWorkersTests
         };
         WindowSeams seams = Seams(A) with
         {
-            RemovePicks = (decisions, _, offerUnlock, _) =>
+            RemovePicks = (decisions, _, _, offerUnlock, _) =>
             {
                 offerUnlock([A.Path]);
                 return Recycled(decisions);
@@ -330,7 +375,7 @@ public sealed class WindowWorkersTests
         {
             Scan = _ => ReportSamples.ReportOf(candidates),
             ReadCapacity = _ => ViewModelSamples.Roomy,
-            RemovePicks = (decisions, _, _, _) => Recycled(decisions),
+            RemovePicks = (decisions, _, _, _, _) => Recycled(decisions),
             OfferUnlock = _ => UnlockOutcome.Skipped,
             RunInBackground = action => action(),
             RunOnStaThread = action => action(),

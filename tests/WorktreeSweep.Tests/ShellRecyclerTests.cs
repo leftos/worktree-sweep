@@ -56,7 +56,7 @@ public sealed class ShellRecyclerTests
         File.WriteAllText(loose, "loose");
         using var handle = new FileStream(held, FileMode.Open, FileAccess.Read, FileShare.None);
 
-        var recycling = Task.Run(() => ShellRecycler.Recycle(tree), cancel);
+        var recycling = Task.Run(() => ShellRecycler.Recycle(tree, ShellRecycler.NoOwner), cancel);
         Task finished = await Task.WhenAny(recycling, Task.Delay(DialogTimeout, cancel));
 
         Assert.True(finished == recycling, $"ShellRecycler.Recycle did not return within {DialogTimeout}: the Shell may be showing a dialog");
@@ -76,7 +76,7 @@ public sealed class ShellRecyclerTests
         Directory.CreateDirectory(Path.Combine(scratch, "sub"));
         File.WriteAllText(Path.Combine(scratch, "sub", "file.txt"), "recycle me");
 
-        ShellRecycler.Recycle(scratch);
+        ShellRecycler.Recycle(scratch, ShellRecycler.NoOwner);
 
         Assert.False(Directory.Exists(scratch), $"{scratch} still exists");
     }

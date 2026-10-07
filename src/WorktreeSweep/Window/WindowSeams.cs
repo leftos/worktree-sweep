@@ -18,6 +18,7 @@ public sealed record WindowSeams
     /// <summary>Gets the removal, with the signature of <see cref="Remover.RemovePicks"/>.</summary>
     public required Func<
         IReadOnlyList<Decision>,
+        nint,
         Action<Progress>,
         Func<IReadOnlyList<string>, UnlockOutcome>,
         CancellationToken,

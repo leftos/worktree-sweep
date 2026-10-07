@@ -58,7 +58,7 @@ public sealed class MainWindowTests
         {
             Scan = _ => ReportSamples.ReportOf(),
             ReadCapacity = _ => null,
-            RemovePicks = (_, _, _, _) => [],
+            RemovePicks = (_, _, _, _, _) => [],
             OfferUnlock = _ => UnlockOutcome.Skipped,
             RunInBackground = _ => { },
             RunOnStaThread = _ => { },

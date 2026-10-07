@@ -13,6 +13,9 @@ namespace WorktreeSweep.Recycle;
 /// <summary>Moves a folder to the Recycle Bin through the Shell's <c>IFileOperation</c>.</summary>
 public static class ShellRecycler
 {
+    /// <summary>The owner to pass when no window owns the Shell's prompts (the agent command, tests).</summary>
+    public const nint NoOwner = 0;
+
     /// <summary>
     /// Recycle with undo, warn before any permanent delete, show no progress or error UI, and stop at the first failure, which leaves
     /// the tree whole.
@@ -39,6 +42,7 @@ public static class ShellRecycler
     /// last attempt decides <see cref="LockedException"/>.
     /// </summary>
     /// <param name="path">The folder to recycle.</param>
+    /// <param name="owner">The window that owns the Shell's prompts, or <see cref="NoOwner"/>.</param>
     /// <exception cref="LockedException">
     /// A file or folder in the tree is in use: <c>PerformOperations</c> failed with one of the <see cref="LockedHresults"/>. Nothing was
     /// recycled. Its inner exception is the Shell failure, naming the call and its HRESULT.
@@ -46,10 +50,10 @@ public static class ShellRecycler
     /// <exception cref="IOException">
     /// A Shell call failed, the user answered No to the permanent-delete warning or cancelled, or the folder is still there afterwards.
     /// </exception>
-    public static void Recycle(string path)
+    public static void Recycle(string path, nint owner)
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
-        bool aborted = OnStaThread(() => RecycleRetry.WhileLocked(() => DeleteOnce(path), Thread.Sleep));
+        bool aborted = OnStaThread(() => RecycleRetry.WhileLocked(() => DeleteOnce(path, owner), Thread.Sleep));
         if (aborted)
         {
             throw new IOException($"moving {path} to the Recycle Bin was cancelled or aborted");
@@ -88,12 +92,16 @@ public static class ShellRecycler
     }
 
     /// <summary>Runs one Shell delete with undo on the calling STA thread; returns whether any operation was aborted.</summary>
-    private static bool DeleteOnce(string path)
+    private static bool DeleteOnce(string path, nint owner)
     {
         IFileOperation operation = CreateFileOperation(path);
         try
         {
             Check(operation.SetOperationFlags((uint)Flags), ShellCall.SetOperationFlags, path);
+            if (owner != NoOwner)
+            {
+                Check(operation.SetOwnerWindow(owner), ShellCall.SetOwnerWindow, path);
+            }
             IShellItem item = ParseShellItem(path);
             try
             {

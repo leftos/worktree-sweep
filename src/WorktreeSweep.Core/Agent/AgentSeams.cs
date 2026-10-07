@@ -13,7 +13,7 @@ internal sealed record AgentSeams
         new()
         {
             EnterMainWorktree = Directory.SetCurrentDirectory,
-            Recycle = ShellRecycler.Recycle,
+            Recycle = path => ShellRecycler.Recycle(path, ShellRecycler.NoOwner),
             RecycleTimeout = TimeSpan.FromSeconds(30),
             FindHolders = HolderFinder.Find,
             OwnChain = () => HolderFinder.Ancestors(Environment.ProcessId, HolderFinder.ProcessTimes()).ToHashSet(),
