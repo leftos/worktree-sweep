@@ -73,6 +73,51 @@ public sealed class ListViewModelTests
         Assert.Null(main.Review);
     }
 
+    /// <summary>Changing a tick, or Tick all or Tick none, clears the Nothing picked message.</summary>
+    [Fact]
+    public void TickingARowClearsTheNothingPickedMessage()
+    {
+        MainViewModel main = ViewModelSamples.Listed(ViewModelSamples.Worktree("a", MergeState.Ancestor, 10));
+        ListViewModel list = ViewModelSamples.ListOf(main);
+        list.ReviewCommand.Execute(null);
+        Assert.Equal(ListViewModel.NothingPicked, list.Message);
+
+        list.Rows[0].IsTicked = true;
+
+        Assert.Null(list.Message);
+        list.Rows[0].IsTicked = false;
+        list.ReviewCommand.Execute(null);
+        Assert.Equal(ListViewModel.NothingPicked, list.Message);
+        list.TickNoneCommand.Execute(null);
+        Assert.Null(list.Message);
+    }
+
+    /// <summary>Tick all and Tick none each announce one header change, however many rows they tick.</summary>
+    [Fact]
+    public void TickAllRaisesHeaderOnce()
+    {
+        MainViewModel main = ViewModelSamples.Listed(
+            ViewModelSamples.Worktree("a", MergeState.Ancestor, 10),
+            ViewModelSamples.Worktree("b", MergeState.Ancestor, 10),
+            ViewModelSamples.Worktree("c", MergeState.Ancestor, 10)
+        );
+        ListViewModel list = ViewModelSamples.ListOf(main);
+        int headerChanges = 0;
+        list.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(ListViewModel.Header))
+            {
+                headerChanges++;
+            }
+        };
+
+        list.TickAllCommand.Execute(null);
+
+        Assert.Equal(1, headerChanges);
+        list.TickNoneCommand.Execute(null);
+        Assert.Equal(2, headerChanges);
+    }
+
     /// <summary>The selected row's detail is its seven detail lines, dated with the injected offset.</summary>
     [Fact]
     public void SelectedRowShowsItsSevenDetailLines()

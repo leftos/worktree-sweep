@@ -208,6 +208,78 @@ public sealed class ReviewViewModelTests
         Assert.Null(main.Removing);
     }
 
+    /// <summary>The Yes and No commands answer the current question.</summary>
+    [Fact]
+    public void AnswerYesAndNoCommandsAnswer()
+    {
+        MainViewModel main = TwoBranches();
+        ReviewViewModel review = ViewModelSamples.Reviewing(main, ViewModelSamples.Roomy);
+
+        review.AnswerNoCommand.Execute(null);
+
+        Assert.Equal(ReviewState.Asking, review.State);
+        Assert.Equal(@"repo.wt\b", review.PickPath);
+        review.AnswerYesCommand.Execute(null);
+        Assert.Equal(ReviewState.Confirming, review.State);
+        Assert.Equal("Remove 2 items: 2 to the Recycle Bin (20 B); 1 branch deleted.", review.FinalSentence);
+    }
+
+    /// <summary>An answer that comes after Back leaves the List showing and starts no removal.</summary>
+    [Fact]
+    public void AnswerAfterBackDoesNothing()
+    {
+        MainViewModel main = ViewModelSamples.Listed(ViewModelSamples.Worktree("a", MergeState.Unmerged(4), 10));
+        ReviewViewModel review = ViewModelSamples.Reviewing(main, ViewModelSamples.Roomy);
+        Assert.Equal(ReviewState.Asking, review.State);
+        review.BackCommand.Execute(null);
+
+        review.Answer(false);
+        review.AnswerNoCommand.Execute(null);
+
+        Assert.Equal(Screen.List, main.Screen);
+        Assert.Null(main.Removing);
+    }
+
+    /// <summary>A second Confirm, such as a double Enter, starts no second removal.</summary>
+    [Fact]
+    public void ConfirmTwiceStartsOneRemoval()
+    {
+        MainViewModel main = ViewModelSamples.Listed(ViewModelSamples.Worktree("a", MergeState.Ancestor, 10));
+        ReviewViewModel review = ViewModelSamples.Reviewing(main, ViewModelSamples.Roomy);
+        review.Answer(true);
+        int removalsStarted = 0;
+        main.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(MainViewModel.Removing))
+            {
+                removalsStarted++;
+            }
+        };
+
+        review.ConfirmCommand.Execute(null);
+        RemovingViewModel? first = main.Removing;
+        review.ConfirmCommand.Execute(null);
+
+        Assert.Equal(1, removalsStarted);
+        Assert.NotNull(first);
+        Assert.Same(first, main.Removing);
+    }
+
+    /// <summary>Back and Cancel once the removal started leave the Removing screen showing.</summary>
+    [Fact]
+    public void BackAfterConfirmDoesNothing()
+    {
+        MainViewModel main = ViewModelSamples.Listed(ViewModelSamples.Worktree("a", MergeState.Ancestor, 10));
+        ReviewViewModel review = ViewModelSamples.Reviewing(main, ViewModelSamples.Roomy);
+        review.Answer(true);
+        review.ConfirmCommand.Execute(null);
+
+        review.BackCommand.Execute(null);
+        review.CancelCommand.Execute(null);
+
+        Assert.Equal(Screen.Removing, main.Screen);
+    }
+
     /// <summary>Two merged worktrees, <c>a</c> and <c>b</c>, each asked only about its branch.</summary>
     /// <returns>The window, listing them.</returns>
     private static MainViewModel TwoBranches() =>

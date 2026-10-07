@@ -104,6 +104,24 @@ public sealed class RemovingViewModelTests
         Assert.Equal("Unlock: Skipped", results.Banner);
     }
 
+    /// <summary>Showing the Results drops the finished removal and releases its cancellation.</summary>
+    [Fact]
+    public void ResultsLeaveNoRemoving()
+    {
+        RegisteredCandidate a = ViewModelSamples.Worktree("a", MergeState.Ancestor, 10);
+        MainViewModel main = ViewModelSamples.Listed(a);
+        ViewModelSamples.Reviewing(main, ViewModelSamples.Roomy).Answer(true);
+        main.Review?.ConfirmCommand.Execute(null);
+        RemovingViewModel? removing = main.Removing;
+        Assert.NotNull(removing);
+
+        removing.Finished([new(a, new Outcome.Recycled(a.KnownSize), [])]);
+
+        Assert.Equal(Screen.Results, main.Screen);
+        Assert.Null(main.Removing);
+        Assert.Throws<ObjectDisposedException>(() => removing.Token);
+    }
+
     /// <summary>A Removing screen over a skipped pick <c>a</c> and runnable picks <c>b</c> and <c>c</c>.</summary>
     /// <returns>The view model.</returns>
     private static RemovingViewModel SkipThenTwoRuns()
@@ -115,6 +133,6 @@ public sealed class RemovingViewModelTests
             new(ViewModelSamples.Worktree("b", MergeState.Ancestor, 10), recycle, new BranchChoice.NotOffered()),
             new(ViewModelSamples.Worktree("c", MergeState.Ancestor, 10), recycle, new BranchChoice.NotOffered()),
         ];
-        return new RemovingViewModel(decisions, ReportSamples.Root, _ => { });
+        return new RemovingViewModel(decisions, [@"repo.wt\a", @"repo.wt\b", @"repo.wt\c"], _ => { });
     }
 }

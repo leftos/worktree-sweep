@@ -3,7 +3,6 @@ using System.Globalization;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using WorktreeSweep.Removal;
-using WorktreeSweep.Report;
 using WorktreeSweep.Unlock;
 
 namespace WorktreeSweep.ViewModels;
@@ -34,13 +33,18 @@ public sealed partial class RemovingViewModel : ObservableObject, IDisposable
 
     /// <summary>Initializes a new instance of the <see cref="RemovingViewModel"/> class with every runnable decision pending.</summary>
     /// <param name="decisions">The decisions, in the order the removal goes through them.</param>
-    /// <param name="root">The scanned root; paths are shown relative to it.</param>
+    /// <param name="paths">Each decision's path as the List shows it, relative to the scanned root, in decision order.</param>
     /// <param name="finished">Shows the Results.</param>
-    public RemovingViewModel(IReadOnlyList<Decision> decisions, string root, Action<IReadOnlyList<Swept>> finished)
+    /// <exception cref="ArgumentException">There is not one path per decision.</exception>
+    public RemovingViewModel(IReadOnlyList<Decision> decisions, IReadOnlyList<string> paths, Action<IReadOnlyList<Swept>> finished)
     {
         ArgumentNullException.ThrowIfNull(decisions);
-        ArgumentNullException.ThrowIfNull(root);
+        ArgumentNullException.ThrowIfNull(paths);
         ArgumentNullException.ThrowIfNull(finished);
+        if (paths.Count != decisions.Count)
+        {
+            throw new ArgumentException($"expected one path per decision: {decisions.Count} decisions, {paths.Count} paths", nameof(paths));
+        }
         this.finished = finished;
         Decisions = decisions;
         Rows =
@@ -48,7 +52,7 @@ public sealed partial class RemovingViewModel : ObservableObject, IDisposable
             .. decisions
                 .Select((decision, index) => (Decision: decision, Index: index))
                 .Where(entry => entry.Decision.Plan is Plan.Run)
-                .Select(entry => new RemovalRowViewModel(entry.Index, ReportTable.RelativePath(entry.Decision.Candidate.Path, root))),
+                .Select(entry => new RemovalRowViewModel(entry.Index, paths[entry.Index])),
         ];
         Heading = HeadingText();
     }
