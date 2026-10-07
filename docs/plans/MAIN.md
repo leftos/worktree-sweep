@@ -11,14 +11,14 @@
 - [x] WTS-23 Time out a git child that never exits, and disable git's prompts
 - [x] WTS-10 C4: port the report, the --list table and a redesigned scan JSON
 - [x] WTS-11 C5: port the scan and the command line (--list, --json)
-- [ ] WTS-30 Drop and report a dangling origin/HEAD default branch
-- [ ] WTS-29 Skip a stalled worktree's remaining git calls after one times out
-- [ ] WTS-24 Match registered worktrees across path spellings (subst drive, 8.3 name, device prefix)
+- [x] WTS-30 Drop and report a dangling origin/HEAD default branch
+- [x] WTS-29 Skip a stalled worktree's remaining git calls after one times out
+- [x] WTS-24 Match registered worktrees across path spellings (subst drive, 8.3 name, device prefix)
 - [x] WTS-12 C6: port the process primitives
 - [x] WTS-13 C7: port the holder finder's process census
-- [ ] WTS-14 C8: port the holder finder's handle naming
-- [/] WTS-15 C9: port recycling through IFileOperation
-- [ ] WTS-16 C10: port the link-safe permanent delete
+- [x] WTS-14 C8: port the holder finder's handle naming
+- [x] WTS-15 C9: port recycling through IFileOperation
+- [x] WTS-16 C10: port the link-safe permanent delete
 - [ ] WTS-17 C11: port the plan, the two-pass sweep and Review
 - [ ] WTS-18 C12: port the unlock flow with numbered line prompts
 - [ ] WTS-19 C13: port agent removal (remove PATH --json) with a redesigned report
@@ -28,6 +28,9 @@
 - [x] WTS-25 Report a failed merge-tree as a signal error instead of 'not contained'
 - [x] WTS-27 Create one merge-tree scratch folder per worktree, not per default ref
 - [ ] WTS-28 Surface a repo whose worktree list fails, and fix the discovery test flake
+- [ ] WTS-31 Match registered worktrees under a UNC scan root
+- [ ] WTS-32 Key the report table and released markers on resolved paths
+- [ ] WTS-33 Share a git stall across worktrees on the same volume
 
 ## No project
 
