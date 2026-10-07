@@ -44,10 +44,10 @@ public static class ReportTable
         {
             return WithDiscoveryErrors($"No worktrees or orphan folders found under {report.Root}.\n", report, rootKey);
         }
-        ReportRow[] rows = [.. RowsFor(candidates, rootKey, nowUnix)];
+        IReadOnlyList<ReportRow> rows = RowsFor(candidates, rootKey, nowUnix);
         Column[] columns =
         [
-            new("#", true, [.. Enumerable.Range(1, rows.Length).Select(index => index.ToString(CultureInfo.InvariantCulture))]),
+            new("#", true, [.. Enumerable.Range(1, rows.Count).Select(index => index.ToString(CultureInfo.InvariantCulture))]),
             new("PATH", false, [.. rows.Select(row => row.Path)]),
             new("KIND", false, [.. rows.Select(row => row.Kind)]),
             new("BRANCH", false, [.. rows.Select(row => row.Branch)]),
@@ -59,7 +59,7 @@ public static class ReportTable
             new("FLAGS", false, [.. rows.Select(row => row.Flags)]),
         ];
         var table = new StringBuilder();
-        foreach (string line in Layout(columns, rows.Length))
+        foreach (string line in Layout(columns, rows.Count))
         {
             table.Append(line).Append('\n');
         }
@@ -111,7 +111,7 @@ public static class ReportTable
     /// <summary><paramref name="message"/> with its line breaks, <c>\r\n</c> then <c>\n</c>, replaced by <c>; </c>.</summary>
     /// <param name="message">The message.</param>
     /// <returns>The message on one line.</returns>
-    private static string OneLine(string message) =>
+    internal static string OneLine(string message) =>
         message.Replace("\r\n", "; ", StringComparison.Ordinal).Replace("\n", "; ", StringComparison.Ordinal);
 
     /// <summary>
@@ -223,22 +223,20 @@ public static class ReportTable
     private static ReportRow RegisteredRow(RegisteredCandidate registered, string rootKey, long nowUnix)
     {
         WorktreeSignals signals = registered.Signals;
-        string dirty = signals.Dirty is null ? "" : DirtyCell(signals.Dirty);
-        string upstream = UpstreamCell(signals.Upstream);
         return new ReportRow
         {
             Path = RelativePathToRootKey(registered.Path, rootKey),
             Kind = "worktree",
             Branch = TruncateEnd(registered.Record.Branch ?? "", MaxBranchWidth),
             Merge = signals.MergeState is null ? "" : MergeWord(signals.MergeState),
-            Dirty = dirty,
-            Upstream = upstream,
+            Dirty = signals.Dirty is null ? "" : DirtyCell(signals.Dirty),
+            Upstream = UpstreamCell(signals.Upstream),
             Active = signals.LastActivityUnix is long then ? Age(then, nowUnix) : "",
             Size = signals.Size is null ? "" : HumanBytes(signals.Size.Bytes),
             Flags = RegisteredFlags(registered),
             MergeRisk = MergeRiskOf(signals.MergeState),
-            DirtyRisk = dirty.Length > 0 ? CellRisk.Caution : CellRisk.None,
-            UpstreamRisk = upstream.StartsWith('+') ? CellRisk.Caution : CellRisk.None,
+            DirtyRisk = DirtyRiskOf(signals.Dirty),
+            UpstreamRisk = UpstreamRiskOf(signals.Upstream),
             Candidate = registered,
         };
     }
@@ -257,6 +255,18 @@ public static class ReportTable
             { Kind: MergeStateKind.Detached } => CellRisk.None,
             _ => throw new ArgumentException($"unknown merge state kind {state.Kind}", nameof(state)),
         };
+
+    /// <summary>The risk of a DIRTY cell, from the uncommitted work.</summary>
+    /// <param name="dirty">The dirty counts; <see langword="null"/> when unknown.</param>
+    /// <returns>The risk.</returns>
+    private static CellRisk DirtyRiskOf(Dirty? dirty) =>
+        dirty is { } counts && counts.Modified + counts.Untracked > 0 ? CellRisk.Caution : CellRisk.None;
+
+    /// <summary>The risk of an UPSTREAM cell, from the commits the upstream lacks.</summary>
+    /// <param name="upstream">The upstream; <see langword="null"/> when detached.</param>
+    /// <returns>The risk.</returns>
+    private static CellRisk UpstreamRiskOf(Upstream? upstream) =>
+        upstream is { Kind: UpstreamKind.Tracking, Ahead: > 0 } ? CellRisk.Caution : CellRisk.None;
 
     private static string RegisteredFlags(RegisteredCandidate registered)
     {
