@@ -25,6 +25,7 @@ internal static class Program
     /// <summary>The environment variable that, set to <c>debug</c>, shows debug traces on standard error.</summary>
     private const string LogVariable = "WORKTREE_SWEEP_LOG";
 
+    [STAThread]
     private static int Main(string[] args)
     {
         Console.SetOut(Utf8Writer(Console.OpenStandardOutput()));
@@ -68,8 +69,7 @@ internal static class Program
     {
         if (!json && !list)
         {
-            Console.Error.WriteLine("worktree-sweep: the window is not built yet; use --list or --json");
-            return UsageError;
+            return WindowMode.Run(root);
         }
         try
         {
