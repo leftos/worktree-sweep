@@ -19,20 +19,21 @@
 - [x] WTS-14 C8: port the holder finder's handle naming
 - [x] WTS-15 C9: port recycling through IFileOperation
 - [x] WTS-16 C10: port the link-safe permanent delete
-- [ ] WTS-17 C11: port the plan, the two-pass sweep and Review
-- [ ] WTS-18 C12: port the unlock flow with numbered line prompts
+- [/] WTS-17 C11: port the plan, the two-pass sweep and Review
+- [/] WTS-18 C12: port the unlock flow with numbered line prompts
 - [ ] WTS-19 C13: port agent removal (remove PATH --json) with a redesigned report
 - [ ] WTS-20 C14: build the window's view models
 - [ ] WTS-21 C15: build the WPF window and wire the interactive mode
 - [ ] WTS-22 C16: cut over to the C# tool and delete the Rust crate
 - [x] WTS-25 Report a failed merge-tree as a signal error instead of 'not contained'
 - [x] WTS-27 Create one merge-tree scratch folder per worktree, not per default ref
-- [ ] WTS-28 Surface a repo whose worktree list fails, and fix the discovery test flake
-- [ ] WTS-31 Match registered worktrees under a UNC scan root
+- [x] WTS-28 Surface a repo whose worktree list fails, and fix the discovery test flake
 - [ ] WTS-32 Key the report table and released markers on resolved paths
 - [ ] WTS-33 Share a git stall across worktrees on the same volume
+- [ ] WTS-34 Match a UNC-registered worktree under a local scan root
+- [ ] WTS-35 Find lockers of paths outside the console code page
 
 ## Backlog
 
-- [ ] WTS-5 Split markdown lines of 500+ characters
-- [ ] WTS-6 Fix clippy assert_is_empty at src/remove.rs:820
+- [x] WTS-5 Split markdown lines of 500+ characters
+- [x] WTS-6 Fix clippy assert_is_empty at src/remove.rs:820
