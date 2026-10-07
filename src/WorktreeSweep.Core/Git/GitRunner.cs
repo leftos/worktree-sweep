@@ -134,6 +134,29 @@ public static class GitRunner
         return new GitStatus(process.ExitCode, Utf8.GetString(stdoutBytes), Utf8.GetString(stderrBytes).Trim());
     }
 
+    /// <summary>The common git dir of the repo <paramref name="dir"/> lies in, as a full path with <c>\</c> separators.</summary>
+    /// <param name="dir">A folder inside the repo or one of its worktrees.</param>
+    /// <returns>The common git dir; for a bare repo, the repo itself.</returns>
+    /// <exception cref="GitException">
+    /// Git cannot be started, fails, does not exit within <see cref="CallTimeout"/>, or prints a path that is not fully qualified, as a
+    /// git without <c>--path-format</c> does.
+    /// </exception>
+    public static string CommonDir(string dir)
+    {
+        string[] args = ["rev-parse", "--path-format=absolute", "--git-common-dir"];
+        GitStatus status = RunStatus(dir, args);
+        if (!status.Success)
+        {
+            throw Failure(dir, args, status);
+        }
+        string path = status.Stdout.Trim().Replace('/', Path.DirectorySeparatorChar);
+        if (!Path.IsPathFullyQualified(path))
+        {
+            throw new GitException($"{Describe(dir, args)} printed \"{path}\", which is not a full path");
+        }
+        return path;
+    }
+
     /// <summary>Removes every <see cref="RepoLocalEnvVars"/> entry from a child's environment.</summary>
     /// <param name="startInfo">The child's start info.</param>
     public static void ClearRepoEnv(ProcessStartInfo startInfo)

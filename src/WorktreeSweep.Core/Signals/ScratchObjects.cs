@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using WorktreeSweep.Discovery;
 using WorktreeSweep.Git;
 
 namespace WorktreeSweep.Signals;
@@ -27,8 +26,7 @@ internal sealed class ScratchObjects(string dir, string alternate) : IDisposable
     /// <exception cref="IOException">The scratch directory cannot be created; the message says so.</exception>
     public static ScratchObjects Create(string worktree)
     {
-        string common = GitRunner.Run(worktree, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
-        string alternate = Path.Join(Discoverer.FromGitPath(common), "objects");
+        string alternate = Path.Join(GitRunner.CommonDir(worktree), "objects");
         try
         {
             return new ScratchObjects(Directory.CreateTempSubdirectory("worktree-sweep-objects-").FullName, alternate);

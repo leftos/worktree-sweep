@@ -2,6 +2,8 @@ using System.ComponentModel;
 using System.Diagnostics;
 using WorktreeSweep.Discovery;
 using WorktreeSweep.Git;
+using WorktreeSweep.Report;
+using WorktreeSweep.Scan;
 using WorktreeSweep.Signals;
 
 namespace WorktreeSweep.Tests;
@@ -97,6 +99,10 @@ public sealed class Fixture : IDisposable
         DefaultBranches defaults = SignalReader.ReadDefaultBranches(pair.Repo.Path);
         return (pair.Record, SignalReader.ReadWorktreeSignals(defaults, pair.Record));
     }
+
+    /// <summary>Scans the root.</summary>
+    /// <returns>The scan report.</returns>
+    public ScanReport Scan() => Scanner.Scan(Root);
 
     /// <summary>Makes a directory junction with <c>mklink /J</c>.</summary>
     /// <param name="link">The junction to create.</param>
