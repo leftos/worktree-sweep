@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using WorktreeSweep.Discovery;
 using WorktreeSweep.Signals;
 
@@ -147,5 +148,120 @@ public sealed class MergeStateTests
         WorktreeSignals signals = fx.Registered(wt).Signals;
         Assert.Equal(MergeState.Ancestor, signals.MergeState);
         Assert.Equal("origin/main", signals.MergeStateAgainst);
+    }
+
+    /// <summary>A branch that shares no history with main is unmerged, with no signal error.</summary>
+    [Fact]
+    public void UnrelatedHistoriesAreNotContained()
+    {
+        using var fx = new Fixture();
+        string repo = fx.Repo("repo");
+        string wt = fx.PathTo("repo.wt/feat");
+        Fixture.AddWorktree(repo, wt, "feat");
+        _ = Fixture.Git(wt, ["checkout", "-q", "--orphan", "unrelated"]);
+        _ = Fixture.CommitFile(wt, "b.txt", "b\n", "b");
+
+        WorktreeSignals signals = fx.Registered(wt).Signals;
+        Assert.Equal(MergeState.Unmerged(1), signals.MergeState);
+        Assert.Empty(signals.Errors);
+    }
+
+    /// <summary>
+    /// A merge-tree that fails, here on a bogus <c>merge.conflictStyle</c> only merge-tree reads, is a signal error, not "not
+    /// contained".
+    /// </summary>
+    [Fact]
+    public void MergeTreeFailureIsRecordedAsAnError()
+    {
+        using var fx = new Fixture();
+        string repo = fx.Repo("repo");
+        string wt = fx.PathTo("repo.wt/feat");
+        Fixture.AddWorktree(repo, wt, "feat");
+        _ = Fixture.CommitFile(wt, "b.txt", "b\n", "b");
+        _ = Fixture.Git(repo, ["config", "merge.conflictStyle", "bogus"]);
+
+        WorktreeSignals signals = fx.Registered(wt).Signals;
+        Assert.Null(signals.MergeState);
+        Assert.Contains("merge-tree", Assert.Single(signals.Errors), StringComparison.Ordinal);
+    }
+
+    /// <summary>A merge-tree that fails against the stale local main still lets origin/main, which has the branch, answer.</summary>
+    [Fact]
+    public void FailureOnLocalDefaultStillMeasuresOrigin()
+    {
+        using var fx = new Fixture();
+        string repo = fx.Repo("repo");
+        _ = fx.Origin(repo);
+        _ = Fixture.Git(repo, ["push", "-q", "origin", "main"]);
+        _ = Fixture.Git(repo, ["remote", "set-head", "origin", "main"]);
+        string wt = fx.PathTo("repo.wt/feat");
+        Fixture.AddWorktree(repo, wt, "feat");
+        _ = Fixture.CommitFile(wt, "b.txt", "b\n", "b");
+        _ = Fixture.Git(repo, ["push", "-q", "origin", "feat:main"]);
+        _ = Fixture.Git(repo, ["fetch", "-q", "origin"]);
+        _ = Fixture.Git(repo, ["config", "merge.conflictStyle", "bogus"]);
+
+        WorktreeSignals signals = fx.Registered(wt).Signals;
+        Assert.Equal(MergeState.Ancestor, signals.MergeState);
+        Assert.Equal("origin/main", signals.MergeStateAgainst);
+        Assert.Empty(signals.Errors);
+    }
+
+    /// <summary>A detached HEAD is still measured against the local main when origin/HEAD names a branch that does not exist.</summary>
+    [Fact]
+    public void DetachedFailureOnOriginStillMeasuresLocal()
+    {
+        using var fx = new Fixture();
+        string repo = fx.Repo("repo");
+        _ = fx.Origin(repo);
+        _ = Fixture.Git(repo, ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/gone"]);
+        string wt = fx.PathTo("repo.wt/moved-on");
+        _ = Fixture.Git(repo, ["worktree", "add", "-q", "--detach", wt, "HEAD"]);
+        _ = Fixture.CommitFile(wt, "b.txt", "b\n", "b");
+
+        WorktreeSignals signals = fx.Registered(wt).Signals;
+        Assert.Equal(MergeState.Detached(contained: false), signals.MergeState);
+        Assert.Equal("main", signals.MergeStateAgainst);
+        Assert.Empty(signals.Errors);
+    }
+}
+
+/// <summary>
+/// The scratch object folders a merge-tree writes to. The test points this process's temp folder at a private one, so it runs in
+/// the collection no other test runs beside.
+/// </summary>
+[Collection(ProcessEnvironment.Name)]
+public sealed class MergeScratchTests
+{
+    private const string ScratchPrefix = "worktree-sweep-objects-";
+
+    /// <summary>A branch measured against both main and origin/main uses one scratch folder for both, removed afterwards.</summary>
+    [Fact]
+    public void ScratchFolderIsSharedAcrossDefaultRefs()
+    {
+        using var fx = new Fixture();
+        string repo = fx.Repo("repo");
+        _ = fx.Origin(repo);
+        _ = Fixture.Git(repo, ["push", "-q", "origin", "main"]);
+        _ = Fixture.Git(repo, ["remote", "set-head", "origin", "main"]);
+        string wt = fx.PathTo("repo.wt/feat");
+        Fixture.AddWorktree(repo, wt, "feat");
+        _ = Fixture.CommitFile(wt, "b.txt", "b\n", "b");
+        string temp = Directory.CreateDirectory(fx.PathTo("temp")).FullName;
+
+        var created = new ConcurrentQueue<string>();
+        using var watcher = new FileSystemWatcher(temp) { NotifyFilter = NotifyFilters.DirectoryName };
+        watcher.Created += (_, args) => created.Enqueue(Path.GetFileName(args.FullPath));
+        watcher.EnableRaisingEvents = true;
+        using var env = new InheritedEnv(new Dictionary<string, string> { ["TMP"] = temp, ["TEMP"] = temp });
+
+        WorktreeSignals signals = fx.Registered(wt).Signals;
+        _ = Directory.CreateDirectory(Path.Join(temp, "sentinel"));
+        bool sentinelSeen = SpinWait.SpinUntil(() => created.Contains("sentinel"), TimeSpan.FromSeconds(10));
+
+        Assert.True(sentinelSeen, "the watcher never reported the sentinel folder, so its count of scratch folders is incomplete");
+        Assert.Equal(MergeState.Unmerged(1), signals.MergeState);
+        Assert.Single(created, name => name.StartsWith(ScratchPrefix, StringComparison.Ordinal));
+        Assert.Empty(Directory.GetDirectories(temp, $"{ScratchPrefix}*"));
     }
 }

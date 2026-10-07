@@ -17,6 +17,11 @@ The whole tool is rewritten in C# on .NET 10 with a WPF window for the interacti
 - **Install:** `tools/install.ps1` runs `dotnet publish -c Release` into `%LOCALAPPDATA%\worktree-sweep\` and adds that folder to the user PATH once. Until the cutover the C# exe is not installed; tests run the built exe from its output folder.
 - **Unlock step:** runs in the terminal the tool was launched from, with plain numbered line prompts (`[Y/n]`, `1) Stop process  2) Close its handles  3) Skip  4) Done [1]:`) read by a pure parser. While it runs the window shows "Finish the unlock step in the terminal" and takes no input; then it shows the retry. `sudo` must be in Inline mode, as today.
 - **After exit:** nothing is printed; the Results view is the only record.
+- **Merge state differs from Rust on purpose:**
+  - A branch with no history in common with a default branch is "not contained", and no `merge-tree` runs.
+  - A git failure against one default branch is traced while another default still answers.
+  - An unexpected `merge-tree` exit is a signal error, not a silent "not contained" (WTS-25).
+  - Each worktree uses one scratch object folder for all its defaults (WTS-27).
 - **Scan JSON (C4):** snake_case keys (`JsonNamingPolicy.SnakeCaseLower`); one flat `candidates` array tagged by `"kind": "registered"|"orphan"`; every timestamp an ISO 8601 UTC string whose key drops the `_unix` suffix (`last_activity`, `size.last_write`, `released.released_at`).
 
 Carried over from the full-screen picker's design (`archive/tui-picker.md`, "Rulings from the review"): every question is asked up front in Review (loss, then permanent delete, then branch, per pick in list order), and a branch answer applies only if its removal succeeds.
