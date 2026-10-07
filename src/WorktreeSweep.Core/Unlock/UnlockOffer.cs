@@ -54,7 +54,7 @@ public sealed class UnlockOffer(TextReader input, TextWriter output, ISudoRunner
         {
             return UnlockOutcome.Skipped;
         }
-        int code = sudo.Run(SudoCommand.Argv(exe, self.CallerPid, self.Pid, paths));
+        int code = sudo.Run(SudoCommand.Argv(exe, self.CallerPid, self.CallerStarted, self.Pid, paths));
         if (UnlockOutcomes.ForExit(code) is UnlockOutcome outcome)
         {
             return outcome;

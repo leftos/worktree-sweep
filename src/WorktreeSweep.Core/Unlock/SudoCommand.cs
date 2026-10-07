@@ -5,14 +5,16 @@ namespace WorktreeSweep.Unlock;
 /// <summary>The elevated <c>unlock</c> command, and the hint to run it by hand when it cannot be run for the user.</summary>
 public static class SudoCommand
 {
-    /// <summary>The arguments to give <c>sudo</c>: <c>&lt;exe&gt; unlock [--caller-pid &lt;pid&gt;] --sweep-pid &lt;pid&gt;
-    /// &lt;paths&gt;</c>, every path with <c>\</c> separators.</summary>
+    /// <summary>The arguments to give <c>sudo</c>: <c>&lt;exe&gt; unlock [--caller-pid &lt;pid&gt; [--caller-started &lt;time&gt;]]
+    /// --sweep-pid &lt;pid&gt; &lt;paths&gt;</c>, every path with <c>\</c> separators.</summary>
     /// <param name="exe">The path of this program, as the elevated side must run it.</param>
     /// <param name="callerPid">The process that started this one, or <see langword="null"/> when it is not known.</param>
+    /// <param name="callerStarted">That process's creation time, told to the elevated side only alongside its PID;
+    /// <see langword="null"/> when it is not known.</param>
     /// <param name="sweepPid">The unelevated worktree-sweep, which the elevated side must never offer to stop.</param>
     /// <param name="paths">The locked paths.</param>
     /// <returns>The arguments, the program first.</returns>
-    public static IReadOnlyList<string> Argv(string exe, int? callerPid, int sweepPid, IReadOnlyList<string> paths)
+    public static IReadOnlyList<string> Argv(string exe, int? callerPid, ulong? callerStarted, int sweepPid, IReadOnlyList<string> paths)
     {
         ArgumentNullException.ThrowIfNull(exe);
         ArgumentNullException.ThrowIfNull(paths);
@@ -21,6 +23,11 @@ public static class SudoCommand
         {
             argv.Add("--caller-pid");
             argv.Add(pid.ToString(CultureInfo.InvariantCulture));
+            if (callerStarted is ulong started)
+            {
+                argv.Add("--caller-started");
+                argv.Add(started.ToString(CultureInfo.InvariantCulture));
+            }
         }
         argv.Add("--sweep-pid");
         argv.Add(sweepPid.ToString(CultureInfo.InvariantCulture));

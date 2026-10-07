@@ -13,7 +13,7 @@ public sealed class SudoCommandTests
 
         Assert.Equal<string[]>(
             [@"C:\tools\worktree-sweep.exe", "unlock", "--caller-pid", "4242", "--sweep-pid", "5150", @"D:\a.wt\x", @"D:\b"],
-            [.. SudoCommand.Argv(@"C:\tools\worktree-sweep.exe", 4242, 5150, paths)]
+            [.. SudoCommand.Argv(@"C:\tools\worktree-sweep.exe", 4242, null, 5150, paths)]
         );
     }
 
@@ -23,7 +23,47 @@ public sealed class SudoCommandTests
     {
         Assert.Equal<string[]>(
             [@"C:\tools\worktree-sweep.exe", "unlock", "--sweep-pid", "5150", @"D:\a"],
-            [.. SudoCommand.Argv(@"C:\tools\worktree-sweep.exe", null, 5150, [@"D:\a"])]
+            [.. SudoCommand.Argv(@"C:\tools\worktree-sweep.exe", null, null, 5150, [@"D:\a"])]
+        );
+    }
+
+    /// <summary>A caller whose creation time is known names both its PID and that time, before the sweep's PID.</summary>
+    [Fact]
+    public void ArgvPassesCallerStarted()
+    {
+        Assert.Equal<string[]>(
+            [
+                @"C:\tools\worktree-sweep.exe",
+                "unlock",
+                "--caller-pid",
+                "4242",
+                "--caller-started",
+                "133700000000000000",
+                "--sweep-pid",
+                "5150",
+                @"D:\a",
+            ],
+            [.. SudoCommand.Argv(@"C:\tools\worktree-sweep.exe", 4242, 133700000000000000UL, 5150, [@"D:\a"])]
+        );
+    }
+
+    /// <summary>A caller whose creation time is unknown leaves <c>--caller-started</c> out.</summary>
+    [Fact]
+    public void ArgvLeavesOutAnUnknownCallerStarted()
+    {
+        Assert.Equal<string[]>(
+            [@"C:\tools\worktree-sweep.exe", "unlock", "--caller-pid", "4242", "--sweep-pid", "5150", @"D:\a"],
+            [.. SudoCommand.Argv(@"C:\tools\worktree-sweep.exe", 4242, null, 5150, [@"D:\a"])]
+        );
+    }
+
+    /// <summary>A caller that is not known leaves both caller flags out, even when a creation time is at hand.</summary>
+    [Fact]
+    public void ArgvLeavesOutCallerStartedWithoutACallerPid()
+    {
+        Assert.Equal<string[]>(
+            [@"C:\tools\worktree-sweep.exe", "unlock", "--sweep-pid", "5150", @"D:\a"],
+            [.. SudoCommand.Argv(@"C:\tools\worktree-sweep.exe", null, 133700000000000000UL, 5150, [@"D:\a"])]
         );
     }
 

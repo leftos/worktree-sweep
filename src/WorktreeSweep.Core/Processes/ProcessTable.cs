@@ -42,18 +42,22 @@ public static class ProcessTable
     /// <summary>
     /// The PID and, when one of its ancestors is a <c>sudo.exe</c>, every ancestor up to and including the nearest one: the
     /// elevated side's own console and the <c>sudo.exe</c> that started it. Only the PID when no <c>sudo.exe</c> is among the
-    /// parents, or when the walk meets a missing parent or a cycle first.
+    /// parents, or when the walk meets a missing parent, a cycle, or a parent started after its child (a reused PID) first.
     /// </summary>
     /// <param name="own">The PID the walk starts from.</param>
     /// <param name="table">The process table.</param>
+    /// <param name="startedAt">A process's creation time by PID, or <see langword="null"/> when it cannot be read; a parent whose
+    /// known time is later than its child's is a reused PID and ends the walk.</param>
     /// <returns>The PIDs of the chain.</returns>
-    public static IReadOnlySet<int> ParentChain(int own, IReadOnlyDictionary<int, ProcessEntry> table)
+    public static IReadOnlySet<int> ParentChain(int own, IReadOnlyDictionary<int, ProcessEntry> table, Func<int, ulong?> startedAt)
     {
+        ArgumentNullException.ThrowIfNull(startedAt);
         var chain = new HashSet<int> { own };
         int current = own;
         while (
             table.TryGetValue(current, out ProcessEntry? entry)
             && table.TryGetValue(entry.Parent, out ProcessEntry? parent)
+            && !StartedAfter(entry.Parent, current, startedAt)
             && chain.Add(entry.Parent)
         )
         {
@@ -66,6 +70,15 @@ public static class ProcessTable
         return new HashSet<int> { own };
     }
 
+    /// <summary>Whether the parent's known creation time is later than its child's, so the parent's PID has been reused by
+    /// another process.</summary>
+    /// <param name="parent">The parent's PID.</param>
+    /// <param name="child">The child's PID.</param>
+    /// <param name="startedAt">A process's creation time by PID, or <see langword="null"/> when it cannot be read.</param>
+    /// <returns><see langword="true"/> only when both times are known and the parent's is later.</returns>
+    private static bool StartedAfter(int parent, int child, Func<int, ulong?> startedAt) =>
+        startedAt(parent) is ulong parentStarted && startedAt(child) is ulong childStarted && parentStarted > childStarted;
+
     /// <summary>
     /// The PIDs the unlock flow never offers to stop: <see cref="ParentChain"/> of <paramref name="own"/>, plus the unelevated
     /// worktree-sweep <paramref name="sweep"/> and its children, such as the <c>sudo.exe</c> it started.
@@ -73,10 +86,11 @@ public static class ProcessTable
     /// <param name="own">This process's PID.</param>
     /// <param name="sweep">The unelevated worktree-sweep's PID, or <see langword="null"/> when there is none.</param>
     /// <param name="table">The process table.</param>
+    /// <param name="startedAt">A process's creation time by PID, as <see cref="ParentChain"/> takes it.</param>
     /// <returns>The excluded PIDs.</returns>
-    public static IReadOnlySet<int> ExcludedPids(int own, int? sweep, IReadOnlyDictionary<int, ProcessEntry> table)
+    public static IReadOnlySet<int> ExcludedPids(int own, int? sweep, IReadOnlyDictionary<int, ProcessEntry> table, Func<int, ulong?> startedAt)
     {
-        var excluded = new HashSet<int>(ParentChain(own, table));
+        var excluded = new HashSet<int>(ParentChain(own, table, startedAt));
         if (sweep is int sweepPid)
         {
             _ = excluded.Add(sweepPid);
