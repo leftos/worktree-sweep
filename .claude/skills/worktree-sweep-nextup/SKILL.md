@@ -62,6 +62,7 @@ linear: worktree-sweep
 - **C# tests that set process environment variables** go in the xUnit collection "process environment", which runs without parallelism; anywhere else they leak into concurrent git-backed tests.
 - **`dotnet test` refuses VSTest on the .NET 10 SDK** with xUnit v3 4.x: the root `global.json` sets the Microsoft.Testing.Platform runner. Never add `xunit.runner.visualstudio` or `Microsoft.NET.Test.Sdk` back.
 - **`prek run --all-files` sees only tracked files**, so a C# hook shows "(no files to check)" on a branch whose files are still untracked; run `prek run <hook> --files <path>` to exercise it.
+- **`git worktree list` can drop a worktree and still exit 0.** A linked worktree whose `.git\worktrees\<id>\gitdir` is unreadable or empty is left out of the list with no error, and a repo whose list fails is dropped by discovery; either way the live worktree comes back as an orphan "registered elsewhere". `Trace` output never reaches xUnit, so a `Discover`-based assertion names the discovered repos, the discovery errors and the orphans in its message.
 - **D:\ changes under you.** Other sessions add and remove worktrees there all the time; a brief never hard-codes counts from D:\, only paths that must or must not appear.
 - **Cargo's `did not finalize incremental compilation session directory … Access is denied`** is environmental and harmless.
 - **`dialoguer` needs a terminal**: interactive code sits at the edge; logic is tested through pure functions with explicit choices.
