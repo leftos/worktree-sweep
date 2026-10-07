@@ -7,10 +7,14 @@ namespace WorktreeSweep.Tests;
 public sealed class StalledSignalsTests
 {
     private const string Timeout = "x did not exit within 60 s";
+    private const string Volume = @"D:\";
     private const string Worktree = @"D:\a\wt";
 
-    /// <summary>The notice recorded for <see cref="Worktree"/>, with the volume its path really lies on named.</summary>
-    private static string Notice(string worktree) => $"git timed out on {VolumeStalls.Volume(worktree)}; remaining signals skipped";
+    /// <summary>The notice recorded for the worktree whose own read timed out.</summary>
+    private const string TimeoutNotice = @"git timed out on D:\; remaining signals skipped";
+
+    /// <summary>The notice recorded for a worktree another worktree's timeout already stalled the volume of.</summary>
+    private const string StalledNotice = @"git was not started: D:\ stalled earlier in this scan";
 
     /// <summary>
     /// A read that times out stops every read after it: they are never called, they report nothing, and one notice naming the
@@ -48,9 +52,9 @@ public sealed class StalledSignalsTests
         Assert.Null(third);
         Assert.Null(fourth);
         Assert.Equal(2, called);
-        string[] expected = [Timeout, Notice(Worktree)];
+        string[] expected = [Timeout, TimeoutNotice];
         Assert.Equal(expected, reads.Errors);
-        Assert.Equal(VolumeStalls.Volume(Worktree), reads.Volume);
+        Assert.Equal(Volume, reads.Volume);
     }
 
     /// <summary>The size walk is one of the reads, so a stalled worktree's size is skipped with the rest and stays null.</summary>
@@ -69,7 +73,7 @@ public sealed class StalledSignalsTests
 
         Assert.Null(size);
         Assert.Equal(0, walked);
-        string[] expected = [Timeout, Notice(Worktree)];
+        string[] expected = [Timeout, TimeoutNotice];
         Assert.Equal(expected, reads.Errors);
     }
 
@@ -100,7 +104,7 @@ public sealed class StalledSignalsTests
         _ = reads.Read(() => "two");
         _ = reads.Read(() => "three");
 
-        string[] expected = [Timeout, Notice(Worktree)];
+        string[] expected = [Timeout, TimeoutNotice];
         Assert.Equal(expected, reads.Errors);
     }
 
@@ -143,8 +147,9 @@ public sealed class StalledSignalsTests
 
         Assert.Equal(1, calls);
         Assert.Null(value);
-        Assert.Equal(VolumeStalls.Key(@"D:\a"), VolumeStalls.Key(@"D:\b\c"));
-        string[] expected = [Notice(@"D:\b\c")];
+        Assert.Equal(VolumeStalls.Volume(@"D:\a"), VolumeStalls.Volume(@"D:\b\c"), ignoreCase: true);
+        Assert.Equal(Volume, second.Volume);
+        string[] expected = [StalledNotice];
         Assert.Equal(expected, second.Errors);
     }
 

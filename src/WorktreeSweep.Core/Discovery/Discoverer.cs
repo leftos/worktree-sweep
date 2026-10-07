@@ -31,7 +31,8 @@ public static class Discoverer
     /// A child that cannot be read (such as <c>System Volume Information</c>) is skipped with a trace line, and a repo whose
     /// worktrees git cannot list is skipped with a trace warning; a failed list, an unreadable worktrees folder and a worktree
     /// git's list leaves out are all reported in the result's errors. A repo on a volume <paramref name="stalls"/> already holds is
-    /// skipped the same way, without git being started. A walked folder matches a registered worktree when its path
+    /// skipped the same way, without git being started, and a listing that times out marks the repo's volume there, so no later repo
+    /// on it pays the time limit. A walked folder matches a registered worktree when its path
     /// below
     /// <paramref name="root"/>, put below the resolved root, names the registered path with its parent resolved; so a substed,
     /// 8.3-spelled or <c>\\?\</c>-prefixed root matches the paths git prints, while a link inside a container never matches through
@@ -51,10 +52,26 @@ public static class Discoverer
     /// <param name="stalls">The volumes an earlier git call has stalled, shared with the scan's signal reads.</param>
     /// <returns>What was found.</returns>
     /// <exception cref="IOException"><paramref name="root"/> itself cannot be listed; the message names it.</exception>
-    internal static DiscoveryResult Discover(string root, Func<string, string> resolve, VolumeStalls stalls)
+    internal static DiscoveryResult Discover(string root, Func<string, string> resolve, VolumeStalls stalls) =>
+        Discover(root, resolve, stalls, ListWorktrees);
+
+    /// <summary>Finds what <see cref="Discover(string, VolumeStalls)"/> finds, listing each repo's worktrees with <paramref name="listWorktrees"/>.</summary>
+    /// <param name="root">The folder to scan; made absolute.</param>
+    /// <param name="resolve">Resolves the root and each registered worktree's parent folder, as <see cref="PathResolver.Resolve"/> does.</param>
+    /// <param name="stalls">The volumes an earlier git call has stalled, shared with the scan's signal reads.</param>
+    /// <param name="listWorktrees">Lists a repo's worktrees: the git call whose timeout stalls the repo's volume.</param>
+    /// <returns>What was found.</returns>
+    /// <exception cref="IOException"><paramref name="root"/> itself cannot be listed; the message names it.</exception>
+    internal static DiscoveryResult Discover(
+        string root,
+        Func<string, string> resolve,
+        VolumeStalls stalls,
+        Func<string, IReadOnlyList<WorktreeRecord>> listWorktrees
+    )
     {
         ArgumentNullException.ThrowIfNull(root);
         ArgumentNullException.ThrowIfNull(stalls);
+        ArgumentNullException.ThrowIfNull(listWorktrees);
         string full = Path.GetFullPath(root);
         List<FileSystemInfo> children;
         try
@@ -73,7 +90,7 @@ public static class Discoverer
         {
             if (IsPlainDir(child.Attributes))
             {
-                Classify(child.FullName, repos, containers, errors, stalls);
+                Classify(child.FullName, repos, containers, errors, stalls, listWorktrees);
             }
         }
 
@@ -244,7 +261,14 @@ public static class Discoverer
         return record;
     }
 
-    private static void Classify(string child, List<Repo> repos, List<string> containers, List<DiscoveryError> errors, VolumeStalls stalls)
+    private static void Classify(
+        string child,
+        List<Repo> repos,
+        List<string> containers,
+        List<DiscoveryError> errors,
+        VolumeStalls stalls,
+        Func<string, IReadOnlyList<WorktreeRecord>> listWorktrees
+    )
     {
         if (!IsPlainDir(AttributesOrSkip(Path.Join(child, ".git"))))
         {
@@ -258,10 +282,14 @@ public static class Discoverer
         try
         {
             stalls.ThrowIfStalled(child);
-            worktrees = ListWorktrees(child);
+            worktrees = listWorktrees(child);
         }
         catch (GitException error)
         {
+            if (error is GitTimeoutException)
+            {
+                stalls.Mark(child);
+            }
             Trace.TraceWarning($"skipping repo {child}: {error.Message}");
             errors.Add(new DiscoveryError(child, child, $"git worktree list failed: {error.Message}"));
             return;
