@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Text;
+using WorktreeSweep.Agent;
 using WorktreeSweep.Git;
 using WorktreeSweep.Report;
 using WorktreeSweep.Scan;
@@ -11,7 +12,10 @@ using WorktreeSweep.Unlock;
 
 namespace WorktreeSweep;
 
-/// <summary>The command line: <c>worktree-sweep [ROOT] [--list | --json]</c>.</summary>
+/// <summary>
+/// The command line: <c>worktree-sweep [ROOT] [--list | --json]</c>, and <c>worktree-sweep remove PATH --json [--force]
+/// [--stop-build-servers]</c>, which removes one worktree for an agent.
+/// </summary>
 internal static class Program
 {
     private const int Success = 0;
@@ -46,6 +50,7 @@ internal static class Program
         });
         command.SetAction(parsed => Run(parsed.GetRequiredValue(root), parsed.GetValue(json), parsed.GetValue(list)));
         command.Subcommands.Add(UnlockCommand());
+        command.Subcommands.Add(RemoveCommand());
 
         ParseResult parsed = command.Parse(args);
         if (parsed.Errors.Count > 0)
@@ -131,6 +136,61 @@ internal static class Program
             return session.Run(paths, callerPid, callerStarted, sweepPid);
         }
 #pragma warning disable CA1031 // Every failure of the elevated session ends it with exit 1 and its message, as the Rust tool does.
+        catch (Exception error)
+#pragma warning restore CA1031
+        {
+            Console.Error.WriteLine($"error: {error.Message}");
+            return Failure;
+        }
+    }
+
+    /// <summary>
+    /// The <c>remove PATH --json [--force] [--stop-build-servers]</c> subcommand agents call: removes one worktree without asking,
+    /// or reports what holds it and marks it released, as one JSON document whose status the exit code carries.
+    /// </summary>
+    private static Command RemoveCommand()
+    {
+        Argument<string> path = new("PATH") { Description = "The root folder of a registered linked worktree." };
+        Option<bool> json = new("--json") { Description = "Print the result as one JSON document (required)." };
+        Option<bool> force = new("--force")
+        {
+            Description = "Remove it even when uncommitted, unmerged or unpushed work would be lost; lifts a git lock first.",
+        };
+        Option<bool> stopBuildServers = new("--stop-build-servers")
+        {
+            Description = "Stop the build and language servers holding it (cargo, rust-analyzer, .NET build servers), then retry.",
+        };
+        Command remove = new("remove", "Remove one worktree without asking, or report what holds it and mark it released (for agents).")
+        {
+            path,
+            json,
+            force,
+            stopBuildServers,
+        };
+        // The option's Required = true lets a missing --json through, so the validator checks that the command line gave it.
+        remove.Validators.Add(result =>
+        {
+            if (result.GetResult(json) is not { Implicit: false })
+            {
+                result.AddError("Option '--json' is required.");
+            }
+        });
+        remove.SetAction(parsed => RunRemove(parsed.GetRequiredValue(path), parsed.GetValue(force), parsed.GetValue(stopBuildServers)));
+        return remove;
+    }
+
+    /// <summary>
+    /// Runs the removal and writes its report once it is complete, so a failure leaves standard output empty and ends with exit 1.
+    /// </summary>
+    private static int RunRemove(string path, bool force, bool stopBuildServers)
+    {
+        try
+        {
+            RemoveReport report = AgentRemover.Run(path, new AgentOptions(force, stopBuildServers));
+            RemoveReportJson.Write(report, Console.Out);
+            return RemoveExitCode.For(report.Status);
+        }
+#pragma warning disable CA1031 // Every failure of an agent's removal ends with exit 1 and its message on stderr, as the agent contract says.
         catch (Exception error)
 #pragma warning restore CA1031
         {
