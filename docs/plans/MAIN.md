@@ -20,23 +20,29 @@
 - [x] WTS-15 C9: port recycling through IFileOperation
 - [x] WTS-16 C10: port the link-safe permanent delete
 - [x] WTS-17 C11: port the plan, the two-pass sweep and Review
-- [/] WTS-18 C12: port the unlock flow with numbered line prompts
-- [/] WTS-19 C13: port agent removal (remove PATH --json) with a redesigned report
-- [/] WTS-20 C14: build the window's view models
-- [ ] WTS-21 C15: build the WPF window and wire the interactive mode
+- [x] WTS-18 C12: port the unlock flow with numbered line prompts
+- [x] WTS-19 C13: port agent removal (remove PATH --json) with a redesigned report
+- [x] WTS-20 C14: build the window's view models
+- [x] WTS-21 C15: build the WPF window and wire the interactive mode
 - [ ] WTS-22 C16: cut over to the C# tool and delete the Rust crate
 - [x] WTS-25 Report a failed merge-tree as a signal error instead of 'not contained'
 - [x] WTS-27 Create one merge-tree scratch folder per worktree, not per default ref
 - [x] WTS-28 Surface a repo whose worktree list fails, and fix the discovery test flake
 - [x] WTS-32 Key the report table and released markers on resolved paths
 - [x] WTS-33 Share a git stall across worktrees on the same volume
-- [/] WTS-34 Match a UNC-registered worktree under a local scan root
-- [/] WTS-35 Find lockers of paths outside the console code page
+- [x] WTS-34 Match a UNC-registered worktree under a local scan root
+- [x] WTS-35 Find lockers of paths outside the console code page
 - [ ] WTS-41 Find elevated lockers with the C# handle scan, not handle.exe's CSV
 - [x] WTS-36 Say when a removed pick's size is unknown instead of counting 0 bytes
 - [x] WTS-37 Drop a caller pid that a newer process reused
 - [x] WTS-38 Re-check the caller and parent chain by creation time on the elevated side
 - [x] WTS-39 Confirm a locker by start time before stopping it or closing its handles
+- [ ] WTS-42 Show the unlock step's terminal text without mojibake
+- [x] WTS-43 Keep the agent removal's report and marker true on the released path
+- [ ] WTS-44 Measure what an abandoned agent recycle does when the process exits
+- [ ] WTS-45 Keep the scan's ROOT argument out of the subcommands' help
+- [ ] WTS-46 Report a removal that fails after its folder is gone as removed, with a note
+- [ ] WTS-47 Own the Shell's recycle prompts by the window
 
 ## Backlog
 
