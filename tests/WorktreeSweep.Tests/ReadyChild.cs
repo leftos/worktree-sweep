@@ -31,9 +31,40 @@ internal sealed class ReadyChild : IDisposable
     /// <param name="readyFile">A file that does not exist yet; the child writes it once it runs.</param>
     /// <returns>The running child.</returns>
     /// <exception cref="TimeoutException">The ready file did not appear within 30 s; the child has been killed.</exception>
-    public static ReadyChild Start(string program, string workingDirectory, string readyFile)
+    public static ReadyChild Start(string program, string workingDirectory, string readyFile) =>
+        Launch(program, workingDirectory, readyFile, $"Set-Content -LiteralPath {Quoted(readyFile)} ready; Start-Sleep 120");
+
+    /// <summary>Starts <c>pwsh</c> running <paramref name="script"/> in <paramref name="workingDirectory"/> and waits for its ready file.</summary>
+    /// <param name="workingDirectory">The child's current folder.</param>
+    /// <param name="readyFile">A file that does not exist yet; <paramref name="script"/> writes it once the child is ready.</param>
+    /// <param name="script">The PowerShell commands the child runs.</param>
+    /// <returns>The running child.</returns>
+    /// <exception cref="TimeoutException">The ready file did not appear within 30 s; the child has been killed.</exception>
+    public static ReadyChild Run(string workingDirectory, string readyFile, string script) => Launch("pwsh", workingDirectory, readyFile, script);
+
+    /// <summary>A path as a single-quoted PowerShell string.</summary>
+    /// <param name="path">The path.</param>
+    /// <returns>The quoted path.</returns>
+    public static string Quoted(string path) => $"'{path.Replace("'", "''", StringComparison.Ordinal)}'";
+
+    /// <summary>Waits until <paramref name="file"/> exists.</summary>
+    /// <param name="file">A file the child writes.</param>
+    /// <exception cref="TimeoutException">The file did not appear within 30 s.</exception>
+    public void WaitFor(string file)
     {
-        string script = $"Set-Content -LiteralPath '{readyFile.Replace("'", "''", StringComparison.Ordinal)}' ready; Start-Sleep 120";
+        var clock = Stopwatch.StartNew();
+        while (!File.Exists(file))
+        {
+            if (clock.Elapsed > ReadyTimeout)
+            {
+                throw new TimeoutException($"process {process.Id} did not write {file} within {ReadyTimeout.TotalSeconds} s");
+            }
+            Thread.Sleep(PollInterval);
+        }
+    }
+
+    private static ReadyChild Launch(string program, string workingDirectory, string readyFile, string script)
+    {
         var info = new ProcessStartInfo(program)
         {
             UseShellExecute = false,
@@ -68,18 +99,5 @@ internal sealed class ReadyChild : IDisposable
     {
         Stop();
         process.Dispose();
-    }
-
-    private void WaitFor(string readyFile)
-    {
-        var clock = Stopwatch.StartNew();
-        while (!File.Exists(readyFile))
-        {
-            if (clock.Elapsed > ReadyTimeout)
-            {
-                throw new TimeoutException($"process {process.Id} did not write {readyFile} within {ReadyTimeout.TotalSeconds} s");
-            }
-            Thread.Sleep(PollInterval);
-        }
     }
 }

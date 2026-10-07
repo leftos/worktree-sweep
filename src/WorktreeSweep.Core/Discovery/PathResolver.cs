@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 using Windows.Win32;
+using Windows.Win32.Foundation;
 using Windows.Win32.Storage.FileSystem;
 
 namespace WorktreeSweep.Discovery;
@@ -105,20 +106,42 @@ internal static class PathResolver
         {
             throw new IOException($"cannot resolve {folder}", new Win32Exception(Marshal.GetLastPInvokeError()));
         }
+        string? path = FinalPathOf(handle, out int error);
+        if (path is not null)
+        {
+            return path;
+        }
+        throw error == (int)WIN32_ERROR.ERROR_INSUFFICIENT_BUFFER
+            ? new IOException($"cannot resolve {folder}: its resolved path kept growing")
+            : new IOException($"cannot resolve {folder}", new Win32Exception(error));
+    }
+
+    /// <summary>
+    /// The normalized final name of an open file or folder, with a <c>\\?\</c> prefix, or <see langword="null"/> with the Win32 error
+    /// in <paramref name="error"/> when it cannot be read; <c>ERROR_INSUFFICIENT_BUFFER</c> when the name kept growing.
+    /// </summary>
+    /// <param name="handle">An open file or folder.</param>
+    /// <param name="error">0 when the name was read, or why it was not.</param>
+    /// <returns>The name, or <see langword="null"/>.</returns>
+    internal static string? FinalPathOf(SafeHandle handle, out int error)
+    {
         char[] buffer = new char[PathBufferSize];
         for (int attempt = 0; attempt < 2; attempt++)
         {
             uint length = PInvoke.GetFinalPathNameByHandle(handle, buffer, GETFINALPATHNAMEBYHANDLE_FLAGS.FILE_NAME_NORMALIZED);
             if (length == 0)
             {
-                throw new IOException($"cannot resolve {folder}", new Win32Exception(Marshal.GetLastPInvokeError()));
+                error = Marshal.GetLastPInvokeError();
+                return null;
             }
             if (length < buffer.Length)
             {
+                error = 0;
                 return new string(buffer, 0, (int)length);
             }
             buffer = new char[length];
         }
-        throw new IOException($"cannot resolve {folder}: its resolved path kept growing");
+        error = (int)WIN32_ERROR.ERROR_INSUFFICIENT_BUFFER;
+        return null;
     }
 }

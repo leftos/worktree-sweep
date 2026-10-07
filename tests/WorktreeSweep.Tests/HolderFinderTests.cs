@@ -169,6 +169,32 @@ public sealed class HolderFinderTests : IDisposable
         Assert.Contains(new MayHold(child.Id, "pwsh.exe", MayHoldWhy.UnnamedHandle), report.MayHold);
     }
 
+    /// <summary>A process whose handle check failed at once and that uses the folder may hold it through a handle that was not named.</summary>
+    [Fact]
+    public void FailedCheckOnAProcessUsingTheFolderIsAnUnnamedMayHold()
+    {
+        using var child = ReadyChild.Start(Side, Ready("failed-using"));
+        var named = new NamedHandles([], new HashSet<int> { child.Id });
+
+        HolderReport report = HolderFinder.Find(Scanned, [], (_, _) => OpenHandles.Findings(named, [], [child.Id]));
+
+        Assert.Null(FindHolder(report, child.Id));
+        Assert.Contains(new MayHold(child.Id, "pwsh.exe", MayHoldWhy.UnnamedHandle), report.MayHold);
+    }
+
+    /// <summary>A failed check on a process that does not use the folder lists it nowhere: volume handles and the like fail at once.</summary>
+    [Fact]
+    public void FailedCheckOnAProcessNotUsingTheFolderIsNotListed()
+    {
+        using var child = ReadyChild.Start(Side, Ready("failed-unused"));
+        var named = new NamedHandles([], new HashSet<int> { child.Id });
+
+        HolderReport report = HolderFinder.Find(Scanned, [], (_, _) => OpenHandles.Findings(named, [], []));
+
+        Assert.Null(FindHolder(report, child.Id));
+        Assert.DoesNotContain(report.MayHold, may => may.Pid == child.Id);
+    }
+
     /// <summary>A process using the folder whose handles could not be listed may hold it, because it cannot be opened to see how.</summary>
     [Fact]
     public void UnlistedProcessUsingTheFolderIsACannotOpenMayHold()
@@ -208,8 +234,86 @@ public sealed class HolderFinderTests : IDisposable
         Assert.DoesNotContain(report.MayHold, may => may.Pid == own);
     }
 
+    /// <summary>A child with a file under the folder open and shared with no one is a holder of that file.</summary>
+    [Fact]
+    public void ShareNoneHandleIsFound()
+    {
+        string file = HeldFile();
+        File.WriteAllText(file, "held");
+        using var child = ReadyChild.Run(
+            Side,
+            Ready("handle"),
+            $"$f = [IO.File]::Open({ReadyChild.Quoted(file)}, 'Open', 'ReadWrite', 'None'); "
+                + $"Set-Content -LiteralPath {ReadyChild.Quoted(Ready("handle"))} ready; Start-Sleep 120"
+        );
+
+        HolderReport report = HolderFinder.Find(Scanned, []);
+
+        Assert.True(
+            FindHolder(report, child.Id)?.Holds.Any(hold => hold is Hold.OpenHandle open && Fixture.SamePath(open.Path, file)) ?? false,
+            $"pid {child.Id} not listed with an open handle on {file}: {Describe(report)}"
+        );
+    }
+
+    /// <summary>
+    /// A child creates a share-none file, holds it 20 ms, closes it and deletes it, over and over, while the folder is scanned five
+    /// times. A duplicate the scan keeps open makes the delete fail; a delete is retried five times 10 ms apart, so a duplicate closed
+    /// within a millisecond never makes it fail, and one held across the naming phase always does. Only a delete that failed every try
+    /// is logged. The churned file lies under the repo's <c>.tmp</c> folder, on the Dev Drive: on <c>C:</c>, where <c>%TEMP%</c> is,
+    /// a scanner holds a freshly written file for seconds, which would look like the scan blocking a delete.
+    /// </summary>
+    [Fact]
+    public void ScanDoesNotBlockAnotherProcessDeletingItsFiles()
+    {
+        string churn = Path.Join(RepoTmp(), $"churn {Guid.NewGuid():N}");
+        _ = Directory.CreateDirectory(churn);
+        try
+        {
+            string failures = Ready("failures.log");
+            string stop = Ready("stop");
+            string done = Ready("done");
+            using var child = ReadyChild.Run(Side, Ready("churn-ready"), ChurnScript(Path.Join(churn, "churn.tmp"), failures, stop, done));
+            for (int scan = 0; scan < 5; scan++)
+            {
+                _ = HolderFinder.Find(Scanned, []);
+            }
+            File.WriteAllText(stop, "stop");
+            child.WaitFor(done);
+
+            string logged = File.Exists(failures) ? File.ReadAllText(failures) : "";
+            Assert.True(logged.Length == 0, $"the churning child failed while the folder was scanned:\n{logged}");
+        }
+        finally
+        {
+            Directory.Delete(churn, recursive: true);
+        }
+    }
+
     /// <inheritdoc/>
     public void Dispose() => fx.Dispose();
+
+    private string ChurnScript(string churned, string failures, string stop, string done) =>
+        $"$p = {ReadyChild.Quoted(churned)}; Set-Content -LiteralPath {ReadyChild.Quoted(Ready("churn-ready"))} ready; "
+        + $"while (-not (Test-Path -LiteralPath {ReadyChild.Quoted(stop)})) {{ "
+        + "try { "
+        + "$f = [IO.File]::Open($p, 'CreateNew', 'ReadWrite', 'None'); Start-Sleep -Milliseconds 20; $f.Close(); $try = 0; "
+        + "while ($true) { try { [IO.File]::Delete($p); break } catch { $try++; if ($try -ge 5) { throw }; Start-Sleep -Milliseconds 10 } } "
+        + "} "
+        + $"catch {{ Add-Content -LiteralPath {ReadyChild.Quoted(failures)} $_.Exception.Message; Start-Sleep -Milliseconds 10 }} "
+        + $"}}; Set-Content -LiteralPath {ReadyChild.Quoted(done)} done; Start-Sleep 120";
+
+    /// <summary>The repo's gitignored <c>.tmp</c> folder, found above the test assembly's folder, created when missing.</summary>
+    private static string RepoTmp()
+    {
+        for (DirectoryInfo? dir = new(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+        {
+            if (File.Exists(Path.Join(dir.FullName, "WorktreeSweep.slnx")))
+            {
+                return Directory.CreateDirectory(Path.Join(dir.FullName, ".tmp")).FullName;
+            }
+        }
+        throw new InvalidOperationException($"no WorktreeSweep.slnx above {AppContext.BaseDirectory}");
+    }
 
     private static Holder RequiredHolder(HolderReport report, int pid) =>
         FindHolder(report, pid) ?? throw new InvalidOperationException($"pid {pid} not listed as a holder: {Describe(report)}");

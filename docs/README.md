@@ -23,6 +23,9 @@ Start here. Plans live in [plans/MAIN.md](./plans/MAIN.md).
 - **Unlock flow**: the elevated step (`sudo worktree-sweep unlock`) that lists file-locking processes with `handle.exe` and stops them or closes their handles. It runs at most once per run, for every file-locked pick together.
 - **Locker**: a process that holds at least one handle (`File` or `Section`) on a path inside a file-locked pick; the unlock flow offers one prompt per locker.
 - **Holder**: a process found without elevation to hold a folder, through its current directory or an open disk handle inside it; the agent path's counterpart of a locker. A holder whose handle can't be named, or that can't be opened, is reported as "may hold".
+- **Abandonable worker**: one of the holder finder's four threads that name open handles; a lookup that takes over 200 ms is cancelled, its process reported as "may hold", and the worker abandoned for a fresh one if the lookup still does not return.
+- **File type index**: the number Windows gives the `File` object type on this boot; the holder finder learns it from one of its own handles and keeps only handles of that type.
+- **Share-none**: a file opened with no sharing (`FileShare.None`), so no other process can open, rename or delete it while it is held.
 - **Lock kind**: how a process holds a folder (its current directory, an open file, a folder handle, a running exe or loaded DLL). Some kinds block a recycle and others only a permanent delete; the table is in [agent-path.md](./agent-path.md).
 - **Released**: a worktree an agent asked to remove but couldn't, marked so the next interactive sweep lists it first and pre-picks it.
 - **Review**: the questions asked after picking and before anything is removed: per pick, what it would lose, a permanent delete, its branch; then one final confirmation.

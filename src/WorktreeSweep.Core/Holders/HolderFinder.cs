@@ -7,9 +7,9 @@ using WorktreeSweep.Processes;
 namespace WorktreeSweep.Holders;
 
 /// <summary>
-/// Finds which processes hold a folder, without elevation: every other process running as the current user is opened and its current
-/// folder, read from its PEB, is compared with the folder. Open handles are not inspected, so a process that only has a file in the
-/// folder open is not found.
+/// Finds which processes hold a folder, without elevation: every other process running as the current user is opened, its current
+/// folder, read from its PEB, is compared with the folder, and its open disk handles are named and compared too. The file system is
+/// also asked which processes use the folder itself, so one that cannot be inspected is still reported as one that may hold it.
 /// </summary>
 public static class HolderFinder
 {
@@ -19,17 +19,19 @@ public static class HolderFinder
     private static readonly int[] SystemPids = [0, 4];
 
     /// <summary>
-    /// Lists the current user's processes whose current folder is <paramref name="folder"/> or lies under it, other than this process
-    /// and the processes in <paramref name="exclude"/>. Open handles are not inspected, so <see cref="HolderReport.MayHold"/> is always
-    /// empty and every hold is a <see cref="Hold.CurrentFolder"/>.
+    /// Lists the current user's processes, other than this process and the processes in <paramref name="exclude"/>, whose current
+    /// folder is <paramref name="folder"/> or lies under it, or that have a file or folder under it open. A process whose disk handle
+    /// could not be named in time, or that uses the folder but could not be inspected, is listed as one that may hold it.
     /// </summary>
     /// <param name="folder">The folder, as the user gave it; a junction, subst drive or 8.3 name in it is matched as given and resolved.</param>
     /// <param name="exclude">PIDs that are never inspected or listed.</param>
-    /// <returns>The holders, sorted by PID, and an empty may-hold list.</returns>
+    /// <returns>The holders and the processes that may hold the folder, each sorted by PID.</returns>
     /// <exception cref="PlatformNotSupportedException">This is not a 64-bit process, which the PEB offsets assume.</exception>
-    /// <exception cref="IOException">The folder cannot be opened or resolved.</exception>
+    /// <exception cref="IOException">
+    /// The folder cannot be opened or resolved, or this program's own file or handles cannot be read to learn which handles are files.
+    /// </exception>
     /// <exception cref="System.ComponentModel.Win32Exception">The process list or this process's own user cannot be read.</exception>
-    public static HolderReport Find(string folder, IReadOnlyCollection<int> exclude) => Find(folder, exclude, handles: null);
+    public static HolderReport Find(string folder, IReadOnlyCollection<int> exclude) => Find(folder, exclude, OpenHandles.Scan);
 
     /// <summary>
     /// Whether <paramref name="holder"/>'s PID still names the same running process: same creation time and same image.
