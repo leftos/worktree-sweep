@@ -408,6 +408,7 @@ public static class AgentRemover
     {
         draft.Status = RemoveStatus.Removed;
         draft.Reason = null;
+        draft.TakeScan(new HolderReport([], []));
         try
         {
             CandidateRemover.PruneRepo(candidate.Repo);

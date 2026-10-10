@@ -218,6 +218,41 @@ public sealed class AgentRemoverTests
         Assert.DoesNotContain("feat", WorktreeList(repo), StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// A locked recycle that goes through on the retry is reported removed with no holders and no may-holds: nothing holds a folder that
+    /// is gone, and the run stopped nothing.
+    /// </summary>
+    [Fact]
+    public void ARemovalAfterALockedRecycleListsNoHolders()
+    {
+        using var fx = new Fixture();
+        (_, string worktree) = RepoWithWorktree(fx, @"x.wt\feat", "feat");
+        var code = new Holder(99, "code.exe", null, 0, null, [new Hold.OpenHandle(Path.Join(worktree, "README.md"))]);
+        var may = new MayHold(77, "svchost.exe", MayHoldWhy.UnnamedHandle);
+        int recycles = 0;
+        void Recycle(string path)
+        {
+            recycles++;
+            if (recycles == 1)
+            {
+                throw new LockedException(path, firstLockedFile: null);
+            }
+            Directory.Delete(path, recursive: true);
+        }
+
+        RemoveReport report = AgentRemover.Run(
+            worktree,
+            new AgentOptions(Force: false, StopBuildServers: false),
+            Seams(Recycle, (_, _) => new HolderReport([code], [may]), NeverStop)
+        );
+
+        Assert.Equal(RemoveStatus.Removed, report.Status);
+        Assert.Equal(2, recycles);
+        Assert.Empty(report.Holders);
+        Assert.Empty(report.MayHold);
+        Assert.Empty(report.Stopped);
+    }
+
     /// <summary>An allowlisted holder whose PID may now name another process is never stopped, and the run says why.</summary>
     [Fact]
     public void StopBuildServersSkipsAHolderThatIsNoLongerTheSame()
