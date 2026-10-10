@@ -18,7 +18,7 @@ A recycle on the same volume is a rename of the folder root. Win32 codes are in 
 | Git Bash `cd` to a subfolder | fails (5) | OK |
 | pwsh `Set-Location` into the root | OK | OK |
 | file open, share none | fails (5) | fails (32) |
-| file open, share read/write/delete (Rust std, cargo) | fails (5) | OK |
+| file open, share read/write/delete (build tools such as rustc and MSBuild) | fails (5) | OK |
 | file open, share read | fails (5) | fails (32) |
 | exe running from inside | OK | fails (5) |
 | DLL loaded from inside | OK | fails (5) |
@@ -32,7 +32,9 @@ What surprised us: a running exe or loaded DLL doesn't block a recycle; a delete
 
 On one volume, `IFileOperation` moves a folder into the Recycle Bin as one atomic rename about 30% of the way through the call; for a tree of 100,000 small files the rename lands after 3-5 s and the call returns at about 13 s. A folder is therefore whole where it was or whole in the Bin, never split. The operation runs in the caller's process, so nothing finishes it after that process exits.
 
-So when the agent removal's 30 s recycle timeout fires, the folder has usually already gone. `AgentRemover` checks again before and after writing the released marker, and reports a folder that is gone as `removed`, with the note `the move to the Recycle Bin finished after the recycle timed out`, pruning the record and handling the branch as for any removal. A rename that lands in the last instant before the process exits can still leave a stale marker and an unpruned record; the next `remove` or sweep prunes both.
+So when the agent removal's 30 s recycle timeout fires, the folder has usually already gone. `AgentRemover` checks again before and after writing the released marker, and reports a folder that is gone as `removed`, with the note `the move to the Recycle Bin finished after the recycle timed out`, pruning the record and handling the branch as for any removal.
+
+A rename that lands in the last instant before the process exits can still leave a stale marker and an unpruned record; the next `remove` or sweep prunes both.
 
 A volume whose Recycle Bin is set to delete permanently (`NukeOnDelete`) never reaches the recycle: `RecycleDecider` asks for a permanent delete, which the agent path reports as `released` with `too_big_for_recycle_bin`. This is deliberate: an agent never deletes permanently, so its worktrees on such a volume (the repo drive X: on this machine) wait, pre-ticked, for the owner's interactive sweep, where the permanent delete is approved.
 
@@ -41,9 +43,9 @@ A volume whose Recycle Bin is set to delete permanently (`NukeOnDelete`) never r
 | Method | Finds | Time |
 |---|---|---|
 | PEB cwd (`NtQueryInformationProcess` + `ReadProcessMemory`) | every cwd kind | 6 ms over ~450 processes; ~20 can't be opened (this user's elevated processes) |
-| Per-process handles (`ProcessHandleInformation`, duplicate File handles, keep `GetFileType == DISK`, name with `GetFinalPathNameByHandleW` on 4 workers, 200 ms timeout each) | open files, folder handles | 280–613 ms, 1 s during a parallel cargo build; independent of tree size. Without the `GetFileType` filter it takes 68 s |
+| Per-process handles (`ProcessHandleInformation`, duplicate File handles, keep `GetFileType == DISK`, name with `GetFinalPathNameByHandleW` on 4 workers, 200 ms timeout each) | open files, folder handles | 280–613 ms, 1 s during a parallel build; independent of tree size. Without the `GetFileType` filter it takes 68 s |
 | Image path (`QueryFullProcessImageNameW`) | exe running from inside | 8–19 ms |
-| Restart Manager, every file in the tree | files, exe, DLL; never a cwd or folder handle | 335–520 ms for a real Rust tree, 1.9–2.7 s for 21k files; folders fail |
+| Restart Manager, every file in the tree | files, exe, DLL; never a cwd or folder handle | 335–520 ms for a real build tree, 1.9–2.7 s for 21k files; folders fail |
 | `FileProcessIdsUsingFileInformation` | everything, including processes we can't open | 20–85 ms per path: root only is cheap, the whole tree is not (33 s for 1k files) |
 | Module list / mapped views | exe, DLL | 1.6–2 s |
 | System handle table (`SystemExtendedHandleInformation`) | same as per-process handles | 4.5 s; kernel addresses are zeroed unelevated |
@@ -52,15 +54,15 @@ A volume whose Recycle Bin is set to delete permanently (`NukeOnDelete`) never r
 
 **Real processes, read-only:** idle MSBuild nodes and VBCSCompiler held nothing on D: (their cwd is in the SDK folder). `rust-analyzer` and its proc-macro server had their cwd at the repo plus ~18 folder handles under it. A Claude plugin's Roslyn LSP had its cwd at its project.
 
-**Crate:** `windows` 0.62.2, already a dependency, has every call; needed features include `Wdk_System_Threading`, `Win32_System_Diagnostics_Debug`, `Win32_Security` (the minimal set isn't verified).
+**Win32 access:** every call above comes from the CsWin32 source generator (`src/WorktreeSweep.Core/NativeMethods.txt`). The PEB offsets (`CurrentDirectory`, `CommandLine`, and the 32-bit `PEB32` fields of a WOW64 process) are declared by hand as constants in `Holders/Peb.cs`, because the Win32 metadata hides them, and they are right for a 64-bit process only.
 
 ### Recommended route
 
 Same-user process census (Toolhelp + token user, ~20 ms) → PEB cwd → per-process disk handles, excluding worktree-sweep itself. That covers every kind that blocks a recycle, in about 0.35–0.65 s. An optional image-path check flags an exe running from inside, which matters only for a permanent delete. `FileProcessIdsUsingFile` on the root alone names holders we can't open.
 
-Sketch of `src/holders.rs`: `find_holders(folder, exclude) -> HolderReport { holders: Vec<Holder { pid, exe, image, holds: Vec<Hold> }>, uninspectable }`, where `Hold` is `CurrentFolder`, `OpenHandle { path }` or `Unnamed`; a pure `collect` (reusing `unlock::matches_locked_path`) and a pure `stoppable(holders, allowlist)`.
+`HolderFinder.Find(folder, exclude)` returns a `HolderReport` of `Holder`s (pid, exe, image, start time, command line, and its `Hold`s: `CurrentFolder` or `OpenHandle` with a path) and `MayHold` entries for the processes it could not fully inspect.
 
-The red tests: a pwsh child with its cwd in a temp subfolder, and a pwsh child holding a file there with share none, are both found by `find_holders`; the folder is canonicalized first, so 8.3 temp paths match.
+`StopAllowlist.Stoppable` picks the holders that may be stopped, and `LockedPaths` does the path matching. The tests start a pwsh child with its cwd in a temp subfolder, and a pwsh child holding a file there with share none, and expect `Find` to name both; the folder is resolved first, so 8.3 temp paths match.
 
 ## Open decisions
 
@@ -82,13 +84,13 @@ Answered in the decision round:
 
 Settled from the code and the rulings:
 
-- **Command:** `worktree-sweep remove <PATH> --json [--force] [--stop-build-servers]`. `--json` is required, and the output is always one pretty-printed JSON object, in the style of `report::write_json`, with a snake_case `status` tag: `removed`, `released`, `refused`.
+- **Command:** `worktree-sweep remove <PATH> --json [--force] [--stop-build-servers]`. `--json` is required, and the output is always one pretty-printed JSON object, in the style of the scan JSON (`ReportJson`; the agent report is `RemoveReportJson`), with a snake_case `status` tag: `removed`, `released`, `refused`.
 - **What is refused:** the path must be the root of a registered linked worktree. A main worktree, a bare repo, a subfolder, an orphan folder, a link and a non-worktree are refused with a `reason`. A prunable record, whose folder is already gone, is pruned and reported `removed`.
 - **Allowlist matching:** by image name (`rust-analyzer*.exe`, `rust-analyzer-proc-macro-srv.exe`, `cargo.exe`, `MSBuild.exe`, `VBCSCompiler.exe`), and for `dotnet.exe` by command line (`MSBuild.dll` with `/nodemode`, or `VBCSCompiler.dll`), read from the PEB next to the cwd.
 - **`caller_holds`:** a full ancestor walk from `remove`'s own PID. A parent counts only if it was created before its child, so a reused PID ends the chain. worktree-sweep sets its own cwd to the main worktree before anything else, and excludes only its own PID from holders.
-- **Path forms:** the target is canonicalized (which expands 8.3 names). A PEB cwd goes through `GetLongPathNameW`. The shared path comparison also strips `\??\`.
+- **Path forms:** the target is resolved by `PathResolver` (which expands 8.3 names, subst drives and junctions in its parents). A PEB cwd goes through `GetLongPathNameW`. The shared path comparison also strips `\??\`.
 - **Order:** resolve → refusals → `would_lose` → `caller_holds` → capacity (too big → release, with no holder scan) → recycle on a thread with a timeout (timeout → release) → on `Locked`: find holders, stop allowlisted ones if the flag is set (re-checking start time and image first), retry once, else release → on success: prune and delete the branch.
-- **Split into three briefs, run in order:** 4a `src/holders.rs` (detection, allowlist, ancestors), 4b the `remove` command and the marker write, 4c the scan reads the marker, lists released worktrees first and pre-picks them. The ordering goes in `report::ordered`, and a pure `pick::default_picks` serves the current picker and the future full-screen one.
+- **Where the scan meets the marker:** the scan reads the marker (`ReleasedMarker`), `ScanReport.Ordered` lists released worktrees first, and the window's `CandidateRowViewModel` ticks them in advance.
 
 Settled from the measurements:
 

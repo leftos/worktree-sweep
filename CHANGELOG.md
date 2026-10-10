@@ -6,7 +6,8 @@
 
 - Scan a folder for linked git worktrees and orphan worktree folders, and list them with `--list` or as a JSON report with `--json`.
 - Show each worktree's merge state (merged, no commits, cherry-picked, squashed, unmerged), uncommitted files, unpushed commits, last activity and size.
-- Pick worktrees to remove; every question is asked before anything is removed, ending with one confirmation that sums up what will go.
+- Install with `pwsh tools/install.ps1`, which needs the .NET 10 Desktop runtime and adds the tool to your user PATH.
+- Pick worktrees to remove in a window that opens without `--list` or `--json`; every question comes first, ending with one confirmation.
 - A second confirmation guards any pick that would lose work or has no commits yet.
 - Removed folders go to the Recycle Bin; a folder too big for it asks for a permanent delete instead.
 - Junction and symbolic link orphans are removed as links, leaving their targets untouched.
