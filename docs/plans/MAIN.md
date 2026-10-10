@@ -4,7 +4,4 @@
 
 ## C# rewrite
 
-- [ ] WTS-41 Find elevated lockers with the C# handle scan, not handle.exe's CSV
-- [ ] WTS-48 Decide what a removed agent report says about holders found before a retry
-- [ ] WTS-49 Run the explicit Shell recycle test on a volume whose Recycle Bin recycles
-- [ ] WTS-53 Print a failed scan's message as an error: line like the other paths
+- [!] WTS-41 Find elevated lockers with the C# handle scan, not handle.exe's CSV
