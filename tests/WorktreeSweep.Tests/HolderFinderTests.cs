@@ -259,8 +259,9 @@ public sealed class HolderFinderTests : IDisposable
     /// A child creates a share-none file, holds it 20 ms, closes it and deletes it, over and over, while the folder is scanned five
     /// times. A duplicate the scan keeps open makes the delete fail; a delete is retried five times 10 ms apart, so a duplicate closed
     /// within a millisecond never makes it fail, and one held across the naming phase always does. Only a delete that failed every try
-    /// is logged. The churned file lies under the repo's <c>.tmp</c> folder, on the Dev Drive: on <c>C:</c>, where <c>%TEMP%</c> is,
-    /// a scanner holds a freshly written file for seconds, which would look like the scan blocking a delete.
+    /// is logged. The churned file lies under the repo's <c>.tmp</c> folder, on <c>X:</c>, the repo's volume, not <c>C:</c>: on
+    /// <c>C:</c>, where <c>%TEMP%</c> is, a scanner holds a freshly written file for seconds, which would look like the scan blocking
+    /// a delete.
     /// </summary>
     [Fact]
     public void ScanDoesNotBlockAnotherProcessDeletingItsFiles()

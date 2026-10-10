@@ -78,12 +78,13 @@ public sealed class RemoveCommandTests
 
     /// <summary>
     /// A worktree whose file is held open, and ignored so git does not call it modified, is released with exit 5: the holder is
-    /// listed, and the released marker names it. Reaches the Shell's recycle on a locked fixture; run by hand.
+    /// listed, and the released marker names it. The fixture is in <c>%TEMP%</c>, where the bin recycles, rather than under the repo's
+    /// <c>.tmp</c>, whose bin would delete instead. Reaches the Shell's recycle on a locked fixture; run by hand.
     /// </summary>
     [Fact(Explicit = true)]
     public async Task RemoveReleasesLockedWorktree()
     {
-        using var fx = Fixture.InRepoTmp();
+        using var fx = new Fixture();
         using var side = new Fixture();
         (string repo, string worktree) = RepoWithWorktree(fx, @"x.wt\feat", "feat");
         string info = Path.Join(repo, ".git", "info");
@@ -96,6 +97,7 @@ public sealed class RemoveCommandTests
             $"$f = [IO.File]::Open({ReadyChild.Quoted(held)}, 'Open', 'Read', 'None'); "
             + $"Set-Content -LiteralPath {ReadyChild.Quoted(ready)} ready; Start-Sleep 120";
         using var holder = ReadyChild.Run(side.Root, ready, script);
+        Fixture.SkipUnlessBinRecycles(fx.Root);
 
         Run run = await RemoveAsync(worktree, fx.Root);
 
@@ -169,12 +171,16 @@ public sealed class RemoveCommandTests
         Assert.True(BranchExists(repo, "a"), "branch a was deleted");
     }
 
-    /// <summary>A clean worktree goes to the Recycle Bin with exit 0, its record pruned and its branch deleted. Run by hand.</summary>
+    /// <summary>
+    /// A clean worktree goes to the Recycle Bin with exit 0, its record pruned and its branch deleted. The fixture is in
+    /// <c>%TEMP%</c>, where the bin recycles, rather than under the repo's <c>.tmp</c>, whose bin would delete instead. Run by hand.
+    /// </summary>
     [Fact(Explicit = true)]
     public async Task RemoveRecyclesCleanWorktree()
     {
-        using var fx = Fixture.InRepoTmp();
+        using var fx = new Fixture();
         (string repo, string worktree) = RepoWithWorktree(fx, @"x.wt\feat", "feat");
+        Fixture.SkipUnlessBinRecycles(fx.Root);
 
         Run run = await RemoveAsync(worktree, fx.Root);
 
