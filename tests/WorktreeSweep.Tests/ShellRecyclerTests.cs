@@ -66,31 +66,21 @@ public sealed class ShellRecyclerTests
     }
 
     /// <summary>
-    /// A scratch folder under the repo's <c>.tmp</c> goes to the real Recycle Bin. Run by hand:
+    /// A scratch folder in <c>%TEMP%</c>, where the Recycle Bin recycles, goes to the real Recycle Bin; the repo's <c>.tmp</c>, on
+    /// <c>X:</c>, would delete instead of recycling. Run by hand:
     /// <c>dotnet test WorktreeSweep.slnx -c Release --no-build -- --filter-method *RecycleMovesFolderToRecycleBin --explicit on</c>.
     /// </summary>
     [Fact(Explicit = true)]
     public void RecycleMovesFolderToRecycleBin()
     {
-        string scratch = Path.Combine(RepoRoot(), ".tmp", $"recycle-test-{Environment.ProcessId}");
+        using var fx = new Fixture();
+        string scratch = fx.PathTo("scratch");
         Directory.CreateDirectory(Path.Combine(scratch, "sub"));
         File.WriteAllText(Path.Combine(scratch, "sub", "file.txt"), "recycle me");
+        Fixture.SkipUnlessBinRecycles(scratch);
 
         ShellRecycler.Recycle(scratch, ShellRecycler.NoOwner);
 
         Assert.False(Directory.Exists(scratch), $"{scratch} still exists");
-    }
-
-    /// <summary>The repo's root: the nearest folder above the test binaries that holds <c>WorktreeSweep.slnx</c>.</summary>
-    private static string RepoRoot()
-    {
-        for (DirectoryInfo? dir = new(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
-        {
-            if (File.Exists(Path.Combine(dir.FullName, "WorktreeSweep.slnx")))
-            {
-                return dir.FullName;
-            }
-        }
-        throw new InvalidOperationException($"no WorktreeSweep.slnx above {AppContext.BaseDirectory}");
     }
 }

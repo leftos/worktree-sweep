@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Text;
 using WorktreeSweep.Discovery;
 using WorktreeSweep.Git;
+using WorktreeSweep.Recycle;
 using WorktreeSweep.Report;
 using WorktreeSweep.Scan;
 using WorktreeSweep.Signals;
@@ -32,11 +33,40 @@ public sealed class Fixture : IDisposable
     public string Root { get; }
 
     /// <summary>
-    /// A fixture whose root is a new folder under the repo's gitignored <c>.tmp</c> folder, on the Dev Drive: on <c>C:</c>, where
-    /// <c>%TEMP%</c> is, a scanner holds freshly written files for seconds, which looks like a lock to a delete or a recycle.
+    /// A fixture whose root is a new folder under the repo's gitignored <c>.tmp</c> folder, on <c>X:</c>, the repo's volume, not
+    /// <c>C:</c>: on <c>C:</c>, where <c>%TEMP%</c> is, a scanner holds freshly written files for seconds, which looks like a lock to
+    /// a delete or a recycle.
     /// </summary>
     /// <returns>The fixture.</returns>
     public static Fixture InRepoTmp() => new(Directory.CreateDirectory(Path.Join(RepoTmp(), $"worktree-sweep-{Guid.NewGuid():N}")).FullName);
+
+    /// <summary>Skips the calling test when the volume of <paramref name="path"/> cannot be shown to recycle, naming the volume and why.</summary>
+    /// <param name="path">A path on the volume the test is about to hand to the Shell.</param>
+    public static void SkipUnlessBinRecycles(string path)
+    {
+        string volume = Path.GetPathRoot(path) ?? path;
+        string? reason = null;
+        try
+        {
+            BinCapacity? capacity = BinCapacityReader.Read(path);
+            if (capacity is null)
+            {
+                reason = $"{volume} has no readable Recycle Bin settings, so a recycle there may delete instead";
+            }
+            else if (capacity.NukeOnDelete)
+            {
+                reason = $"{volume}'s Recycle Bin deletes immediately (NukeOnDelete), so a recycle there is permanent";
+            }
+        }
+        catch (IOException error)
+        {
+            reason = $"no Recycle Bin settings could be read for {volume}: {error.Message}";
+        }
+        if (reason is not null)
+        {
+            Assert.Skip(reason);
+        }
+    }
 
     /// <summary>A path under the root.</summary>
     /// <param name="relative">The path relative to the root; <c>/</c> and <c>\</c> both separate.</param>

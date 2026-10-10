@@ -3,8 +3,8 @@ using WorktreeSweep.Removal;
 namespace WorktreeSweep.Recycle;
 
 /// <summary>
-/// Retries a Shell recycle that failed with a lock: a tree written a moment earlier can fail briefly on a volume that is not a
-/// Dev Drive.
+/// Retries a Shell recycle that failed with a lock: a tree written a moment earlier can fail briefly where a scanner holds freshly
+/// written files for seconds, as on <c>C:</c>, where <c>%TEMP%</c> is.
 /// </summary>
 public static class RecycleRetry
 {
