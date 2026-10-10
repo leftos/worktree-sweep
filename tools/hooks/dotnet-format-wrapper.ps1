@@ -1,4 +1,5 @@
 #Requires -Version 7.0
+
 <#
 .SYNOPSIS
     Applies `dotnet format <subcommand>` fixers to the C# files prek hands this hook and stages what changed.

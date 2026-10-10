@@ -1,4 +1,5 @@
 #Requires -Version 7
+
 <#
 .SYNOPSIS
 Installs worktree-sweep for the current user: publishes it into the user's own folder and puts that folder on the user PATH.
