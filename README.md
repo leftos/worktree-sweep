@@ -134,6 +134,7 @@ A usage error exits 2. Any other failure, an unexpected exception included, exit
 
 - `holds[].kind` is `current_folder` or `open_handle`. `started` is the process's creation time as an ISO 8601 UTC string, or `null` when it is unknown.
 - `may_hold` lists processes that may hold the folder without it being certain: `why` is `unnamed_handle` (a handle whose name could not be read) or `cannot_open` (the process could not be inspected). Unrelated system processes often show up here.
+- On a `removed` report `holders` and `may_hold` are empty, even when a locked recycle listed holders before its retry went through: nothing holds a folder that is gone.
 - `stopped` lists the build servers `--stop-build-servers` stopped. A stopped process appears under `stopped` only, never under `holders` or in the marker.
 - `released` is an object, `{ "released_at", "reason", "holders" }`, when the run wrote a marker, else `null`. The marker file on disk holds the same fields with `released_at` in Unix seconds.
 - `notes` explains anything kept or skipped, such as a branch that was not deleted.
