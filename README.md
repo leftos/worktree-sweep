@@ -27,7 +27,7 @@ worktree-sweep remove <PATH> --json [--force] [--stop-build-servers]
                                 # remove one worktree without prompts (for agents)
 ```
 
-`ROOT` defaults to the current folder. Run the tool from a terminal: with neither `--list` nor `--json` it opens the window and exits 0 when the window closes; it prints nothing afterwards, because the window's Results screen is the record. `--list` and `--json` print to standard output and never open a window. Giving both is a usage error (exit 2). A failed scan exits 1 with the message on standard error.
+`ROOT` defaults to the current folder. Run the tool from a terminal: with neither `--list` nor `--json` it opens the window and exits 0 when the window closes; it prints nothing afterwards, because the window's Results screen is the record. `--list` and `--json` print to standard output and never open a window. Giving both is a usage error (exit 2). A failed scan exits 1 with an `error: <message>` line on standard error.
 
 `WORKTREE_SWEEP_LOG=debug` adds debug traces to standard error; warnings and errors always go there as `warning:` and `error:` lines.
 

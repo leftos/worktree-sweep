@@ -111,7 +111,7 @@ public sealed class CliTests
         Run run = await ExeRunner.RunAsync(RunTimeout, fx.PathTo("missing"), "--list");
 
         Assert.Equal(1, run.Code);
-        Assert.StartsWith("Error: ", run.Stderr, StringComparison.Ordinal);
+        Assert.StartsWith("error: ", run.Stderr, StringComparison.Ordinal);
         Assert.Equal("", run.Stdout);
     }
 
@@ -122,7 +122,18 @@ public sealed class CliTests
         Run run = await ExeRunner.RunAsync(RunTimeout, "", "--list");
 
         Assert.Equal(1, run.Code);
-        Assert.StartsWith("Error: ", run.Stderr, StringComparison.Ordinal);
+        Assert.StartsWith("error: ", run.Stderr, StringComparison.Ordinal);
+        Assert.Equal("", run.Stdout);
+    }
+
+    /// <summary>An empty root with no flags is a failure reported on standard error, before any window is built.</summary>
+    [Fact]
+    public async Task EmptyRootWithoutFlagsFailsBeforeTheWindow()
+    {
+        Run run = await ExeRunner.RunAsync(RunTimeout, "");
+
+        Assert.Equal(1, run.Code);
+        Assert.StartsWith("error: ", run.Stderr, StringComparison.Ordinal);
         Assert.Equal("", run.Stdout);
     }
 
