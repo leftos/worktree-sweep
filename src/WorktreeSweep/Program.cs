@@ -139,7 +139,7 @@ internal static class Program
             );
             return session.Run(paths, callerPid, callerStarted, sweepPid);
         }
-#pragma warning disable CA1031 // Every failure of the elevated session ends it with exit 1 and its message, as the Rust tool does.
+#pragma warning disable CA1031 // Every failure of the elevated session ends it with exit 1 and its message.
         catch (Exception error)
 #pragma warning restore CA1031
         {

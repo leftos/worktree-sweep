@@ -20,7 +20,7 @@ public static class DetailText
     /// <summary>Seconds in a minute.</summary>
     private const long MinuteSeconds = 60;
 
-    /// <summary>Characters Rust's <c>{:04}</c> pads a year to.</summary>
+    /// <summary>Characters a year is zero-padded to, the sign counting towards the width.</summary>
     private const int YearWidth = 4;
 
     /// <summary>
@@ -48,9 +48,9 @@ public static class DetailText
 
     /// <summary>
     /// <paramref name="unix"/> in a time zone <paramref name="offset"/> east of UTC as <c>YYYY-MM-DD HH:MM ({age} ago)</c>, the age
-    /// measured from <paramref name="nowUnix"/> and in the unit <see cref="ReportTable.Age"/> picks. Plain arithmetic, as the
-    /// picker's Rust does, so any time and any offset print rather than throw: the year is the proleptic Gregorian one, its digits
-    /// zero-padded to four, and an offset of any sign and length is added to <paramref name="unix"/>.
+    /// measured from <paramref name="nowUnix"/> and in the unit <see cref="ReportTable.Age"/> picks. Plain arithmetic, so any
+    /// time and any offset print rather than throw: the year is the proleptic Gregorian one, its digits zero-padded to four, and
+    /// an offset of any sign and length is added to <paramref name="unix"/>.
     /// </summary>
     /// <param name="unix">The time, in Unix seconds.</param>
     /// <param name="offset">The zone's offset from UTC.</param>
@@ -61,10 +61,10 @@ public static class DetailText
         long local = unix + (offset.Ticks / TimeSpan.TicksPerSecond);
         (long Year, long Month, long Day) date = CivilFromDays(FloorDiv(local, DaySeconds));
         long seconds = FloorMod(local, DaySeconds);
-        return string.Create(
-            CultureInfo.InvariantCulture,
-            $"{PaddedYear(date.Year)}-{date.Month:D2}-{date.Day:D2} {seconds / HourSeconds:D2}:{seconds % HourSeconds / MinuteSeconds:D2} ({ReportTable.Age(unix, nowUnix)} ago)"
-        );
+        string day = string.Create(CultureInfo.InvariantCulture, $"{PaddedYear(date.Year)}-{date.Month:D2}-{date.Day:D2}");
+        string time = string.Create(CultureInfo.InvariantCulture, $"{seconds / HourSeconds:D2}:{seconds % HourSeconds / MinuteSeconds:D2}");
+        string age = ReportTable.Age(unix, nowUnix);
+        return $"{day} {time} ({age} ago)";
     }
 
     /// <summary>The five lines a registered worktree's detail holds, before the loss and error lines.</summary>
@@ -295,7 +295,7 @@ public static class DetailText
         return (month <= 2 ? year + 1 : year, month, day);
     }
 
-    /// <summary>A year as Rust's <c>{:04}</c> prints it: zero-padded to four characters, the sign counting towards the width.</summary>
+    /// <summary>A year zero-padded to four characters, the sign counting towards the width.</summary>
     /// <param name="year">The year; either sign.</param>
     /// <returns>The text.</returns>
     private static string PaddedYear(long year)
