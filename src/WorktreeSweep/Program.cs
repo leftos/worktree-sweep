@@ -91,7 +91,7 @@ internal static class Program
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or GitException)
         {
-            Console.Error.WriteLine($"Error: {error.Message}");
+            Console.Error.WriteLine($"error: {error.Message}");
             return Failure;
         }
     }

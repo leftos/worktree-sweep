@@ -20,7 +20,7 @@ public static class WindowMode
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
         {
-            Console.Error.WriteLine($"Error: {error.Message}");
+            Console.Error.WriteLine($"error: {error.Message}");
             return Program.Failure;
         }
         var app = new App();
