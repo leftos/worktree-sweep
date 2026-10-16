@@ -15,7 +15,7 @@ public sealed class SizeTests
         File.WriteAllText(Path.Join(dir, "a.txt"), "abc");
         File.WriteAllText(Path.Join(dir, "sub", "b.txt"), "defgh");
 
-        SizeInfo size = SignalReader.WalkSize(dir);
+        SizeInfo size = SignalReader.WalkSize(dir, _ => { }, TestContext.Current.CancellationToken);
 
         Assert.True(size is { Files: 2, Bytes: 8, Unreadable: 0 }, size.ToString());
         Assert.NotNull(size.LastWriteUnix);

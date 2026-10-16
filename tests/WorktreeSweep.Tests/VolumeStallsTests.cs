@@ -83,7 +83,7 @@ public sealed class VolumeStallsTests
         var stalls = new VolumeStalls();
         stalls.Mark(repo);
 
-        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls);
+        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls, (_, _) => { }, TestContext.Current.CancellationToken);
 
         Assert.Empty(found.Repos);
         DiscoveryError error = Assert.Single(found.Errors);
@@ -112,8 +112,10 @@ public sealed class VolumeStallsTests
                 listed.Add(repo);
                 return Fixture.SamePath(repo, first)
                     ? throw new GitTimeoutException("`git -C a worktree list --porcelain` did not exit within 60 s")
-                    : Discoverer.ListWorktrees(repo);
-            }
+                    : Discoverer.ListWorktrees(repo, TestContext.Current.CancellationToken);
+            },
+            (_, _) => { },
+            TestContext.Current.CancellationToken
         );
 
         string only = Assert.Single(listed);
@@ -133,7 +135,7 @@ public sealed class VolumeStallsTests
         var stalls = new VolumeStalls();
         stalls.Mark(repo);
 
-        DefaultBranches defaults = Scanner.DefaultBranchesOrNone(repo, stalls);
+        DefaultBranches defaults = Scanner.DefaultBranchesOrNone(repo, stalls, TestContext.Current.CancellationToken);
 
         Assert.Null(defaults.Local);
         Assert.Null(defaults.Origin);
@@ -148,7 +150,7 @@ public sealed class VolumeStallsTests
         var stalls = new VolumeStalls();
         stalls.Mark(repo);
 
-        Assert.Null(Scanner.CommonDirOrNone(repo, stalls));
-        Assert.NotNull(Scanner.CommonDirOrNone(repo, new VolumeStalls()));
+        Assert.Null(Scanner.CommonDirOrNone(repo, stalls, TestContext.Current.CancellationToken));
+        Assert.NotNull(Scanner.CommonDirOrNone(repo, new VolumeStalls(), TestContext.Current.CancellationToken));
     }
 }

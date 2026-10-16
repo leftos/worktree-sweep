@@ -45,7 +45,7 @@ public sealed class ScanTests
         string shortRoot = NativeMethods.ShortPath(fx.Root);
         Assert.SkipWhen(shortRoot.Equals(fx.Root, StringComparison.OrdinalIgnoreCase), $"{fx.Root} has no 8.3 name");
 
-        ScanReport report = Scanner.Scan(shortRoot);
+        ScanReport report = Scanner.Scan(shortRoot, _ => { }, TestContext.Current.CancellationToken);
 
         _ = Registered(report, worktree);
         Assert.Empty(report.Candidates.OfType<OrphanCandidate>());

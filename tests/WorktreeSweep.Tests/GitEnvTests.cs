@@ -20,10 +20,10 @@ public sealed class GitEnvTests
             new Dictionary<string, string> { ["GIT_DIR"] = fx.PathTo("nonexistent"), ["GIT_INDEX_FILE"] = ".git/index.lock" }
         );
 
-        string top = GitRunner.Run(wt, ["rev-parse", "--show-toplevel"]);
+        string top = GitRunner.Run(wt, ["rev-parse", "--show-toplevel"], TestContext.Current.CancellationToken);
         Assert.True(Fixture.SamePath(top, wt), $"toplevel {top}, worktree {wt}");
-        Assert.Equal(" M README.md", GitRunner.RunRaw(wt, ["status", "--porcelain"]).TrimEnd('\n'));
-        Assert.Equal("0", GitRunner.Run(wt, ["rev-list", "--count", "main..HEAD"]));
+        Assert.Equal(" M README.md", GitRunner.RunRaw(wt, ["status", "--porcelain"], TestContext.Current.CancellationToken).TrimEnd('\n'));
+        Assert.Equal("0", GitRunner.Run(wt, ["rev-list", "--count", "main..HEAD"], TestContext.Current.CancellationToken));
     }
 
     /// <summary>
@@ -39,7 +39,7 @@ public sealed class GitEnvTests
 
         using var inherited = new InheritedEnv(marked);
 
-        GitStatus status = GitRunner.RunStatus(repo, ["-c", "alias.print-env=!env", "print-env"]);
+        GitStatus status = GitRunner.RunStatus(repo, ["-c", "alias.print-env=!env", "print-env"], TestContext.Current.CancellationToken);
         Assert.True(status.Success, $"git exited with code {status.Code}: {status.Stderr}");
         Assert.DoesNotContain("inherited-", status.Stdout, StringComparison.Ordinal);
     }

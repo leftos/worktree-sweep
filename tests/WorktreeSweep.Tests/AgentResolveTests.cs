@@ -162,7 +162,7 @@ public sealed class AgentResolveTests
                 worktree,
                 new VolumeStalls(),
                 _ => throw new GitTimeoutException("worktree list timed out"),
-                Scanner.CommonDirOrNull
+                (dir, stalls) => Scanner.CommonDirOrNull(dir, stalls, TestContext.Current.CancellationToken)
             )
         );
     }
@@ -182,11 +182,13 @@ public sealed class AgentResolveTests
         Resolution resolution = PathResolution.ResolveOne(
             worktree,
             new VolumeStalls(),
-            Discoverer.ListWorktrees,
+            repo => Discoverer.ListWorktrees(repo, TestContext.Current.CancellationToken),
             (dir, stalls) =>
             {
                 asked.Add(dir);
-                return asked.Count == 1 ? throw new GitException("rev-parse failed") : Scanner.CommonDirOrNull(dir, stalls);
+                return asked.Count == 1
+                    ? throw new GitException("rev-parse failed")
+                    : Scanner.CommonDirOrNull(dir, stalls, TestContext.Current.CancellationToken);
             }
         );
 
@@ -207,7 +209,12 @@ public sealed class AgentResolveTests
         var stalls = new VolumeStalls();
 
         _ = Assert.Throws<GitTimeoutException>(() =>
-            PathResolution.ResolveOne(worktree, stalls, Discoverer.ListWorktrees, (_, _) => throw new GitTimeoutException("rev-parse timed out"))
+            PathResolution.ResolveOne(
+                worktree,
+                stalls,
+                repo => Discoverer.ListWorktrees(repo, TestContext.Current.CancellationToken),
+                (_, _) => throw new GitTimeoutException("rev-parse timed out")
+            )
         );
         Assert.True(stalls.IsStalled(worktree));
     }
