@@ -1,6 +1,6 @@
 # worktree-sweep
 
-A Windows tool that finds stale git worktrees and leftover worktree folders under a folder, shows what each one still holds, and removes the ones you pick, in a window. Everything goes to the Recycle Bin first. When a folder is locked by another process, it escalates once with `sudo` to find the process with Sysinternals `handle.exe` and stop it.
+A Windows tool that finds stale git worktrees and leftover worktree folders under a folder, shows what each one still holds, and removes the ones you pick, in a window. Everything goes to the Recycle Bin first. When a folder is locked by another process, it escalates once with `sudo` to find the process and stop it, or close its handle with Sysinternals `handle.exe`.
 
 ## Install
 
@@ -14,7 +14,7 @@ Requirements:
 
 - Windows 11 and the .NET 10 Desktop runtime (`winget install Microsoft.DotNet.DesktopRuntime.10`). The install script fails with that command when the runtime is missing. Building from source also needs the .NET 10 SDK.
 - `sudo` turned on in **Inline** mode (Settings → System → Advanced → Enable sudo; `sudo config --enable normal`). Without it, the tool prints the elevated command for you to run by hand.
-- Sysinternals `handle.exe` on `PATH` (`winget install Microsoft.Sysinternals.Handle`). Only the unlock step needs it.
+- Sysinternals `handle.exe` on `PATH` (`winget install Microsoft.Sysinternals.Handle`). Only the unlock step's **close its handles** choice needs it.
 - `git` on `PATH`.
 
 ## Usage
@@ -75,7 +75,7 @@ Windows refuses to move a folder while a process holds a file in it or has it as
 
 1. It finishes every other pick, and collects the locked ones.
 2. It asks once, then runs itself elevated through `sudo` for all of them together. That is one UAC prompt per run.
-3. The elevated step lists every process holding a handle inside a locked folder, by name and PID. For each one you choose: **stop process** (the default), **close its handles** (the app may crash), **skip**, or **done**. The shell you started the tool from is marked, and skip is its default.
+3. The elevated step scans every process's open handles and lists each process holding a file inside a locked folder, by name and PID. A process that uses a folder but whose handles cannot be read, and a folder that cannot be opened, are printed as such, and the step then ends as "some left" (exit 3) even when nothing else is offered. For each one you choose: **stop process** (the default), **close its handles** (the app may crash), **skip**, or **done**. The shell you started the tool from is marked, and skip is its default.
 4. It repeats until nothing holds the folders or you pick done, then retries each locked pick once.
 
 ## Removing one worktree from an agent

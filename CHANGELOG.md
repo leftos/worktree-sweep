@@ -12,5 +12,5 @@
 - Removed folders go to the Recycle Bin; a folder too big for it asks for a permanent delete instead.
 - Junction and symbolic link orphans are removed as links, leaving their targets untouched.
 - Prune removed worktrees' registrations and offer to delete their branches when merged.
-- When folders are locked, one `sudo` prompt lists the processes holding them and lets you stop them or close their handles, then retries.
+- When folders are locked, one `sudo` prompt finds the processes holding them, whatever characters their paths hold, and lets you stop them or close their handles, then retries.
 - `remove <PATH> --json` lets an agent remove its own worktree without prompts; a locked one is reported with its holders, and the next sweep lists it first, already picked.
