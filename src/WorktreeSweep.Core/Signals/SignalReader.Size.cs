@@ -6,6 +6,9 @@ namespace WorktreeSweep.Signals;
 /// <summary>The size half of <see cref="SignalReader"/>.</summary>
 public static partial class SignalReader
 {
+    /// <summary>How many folders <see cref="WalkSize"/> lists between two reports of its file count.</summary>
+    private const int FoldersPerReport = 256;
+
     private static readonly EnumerationOptions DirectChildren = new()
     {
         AttributesToSkip = 0,
@@ -19,10 +22,15 @@ public static partial class SignalReader
     /// <see cref="SizeInfo.Unreadable"/>, not fatal; a root that is a file, or that cannot be read, counts as one.
     /// </summary>
     /// <param name="root">The folder to measure.</param>
+    /// <param name="onFiles">Called with the files counted so far every <see cref="FoldersPerReport"/> folders, and once when the walk
+    /// ends; not called when <paramref name="root"/> is a link or cannot be read. It runs on the calling thread.</param>
+    /// <param name="token">Checked before each folder is listed.</param>
     /// <returns>Its size.</returns>
-    public static SizeInfo WalkSize(string root)
+    /// <exception cref="OperationCanceledException"><paramref name="token"/> is cancelled.</exception>
+    public static SizeInfo WalkSize(string root, Action<long> onFiles, CancellationToken token)
     {
         ArgumentNullException.ThrowIfNull(root);
+        ArgumentNullException.ThrowIfNull(onFiles);
         DirectoryInfo rootEntry;
         long? lastWrite;
         try
@@ -44,15 +52,23 @@ public static partial class SignalReader
         long bytes = 0;
         long files = 0;
         int unreadable = 0;
+        long folders = 0;
         var pending = new Stack<string>([root]);
         while (pending.TryPop(out string? dir))
         {
+            token.ThrowIfCancellationRequested();
             (long Bytes, long Files, bool Unreadable, long? LastWrite) folder = TallyChildren(dir, pending);
             bytes += folder.Bytes;
             files += folder.Files;
             unreadable += folder.Unreadable ? 1 : 0;
             lastWrite = Later(lastWrite, folder.LastWrite);
+            folders++;
+            if (folders % FoldersPerReport == 0)
+            {
+                onFiles(files);
+            }
         }
+        onFiles(files);
         return new SizeInfo
         {
             Bytes = bytes,

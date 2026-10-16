@@ -19,7 +19,7 @@ public sealed class DiscoveryTests
         string wt = fx.PathTo("repo.wt/feat");
         Fixture.AddWorktree(repo, wt, "feat");
 
-        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls);
+        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls, (_, _) => { }, TestContext.Current.CancellationToken);
 
         List<string> paths = [.. found.Registered.Select(pair => pair.Record.Path)];
         Assert.Contains(paths, path => Fixture.SamePath(path, wt));
@@ -40,7 +40,7 @@ public sealed class DiscoveryTests
         Fixture.AddWorktree(a, wtA, "eram-am");
         Fixture.AddWorktree(b, wtB, "eram-am");
 
-        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls);
+        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls, (_, _) => { }, TestContext.Current.CancellationToken);
 
         _ = RegisteredAt(found, wtA);
         _ = RegisteredAt(found, wtB);
@@ -58,7 +58,7 @@ public sealed class DiscoveryTests
         Directory.CreateDirectory(leftover);
         File.WriteAllText(Path.Join(leftover, "file.txt"), "left behind\n");
 
-        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls);
+        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls, (_, _) => { }, TestContext.Current.CancellationToken);
 
         Orphan orphan = Assert.Single(found.Orphans);
         Assert.True(Fixture.SamePath(orphan.Path, fx.PathTo("x.wt/eram-qx")), orphan.ToString());
@@ -73,13 +73,13 @@ public sealed class DiscoveryTests
         string empty = fx.PathTo("x.wt/empty");
         Directory.CreateDirectory(empty);
 
-        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls);
+        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls, (_, _) => { }, TestContext.Current.CancellationToken);
 
         Orphan orphan = Assert.Single(found.Orphans);
         Assert.True(Fixture.SamePath(orphan.Path, empty), orphan.ToString());
         Assert.Equal(OrphanKind.Folder, orphan.Kind);
         Assert.False(orphan.HasGitDir || orphan.StaleGitdir || orphan.LiveGitdir is not null, orphan.ToString());
-        SizeInfo size = SignalReader.WalkSize(orphan.Path);
+        SizeInfo size = SignalReader.WalkSize(orphan.Path, _ => { }, TestContext.Current.CancellationToken);
         Assert.True(size is { Files: 0, Bytes: 0 }, size.ToString());
     }
 
@@ -95,7 +95,7 @@ public sealed class DiscoveryTests
         string plain = fx.PathTo("x.wt/plain");
         Directory.CreateDirectory(plain);
 
-        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls);
+        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls, (_, _) => { }, TestContext.Current.CancellationToken);
 
         Orphan staleOrphan = Assert.Single(found.Orphans, orphan => Fixture.SamePath(orphan.Path, stale));
         Assert.True(staleOrphan.StaleGitdir, staleOrphan.ToString());
@@ -114,7 +114,7 @@ public sealed class DiscoveryTests
         Fixture.AddWorktree(repo, wt, "gone");
         Directory.Delete(wt, recursive: true);
 
-        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls);
+        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls, (_, _) => { }, TestContext.Current.CancellationToken);
 
         WorktreeRecord record = RegisteredAt(found, wt);
         Assert.NotNull(record.Prunable);
@@ -135,7 +135,7 @@ public sealed class DiscoveryTests
         string shortRoot = NativeMethods.ShortPath(fx.Root);
         Assert.SkipWhen(shortRoot.Equals(fx.Root, StringComparison.OrdinalIgnoreCase), $"{fx.Root} has no 8.3 name");
 
-        DiscoveryResult found = Discoverer.Discover(shortRoot, stalls);
+        DiscoveryResult found = Discoverer.Discover(shortRoot, stalls, (_, _) => { }, TestContext.Current.CancellationToken);
 
         Assert.Empty(found.Orphans);
         _ = RegisteredAt(found, wt);
@@ -150,7 +150,7 @@ public sealed class DiscoveryTests
         string wt = fx.PathTo("repo.wt/feat");
         Fixture.AddWorktree(repo, wt, "feat");
 
-        DiscoveryResult found = Discoverer.Discover(@"\\?\" + fx.Root, stalls);
+        DiscoveryResult found = Discoverer.Discover(@"\\?\" + fx.Root, stalls, (_, _) => { }, TestContext.Current.CancellationToken);
 
         Assert.Empty(found.Orphans);
         _ = RegisteredAt(found, wt);
@@ -167,7 +167,7 @@ public sealed class DiscoveryTests
         string link = fx.PathTo("repo.wt/link");
         Assert.SkipUnless(Fixture.MakeJunction(link, wt), "mklink /J is unavailable");
 
-        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls);
+        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls, (_, _) => { }, TestContext.Current.CancellationToken);
 
         Orphan orphan = Assert.Single(found.Orphans);
         Assert.True(Fixture.SamePath(orphan.Path, link), orphan.ToString());
@@ -190,7 +190,7 @@ public sealed class DiscoveryTests
         Directory.Move(wt, moved);
         Assert.SkipUnless(Fixture.MakeJunction(wt, moved), "mklink /J is unavailable");
 
-        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls);
+        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls, (_, _) => { }, TestContext.Current.CancellationToken);
 
         Assert.Empty(found.Orphans);
         _ = RegisteredAt(found, wt);
@@ -212,7 +212,9 @@ public sealed class DiscoveryTests
         DiscoveryResult found = Discoverer.Discover(
             fx.Root,
             path => Fixture.SamePath(path, fx.Root) ? RootElsewhere : Path.GetFullPath(path),
-            stalls
+            stalls,
+            (_, _) => { },
+            TestContext.Current.CancellationToken
         );
 
         Assert.Empty(found.Orphans);
@@ -234,7 +236,7 @@ public sealed class DiscoveryTests
         Assert.SkipWhen(Path.GetFileName(shortWt).Equals("feature-branch", StringComparison.OrdinalIgnoreCase), $"{wt} has no 8.3 name");
         Fixture.AddWorktree(repo, shortWt, "feat");
 
-        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls);
+        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls, (_, _) => { }, TestContext.Current.CancellationToken);
 
         Assert.Empty(found.Orphans);
         _ = RegisteredAt(found, wt);
@@ -255,7 +257,7 @@ public sealed class DiscoveryTests
         string shortRoot = NativeMethods.ShortPath(fx.Root);
         Assert.SkipWhen(shortRoot.Equals(fx.Root, StringComparison.OrdinalIgnoreCase), $"{fx.Root} has no 8.3 name");
 
-        DiscoveryResult found = Discoverer.Discover(shortRoot, stalls);
+        DiscoveryResult found = Discoverer.Discover(shortRoot, stalls, (_, _) => { }, TestContext.Current.CancellationToken);
 
         Assert.NotNull(RegisteredAt(found, wt).Prunable);
         Assert.Empty(found.Orphans);
@@ -311,7 +313,7 @@ public sealed class DiscoveryTests
         string agent = Path.Join(repo, ".claude", "worktrees", "agent-1");
         Directory.CreateDirectory(agent);
 
-        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls);
+        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls, (_, _) => { }, TestContext.Current.CancellationToken);
 
         Orphan orphan = Assert.Single(found.Orphans);
         Assert.True(Fixture.SamePath(orphan.Path, agent), orphan.ToString());
@@ -330,12 +332,12 @@ public sealed class DiscoveryTests
         string link = Path.Join(container, "link");
         Assert.SkipUnless(Fixture.MakeJunction(link, target), "mklink /J is unavailable");
 
-        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls);
+        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls, (_, _) => { }, TestContext.Current.CancellationToken);
 
         Orphan orphan = Assert.Single(found.Orphans);
         Assert.True(Fixture.SamePath(orphan.Path, link), orphan.ToString());
         Assert.Equal(OrphanKind.Link, orphan.Kind);
-        SizeInfo size = SignalReader.WalkSize(orphan.Path);
+        SizeInfo size = SignalReader.WalkSize(orphan.Path, _ => { }, TestContext.Current.CancellationToken);
         Assert.True(size is { Files: 0, Bytes: 0 }, $"target was walked: {size}");
         Assert.NotNull(orphan.LinkTarget);
         Assert.True(Fixture.SamePath(orphan.LinkTarget, target), orphan.ToString());
@@ -454,7 +456,7 @@ public sealed class DiscoveryTests
         Directory.CreateDirectory(Path.Join(elsewhere, "worktrees", "x"));
         Assert.SkipUnless(Fixture.MakeJunction(Path.Join(repo, ".claude"), elsewhere), "mklink /J is unavailable");
 
-        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls);
+        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls, (_, _) => { }, TestContext.Current.CancellationToken);
 
         Assert.Empty(found.Orphans);
         Assert.Empty(found.Containers);
@@ -474,7 +476,7 @@ public sealed class DiscoveryTests
         Directory.CreateDirectory(orphanPath);
         File.WriteAllText(Path.Join(orphanPath, ".git"), $"gitdir: {link.Replace('\\', '/')}\n");
 
-        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls);
+        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls, (_, _) => { }, TestContext.Current.CancellationToken);
 
         Orphan orphan = Assert.Single(found.Orphans);
         Assert.True(orphan.StaleGitdir, orphan.ToString());
@@ -493,7 +495,7 @@ public sealed class DiscoveryTests
         Directory.CreateDirectory(orphanPath);
         File.WriteAllText(Path.Join(orphanPath, ".git"), "gitdir: foo\0bar\n");
 
-        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls);
+        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls, (_, _) => { }, TestContext.Current.CancellationToken);
 
         Orphan orphan = Assert.Single(found.Orphans);
         Assert.False(orphan.StaleGitdir, orphan.ToString());
@@ -511,7 +513,7 @@ public sealed class DiscoveryTests
         Directory.CreateDirectory(orphanPath);
         File.WriteAllText(Path.Join(orphanPath, ".git"), $"gitdir: {gitdir.Replace('\\', '/')}\n");
 
-        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls);
+        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls, (_, _) => { }, TestContext.Current.CancellationToken);
 
         Orphan orphan = Assert.Single(found.Orphans);
         Assert.False(orphan.StaleGitdir, orphan.ToString());
@@ -527,7 +529,7 @@ public sealed class DiscoveryTests
         string orphanPath = fx.PathTo("x.wt/clone");
         Directory.CreateDirectory(Path.Join(orphanPath, ".git"));
 
-        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls);
+        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls, (_, _) => { }, TestContext.Current.CancellationToken);
 
         Orphan orphan = Assert.Single(found.Orphans);
         Assert.True(orphan.HasGitDir, orphan.ToString());
@@ -543,7 +545,7 @@ public sealed class DiscoveryTests
         File.WriteAllText(Path.Join(broken, ".git", "config"), "[core\n");
         string good = fx.Repo("good");
 
-        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls);
+        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls, (_, _) => { }, TestContext.Current.CancellationToken);
 
         Repo repo = Assert.Single(found.Repos);
         Assert.True(Fixture.SamePath(repo.Path, good), repo.ToString());
@@ -557,7 +559,7 @@ public sealed class DiscoveryTests
         string broken = fx.Repo("broken");
         File.WriteAllText(Path.Join(broken, ".git", "config"), "[core\n bad");
 
-        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls);
+        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls, (_, _) => { }, TestContext.Current.CancellationToken);
 
         Assert.Empty(found.Repos);
         DiscoveryError error = Assert.Single(found.Errors);
@@ -582,7 +584,7 @@ public sealed class DiscoveryTests
         string gitdir = Path.Join(id, "gitdir");
         File.WriteAllText(gitdir, "");
 
-        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls);
+        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls, (_, _) => { }, TestContext.Current.CancellationToken);
 
         _ = Assert.Single(found.Repos);
         Assert.DoesNotContain(found.Registered, pair => Fixture.SamePath(pair.Record.Path, wt));
@@ -604,7 +606,7 @@ public sealed class DiscoveryTests
         string gitdir = Path.Join(id, "gitdir");
         File.Delete(gitdir);
 
-        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls);
+        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls, (_, _) => { }, TestContext.Current.CancellationToken);
 
         _ = Assert.Single(found.Repos);
         DiscoveryError error = Assert.Single(found.Errors);
@@ -621,7 +623,7 @@ public sealed class DiscoveryTests
         string repo = fx.Repo("repo");
         string wt = fx.PathTo("repo.wt/feat");
         Fixture.AddWorktree(repo, wt, "feat");
-        IReadOnlyList<WorktreeRecord> listed = Discoverer.ListWorktrees(repo);
+        IReadOnlyList<WorktreeRecord> listed = Discoverer.ListWorktrees(repo, TestContext.Current.CancellationToken);
         string id = Assert.Single(Directory.GetDirectories(Path.Join(repo, ".git", "worktrees")));
         string gitdir = Path.Join(id, "gitdir");
         string elsewhere = fx.PathTo("elsewhere");
@@ -645,7 +647,7 @@ public sealed class DiscoveryTests
         string wt = fx.PathTo("repo.wt/feat");
         Fixture.Git(repo, ["-c", "worktree.useRelativePaths=true", "worktree", "add", "-q", "-b", "feat", wt]);
 
-        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls);
+        DiscoveryResult found = Discoverer.Discover(fx.Root, stalls, (_, _) => { }, TestContext.Current.CancellationToken);
 
         Assert.Empty(found.Errors);
         _ = RegisteredAt(found, wt);

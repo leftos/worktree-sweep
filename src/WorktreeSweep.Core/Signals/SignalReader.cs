@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Runtime.ExceptionServices;
 using WorktreeSweep.Discovery;
 using WorktreeSweep.Git;
+using WorktreeSweep.Scan;
 
 namespace WorktreeSweep.Signals;
 
@@ -27,17 +28,19 @@ public static partial class SignalReader
     /// </summary>
     /// <param name="repo">A folder inside the repo.</param>
     /// <param name="stalls">The volumes an earlier git call has stalled; a repo on one of them is not asked for anything.</param>
+    /// <param name="token">Cancels the read, killing a running git.</param>
     /// <returns>The defaults that exist.</returns>
+    /// <exception cref="OperationCanceledException"><paramref name="token"/> is cancelled.</exception>
     /// <exception cref="GitTimeoutException">The repo's volume is stalled, so git is not started; the message names the volume.</exception>
     /// <exception cref="GitException">Git cannot be started or fails unexpectedly.</exception>
-    public static DefaultBranches ReadDefaultBranches(string repo, VolumeStalls stalls)
+    public static DefaultBranches ReadDefaultBranches(string repo, VolumeStalls stalls, CancellationToken token)
     {
         ArgumentNullException.ThrowIfNull(repo);
         ArgumentNullException.ThrowIfNull(stalls);
         stalls.ThrowIfStalled(repo);
-        GitStatus symref = GitRunner.RunStatus(repo, ["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"]);
+        GitStatus symref = GitRunner.RunStatus(repo, ["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"], token);
         string? origin = symref.Success ? StripPrefix(symref.Stdout.Trim(), "refs/remotes/") : null;
-        if (origin is not null && !RefExists(repo, "refs/remotes/" + origin))
+        if (origin is not null && !RefExists(repo, "refs/remotes/" + origin, token))
         {
             Trace.TraceWarning($"repo {repo}: origin/HEAD points to {origin}, which does not exist; fix it with git remote set-head origin --auto");
             origin = null;
@@ -48,7 +51,7 @@ public static partial class SignalReader
             names.Add(originName);
         }
         names.AddRange(["main", "master"]);
-        string? local = names.FirstOrDefault(name => RefExists(repo, $"refs/heads/{name}"));
+        string? local = names.FirstOrDefault(name => RefExists(repo, $"refs/heads/{name}", token));
         return new DefaultBranches { Local = local, Origin = origin };
     }
 
@@ -63,23 +66,44 @@ public static partial class SignalReader
     /// <param name="defaults">The default branches of the worktree's repo.</param>
     /// <param name="record">The worktree's record.</param>
     /// <param name="stalls">The volumes an earlier git call has stalled, shared by the scan's worktrees.</param>
+    /// <param name="onStep">Called as each step starts, with 0 files, and with the files counted so far during the size walk, as
+    /// <see cref="WalkSize"/> reports them; the upstream step is not reported for a detached worktree, and no step for a prunable
+    /// one. It runs on the calling thread, and an exception it throws propagates instead of being recorded as a failed signal.</param>
+    /// <param name="token">Cancels the read, killing a running git; never recorded as a failed signal.</param>
     /// <returns>The signals; all <see langword="null"/> for a prunable registration.</returns>
-    public static WorktreeSignals ReadWorktreeSignals(DefaultBranches defaults, WorktreeRecord record, VolumeStalls stalls)
+    /// <exception cref="OperationCanceledException"><paramref name="token"/> is cancelled.</exception>
+    public static WorktreeSignals ReadWorktreeSignals(
+        DefaultBranches defaults,
+        WorktreeRecord record,
+        VolumeStalls stalls,
+        Action<ScanStep, long> onStep,
+        CancellationToken token
+    )
     {
         ArgumentNullException.ThrowIfNull(defaults);
         ArgumentNullException.ThrowIfNull(record);
         ArgumentNullException.ThrowIfNull(stalls);
+        ArgumentNullException.ThrowIfNull(onStep);
         if (record.Prunable is not null)
         {
             return new WorktreeSignals();
         }
         string dir = record.Path;
         var reads = new SignalReads(stalls, dir);
-        (MergeState State, string Against)? merge = reads.Read(() => ReadMergeState(dir, defaults, record));
-        Dirty? dirty = reads.Read(() => ReadDirty(dir));
-        Upstream? upstream = record.Branch is { } branch ? reads.Read(() => ReadUpstream(dir, branch)) : null;
-        long? lastActivity = reads.Read(() => LastActivity(dir));
-        SizeInfo? size = reads.Read(() => WalkSize(dir));
+        onStep(ScanStep.Merge, 0);
+        (MergeState State, string Against)? merge = reads.Read(() => ReadMergeState(dir, defaults, record, token));
+        onStep(ScanStep.Status, 0);
+        Dirty? dirty = reads.Read(() => ReadDirty(dir, token));
+        Upstream? upstream = null;
+        if (record.Branch is { } branch)
+        {
+            onStep(ScanStep.Upstream, 0);
+            upstream = reads.Read(() => ReadUpstream(dir, branch, token));
+        }
+        onStep(ScanStep.Activity, 0);
+        long? lastActivity = reads.Read(() => LastActivity(dir, token));
+        onStep(ScanStep.Size, 0);
+        SizeInfo? size = ReadSize(reads, dir, files => onStep(ScanStep.Size, files), token);
         foreach (string error in reads.Errors)
         {
             Trace.TraceWarning($"worktree {dir}: {error}");
@@ -96,14 +120,45 @@ public static partial class SignalReader
         };
     }
 
+    /// <summary>
+    /// Walks a worktree's size through <paramref name="reads"/>, so a stalled volume skips it, while a failure of
+    /// <paramref name="onFiles"/> still propagates instead of being recorded as a failed signal.
+    /// </summary>
+    private static SizeInfo? ReadSize(SignalReads reads, string dir, Action<long> onFiles, CancellationToken token)
+    {
+        ExceptionDispatchInfo? reportFailure = null;
+        SizeInfo? size = reads.Read(() =>
+            WalkSize(
+                dir,
+                files =>
+                {
+                    try
+                    {
+                        onFiles(files);
+                    }
+                    catch (Exception error)
+                    {
+                        reportFailure = ExceptionDispatchInfo.Capture(error);
+                        throw;
+                    }
+                },
+                token
+            )
+        );
+        reportFailure?.Throw();
+        return size;
+    }
+
     /// <summary>Counts modified and untracked entries with <c>git status --porcelain=v1 -z</c>.</summary>
     /// <param name="dir">The worktree.</param>
+    /// <param name="token">Cancels the read, killing a running git.</param>
     /// <returns>The counts.</returns>
+    /// <exception cref="OperationCanceledException"><paramref name="token"/> is cancelled.</exception>
     /// <exception cref="GitException">Git fails.</exception>
-    public static Dirty ReadDirty(string dir)
+    public static Dirty ReadDirty(string dir, CancellationToken token)
     {
         ArgumentNullException.ThrowIfNull(dir);
-        return ParseStatusZ(GitRunner.RunRaw(dir, ["status", "--porcelain=v1", "-z", "--untracked-files=normal"]));
+        return ParseStatusZ(GitRunner.RunRaw(dir, ["status", "--porcelain=v1", "-z", "--untracked-files=normal"], token));
     }
 
     /// <summary>Parses <c>git status --porcelain=v1 -z</c> output into dirty counts; ignored entries (<c>!!</c>) are not counted.</summary>
@@ -139,29 +194,33 @@ public static partial class SignalReader
     /// <summary>The upstream state of a local branch.</summary>
     /// <param name="dir">A worktree of the branch's repo.</param>
     /// <param name="branch">The branch, without <c>refs/heads/</c>.</param>
+    /// <param name="token">Cancels the read, killing a running git.</param>
     /// <returns>The state.</returns>
+    /// <exception cref="OperationCanceledException"><paramref name="token"/> is cancelled.</exception>
     /// <exception cref="GitException">Git fails unexpectedly.</exception>
-    public static Upstream ReadUpstream(string dir, string branch)
+    public static Upstream ReadUpstream(string dir, string branch, CancellationToken token)
     {
         ArgumentNullException.ThrowIfNull(dir);
         ArgumentNullException.ThrowIfNull(branch);
         string spec = $"{branch}@{{upstream}}";
-        if (GitRunner.RunStatus(dir, ["rev-parse", "--abbrev-ref", spec]).Success)
+        if (GitRunner.RunStatus(dir, ["rev-parse", "--abbrev-ref", spec], token).Success)
         {
-            return Upstream.Tracking(Count(dir, $"{spec}..refs/heads/{branch}"));
+            return Upstream.Tracking(Count(dir, $"{spec}..refs/heads/{branch}", token));
         }
-        return GitRunner.RunStatus(dir, ["config", "--get", $"branch.{branch}.merge"]).Success ? Upstream.Gone : Upstream.None;
+        return GitRunner.RunStatus(dir, ["config", "--get", $"branch.{branch}.merge"], token).Success ? Upstream.Gone : Upstream.None;
     }
 
     /// <summary>The later of the HEAD commit time and the modification time of the worktree's index, in Unix seconds.</summary>
     /// <param name="dir">The worktree.</param>
+    /// <param name="token">Cancels the read, killing a running git.</param>
     /// <returns>The time; <see langword="null"/> when neither can be read.</returns>
+    /// <exception cref="OperationCanceledException"><paramref name="token"/> is cancelled.</exception>
     /// <exception cref="GitException">Only when git cannot be started, does not exit within <see cref="GitRunner.CallTimeout"/>, or
     /// leaves its output open.</exception>
-    public static long? LastActivity(string dir)
+    public static long? LastActivity(string dir, CancellationToken token)
     {
         ArgumentNullException.ThrowIfNull(dir);
-        GitStatus log = GitRunner.RunStatus(dir, ["log", "-1", "--format=%ct"]);
+        GitStatus log = GitRunner.RunStatus(dir, ["log", "-1", "--format=%ct"], token);
         long? commitTime =
             log.Success && long.TryParse(log.Stdout.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out long seconds) ? seconds : null;
         long? indexTime = Discoverer.ReadGitdirFile(dir) is { } gitdir ? ModifiedUnix(new FileInfo(Path.Join(gitdir, "index"))) : null;
@@ -173,16 +232,18 @@ public static partial class SignalReader
     /// <typeparam name="TResult">The result type.</typeparam>
     /// <param name="items">The items.</param>
     /// <param name="map">The work for one item; called concurrently.</param>
+    /// <param name="token">Stops starting new items once cancelled; an item already running finishes or throws first.</param>
     /// <returns>One result per item, in the order of <paramref name="items"/>.</returns>
+    /// <exception cref="OperationCanceledException"><paramref name="token"/> is cancelled.</exception>
     /// <exception cref="Exception">Whatever <paramref name="map"/> threw first, unwrapped, with its original stack trace.</exception>
-    public static IReadOnlyList<TResult> ParallelMap<TItem, TResult>(IReadOnlyList<TItem> items, Func<TItem, TResult> map)
+    public static IReadOnlyList<TResult> ParallelMap<TItem, TResult>(IReadOnlyList<TItem> items, Func<TItem, TResult> map, CancellationToken token)
     {
         ArgumentNullException.ThrowIfNull(items);
         ArgumentNullException.ThrowIfNull(map);
         int workers = Math.Clamp(items.Count, 1, Math.Min(Environment.ProcessorCount, MaxDegreeOfParallelism));
         try
         {
-            return [.. items.AsParallel().AsOrdered().WithDegreeOfParallelism(workers).Select(map)];
+            return [.. items.AsParallel().AsOrdered().WithDegreeOfParallelism(workers).WithCancellation(token).Select(map)];
         }
         catch (AggregateException error) when (error.InnerExceptions.Count > 0)
         {
@@ -191,14 +252,15 @@ public static partial class SignalReader
         }
     }
 
-    private static bool RefExists(string dir, string refName) => ExitIsAnswer(dir, ["rev-parse", "--verify", "--quiet", refName]);
+    private static bool RefExists(string dir, string refName, CancellationToken token) =>
+        ExitIsAnswer(dir, ["rev-parse", "--verify", "--quiet", refName], token);
 
     /// <summary>Runs a git command whose exit code 0 means yes and 1 means no.</summary>
     /// <exception cref="GitException">Git exits with any other code, cannot be started, does not exit within
     /// <see cref="GitRunner.CallTimeout"/>, or leaves its output open.</exception>
-    private static bool ExitIsAnswer(string dir, IReadOnlyList<string> args)
+    private static bool ExitIsAnswer(string dir, IReadOnlyList<string> args, CancellationToken token)
     {
-        GitStatus status = GitRunner.RunStatus(dir, args);
+        GitStatus status = GitRunner.RunStatus(dir, args, token);
         return status.Code switch
         {
             0 => true,
@@ -207,9 +269,9 @@ public static partial class SignalReader
         };
     }
 
-    private static int Count(string dir, string range)
+    private static int Count(string dir, string range, CancellationToken token)
     {
-        string text = GitRunner.Run(dir, ["rev-list", "--count", range]);
+        string text = GitRunner.Run(dir, ["rev-list", "--count", range], token);
         return int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out int count)
             ? count
             : throw new GitException($"`git rev-list --count {range}` in {dir} printed \"{text}\"");
@@ -295,7 +357,7 @@ internal sealed class SignalReads(VolumeStalls stalls, string path)
             return default;
         }
 #pragma warning disable CA1031 // Every failure of one signal is recorded, so one broken worktree never hides the others.
-        catch (Exception error)
+        catch (Exception error) when (error is not OperationCanceledException)
 #pragma warning restore CA1031
         {
             _errors.Add(error.Message);

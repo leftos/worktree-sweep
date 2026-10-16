@@ -79,7 +79,7 @@ public sealed class LoopbackShareTests
         using InheritedEnv trust = TrustEveryDirectory(fx);
         Fixture.Git(repo, ["worktree", "add", "-q", uncWorktree, "-b", "feat"]);
 
-        DiscoveryResult found = Discoverer.Discover(fx.Root, new VolumeStalls());
+        DiscoveryResult found = Discoverer.Discover(fx.Root, new VolumeStalls(), (_, _) => { }, TestContext.Current.CancellationToken);
 
         Assert.DoesNotContain(found.Orphans, orphan => Fixture.SamePath(orphan.Path, wt));
         _ = Assert.Single(found.Registered, pair => Fixture.SamePath(PathResolver.Resolve(pair.Record.Path), wt));

@@ -248,7 +248,10 @@ public sealed class ReleasedMarkerTests
         string admin = Discoverer.ReadGitdirFile(worktree) ?? throw new InvalidOperationException($"{worktree} has no admin dir");
         File.WriteAllText(Path.Join(admin, ReleasedMarker.FileName), Marker);
         Directory.Delete(worktree, recursive: true);
-        WorktreeRecord record = Assert.Single(Discoverer.ListWorktrees(repo), candidate => Fixture.SamePath(candidate.Path, worktree));
+        WorktreeRecord record = Assert.Single(
+            Discoverer.ListWorktrees(repo, TestContext.Current.CancellationToken),
+            candidate => Fixture.SamePath(candidate.Path, worktree)
+        );
         Assert.NotNull(record.Prunable);
         return record.Path;
     }

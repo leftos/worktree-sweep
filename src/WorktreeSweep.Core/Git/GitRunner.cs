@@ -61,7 +61,19 @@ public static class GitRunner
     /// time limit.</exception>
     /// <exception cref="GitException">Git cannot be started, leaves its output open, or exits with a non-zero code; the message names
     /// the command, and the exit code and git's standard error.</exception>
-    public static string Run(string dir, IReadOnlyList<string> args) => RunRaw(dir, args).Trim();
+    public static string Run(string dir, IReadOnlyList<string> args) => Run(dir, args, CancellationToken.None);
+
+    /// <summary>Runs <c>git -C {dir} {args}</c> and returns its trimmed standard output, killing git when the token is cancelled.</summary>
+    /// <param name="dir">The directory git runs in.</param>
+    /// <param name="args">The git arguments, after <c>-C {dir}</c>.</param>
+    /// <param name="token">Cancels the call: git is not started, or its process tree is killed.</param>
+    /// <returns>Standard output, trimmed.</returns>
+    /// <exception cref="OperationCanceledException"><paramref name="token"/> is cancelled.</exception>
+    /// <exception cref="GitTimeoutException">Git does not exit within <see cref="CallTimeout"/>; the message names the command and the
+    /// time limit.</exception>
+    /// <exception cref="GitException">Git cannot be started, leaves its output open, or exits with a non-zero code; the message names
+    /// the command, and the exit code and git's standard error.</exception>
+    public static string Run(string dir, IReadOnlyList<string> args, CancellationToken token) => RunRaw(dir, args, token).Trim();
 
     /// <summary>
     /// Runs <c>git -C {dir} {args}</c> and returns its standard output untrimmed, for output where leading spaces or NUL
@@ -69,35 +81,45 @@ public static class GitRunner
     /// </summary>
     /// <param name="dir">The directory git runs in.</param>
     /// <param name="args">The git arguments, after <c>-C {dir}</c>.</param>
+    /// <param name="token">Cancels the call: git is not started, or its process tree is killed.</param>
     /// <returns>Standard output, untrimmed.</returns>
+    /// <exception cref="OperationCanceledException"><paramref name="token"/> is cancelled.</exception>
     /// <exception cref="GitTimeoutException">Git does not exit within <see cref="CallTimeout"/>; the message names the command and the
     /// time limit.</exception>
     /// <exception cref="GitException">Git cannot be started, leaves its output open, or exits with a non-zero code; the message names
     /// the command, and the exit code and git's standard error.</exception>
-    public static string RunRaw(string dir, IReadOnlyList<string> args)
+    public static string RunRaw(string dir, IReadOnlyList<string> args, CancellationToken token)
     {
-        GitStatus status = RunStatus(dir, args);
+        GitStatus status = RunStatus(dir, args, token);
         return status.Success ? status.Stdout : throw Failure(dir, args, status);
     }
 
     /// <summary>Runs <c>git -C {dir} {args}</c> and returns its exit code and output without treating a non-zero exit as an error.</summary>
     /// <param name="dir">The directory git runs in.</param>
     /// <param name="args">The git arguments, after <c>-C {dir}</c>.</param>
+    /// <param name="token">Cancels the call: git is not started, or its process tree is killed.</param>
     /// <returns>The exit code and both streams.</returns>
+    /// <exception cref="OperationCanceledException"><paramref name="token"/> is cancelled.</exception>
     /// <exception cref="GitTimeoutException">Only when git does not exit within <see cref="CallTimeout"/>.</exception>
     /// <exception cref="GitException">Only when git cannot be started or leaves its output open.</exception>
-    public static GitStatus RunStatus(string dir, IReadOnlyList<string> args) =>
-        RunStatusWithEnv(dir, args, ImmutableDictionary<string, string>.Empty);
+    public static GitStatus RunStatus(string dir, IReadOnlyList<string> args, CancellationToken token) =>
+        RunStatusWithEnv(dir, args, ImmutableDictionary<string, string>.Empty, token);
 
     /// <summary>Like <see cref="RunStatus"/>, with extra environment variables set for the child after the repo-local ones are removed.</summary>
     /// <param name="dir">The directory git runs in.</param>
     /// <param name="args">The git arguments, after <c>-C {dir}</c>.</param>
     /// <param name="env">Variables to set for the child.</param>
+    /// <param name="token">Cancels the call: git is not started, or its process tree is killed.</param>
     /// <returns>The exit code and both streams.</returns>
+    /// <exception cref="OperationCanceledException"><paramref name="token"/> is cancelled.</exception>
     /// <exception cref="GitTimeoutException">Only when git does not exit within <see cref="CallTimeout"/>.</exception>
     /// <exception cref="GitException">Only when git cannot be started or leaves its output open.</exception>
-    public static GitStatus RunStatusWithEnv(string dir, IReadOnlyList<string> args, IReadOnlyDictionary<string, string> env) =>
-        RunStatusWithEnv(dir, args, env, CallTimeout, ReadGrace);
+    public static GitStatus RunStatusWithEnv(
+        string dir,
+        IReadOnlyList<string> args,
+        IReadOnlyDictionary<string, string> env,
+        CancellationToken token
+    ) => RunStatusWithEnv(dir, args, env, CallTimeout, ReadGrace, token);
 
     /// <summary>Like the public overload, with the time limit and the grace given instead of <see cref="CallTimeout"/> and
     /// <see cref="ReadGrace"/>.</summary>
@@ -106,7 +128,9 @@ public static class GitRunner
     /// <param name="env">Variables to set for the child.</param>
     /// <param name="timeout">How long git may run before its process tree is killed.</param>
     /// <param name="grace">How long each wait for git's output pipes to close may take, after it exits or is killed.</param>
+    /// <param name="token">Cancels the call: git is not started, or its process tree is killed as on a timeout.</param>
     /// <returns>The exit code and both streams.</returns>
+    /// <exception cref="OperationCanceledException"><paramref name="token"/> is cancelled; the message names the command.</exception>
     /// <exception cref="GitTimeoutException">Only when git does not exit within <paramref name="timeout"/>.</exception>
     /// <exception cref="GitException">Only when git cannot be started, or exits with its output still held open after
     /// <paramref name="grace"/>.</exception>
@@ -115,20 +139,29 @@ public static class GitRunner
         IReadOnlyList<string> args,
         IReadOnlyDictionary<string, string> env,
         TimeSpan timeout,
-        TimeSpan grace
+        TimeSpan grace,
+        CancellationToken token
     )
     {
+        token.ThrowIfCancellationRequested();
         ProcessStartInfo startInfo = StartInfo(dir, args, env);
         using Process process = Start(startInfo, dir, args);
         process.StandardInput.Close();
         Task<byte[]> stdout = ReadAllAsync(process.StandardOutput.BaseStream);
         Task<byte[]> stderr = ReadAllAsync(process.StandardError.BaseStream);
         Task reads = Observe(Task.WhenAll(stdout, stderr));
-        if (!process.WaitForExit(timeout))
+        Task exit = process.WaitForExitAsync(token);
+        bool ended = Task.WaitAny([exit], timeout) == 0;
+        if (!ended)
         {
-            throw Killed(process, reads, Describe(dir, args), timeout, grace);
+            throw TimedOut(process, reads, Describe(dir, args), timeout, grace);
         }
-        if (!reads.Wait(grace))
+        if (exit.IsCanceled)
+        {
+            throw Cancelled(process, reads, Describe(dir, args), grace, token);
+        }
+        // Git has exited, so there is nothing left to kill; the wait is bounded by the grace instead.
+        if (!reads.Wait(grace, CancellationToken.None))
         {
             throw new GitException($"{Describe(dir, args)} exited but its output stayed open for {Seconds(grace)} s");
         }
@@ -145,9 +178,11 @@ public static class GitRunner
     /// <exception cref="GitException">
     /// Git cannot be started, fails, or prints a path that is not fully qualified, as a git without <c>--path-format</c> does.
     /// </exception>
-    public static string CommonDir(string dir)
+    /// <param name="token">Cancels the call: git is not started, or its process tree is killed.</param>
+    /// <exception cref="OperationCanceledException"><paramref name="token"/> is cancelled.</exception>
+    public static string CommonDir(string dir, CancellationToken token)
     {
-        GitStatus status = RunStatus(dir, CommonDirArgs);
+        GitStatus status = RunStatus(dir, CommonDirArgs, token);
         return status.Success ? FullCommonDir(dir, status.Stdout) : throw Failure(dir, CommonDirArgs, status);
     }
 
@@ -233,25 +268,42 @@ public static class GitRunner
         }
     }
 
-    /// <summary>
-    /// Kills a git child that outlived its limit, with its whole tree: a grandchild such as the shell running an alias holds the
-    /// output pipes open, so killing git alone would leave the reads waiting. Its exit and the reads are each waited for up to
-    /// <paramref name="grace"/>; the timeout is reported either way.
-    /// </summary>
-    private static GitTimeoutException Killed(Process process, Task reads, string command, TimeSpan timeout, TimeSpan grace)
+    /// <summary>The error for a git child that outlived its limit, after its process tree is killed by <see cref="KillTree"/>.</summary>
+    private static GitTimeoutException TimedOut(Process process, Task reads, string command, TimeSpan timeout, TimeSpan grace)
     {
         string limit = $"{command} did not exit within {Seconds(timeout)} s";
+        return KillTree(process, reads, grace) is { } failure
+            ? new GitTimeoutException($"{limit}; killing it failed: {failure.Message}", failure)
+            : new GitTimeoutException($"{limit} and was killed");
+    }
+
+    /// <summary>The error for a git child whose call was cancelled, after its process tree is killed by <see cref="KillTree"/>.</summary>
+    private static OperationCanceledException Cancelled(Process process, Task reads, string command, TimeSpan grace, CancellationToken token)
+    {
+        string cancelled = $"{command} was cancelled";
+        return KillTree(process, reads, grace) is { } failure
+            ? new OperationCanceledException($"{cancelled}; killing it failed: {failure.Message}", failure, token)
+            : new OperationCanceledException($"{cancelled} and was killed", token);
+    }
+
+    /// <summary>
+    /// Kills a git child with its whole tree: a grandchild such as the shell running an alias holds the output pipes open, so
+    /// killing git alone would leave the reads waiting. Its exit and the reads are each waited for up to <paramref name="grace"/>.
+    /// </summary>
+    /// <returns><see langword="null"/> when the kill was sent; the error when it failed.</returns>
+    private static Exception? KillTree(Process process, Task reads, TimeSpan grace)
+    {
         try
         {
             process.Kill(entireProcessTree: true);
         }
         catch (Exception error) when (error is Win32Exception or InvalidOperationException or AggregateException)
         {
-            return new GitTimeoutException($"{limit}; killing it failed: {error.Message}", error);
+            return error;
         }
         _ = process.WaitForExit(grace);
         _ = reads.Wait(grace);
-        return new GitTimeoutException($"{limit} and was killed");
+        return null;
     }
 
     /// <summary>

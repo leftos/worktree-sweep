@@ -48,36 +48,55 @@ public static class Discoverer
     /// </remarks>
     /// <param name="root">The folder to scan; made absolute.</param>
     /// <param name="stalls">The volumes an earlier git call has stalled, shared with the scan's signal reads.</param>
+    /// <param name="onChild">Called with the child's position, from 1, and the number of children, as each child of the root is
+    /// classified; it runs on the calling thread.</param>
+    /// <param name="token">Checked before each child of the root, and cancels <c>git worktree list</c>, killing it.</param>
     /// <returns>What was found.</returns>
     /// <exception cref="IOException"><paramref name="root"/> itself cannot be listed; the message names it.</exception>
-    public static DiscoveryResult Discover(string root, VolumeStalls stalls) => Discover(root, PathResolver.Resolve, stalls);
+    /// <exception cref="OperationCanceledException"><paramref name="token"/> is cancelled.</exception>
+    public static DiscoveryResult Discover(string root, VolumeStalls stalls, Action<int, int> onChild, CancellationToken token) =>
+        Discover(root, PathResolver.Resolve, stalls, onChild, token);
 
-    /// <summary>Finds what <see cref="Discover(string, VolumeStalls)"/> finds, resolving paths with <paramref name="resolve"/>.</summary>
+    /// <summary>Finds what <see cref="Discover(string, VolumeStalls, Action{int, int}, CancellationToken)"/> finds, resolving paths with <paramref name="resolve"/>.</summary>
     /// <param name="root">The folder to scan; made absolute.</param>
     /// <param name="resolve">Resolves the root and each registered worktree's parent folder, as <see cref="PathResolver.Resolve"/> does.</param>
     /// <param name="stalls">The volumes an earlier git call has stalled, shared with the scan's signal reads.</param>
+    /// <param name="onChild">Called as each child of the root is classified, with its position, from 1, and the number of children.</param>
+    /// <param name="token">Checked before each child of the root, and cancels <c>git worktree list</c>, killing it.</param>
     /// <returns>What was found.</returns>
     /// <exception cref="IOException"><paramref name="root"/> itself cannot be listed; the message names it.</exception>
-    internal static DiscoveryResult Discover(string root, Func<string, string> resolve, VolumeStalls stalls) =>
-        Discover(root, resolve, stalls, ListWorktrees);
-
-    /// <summary>Finds what <see cref="Discover(string, VolumeStalls)"/> finds, listing each repo's worktrees with <paramref name="listWorktrees"/>.</summary>
-    /// <param name="root">The folder to scan; made absolute.</param>
-    /// <param name="resolve">Resolves the root and each registered worktree's parent folder, as <see cref="PathResolver.Resolve"/> does.</param>
-    /// <param name="stalls">The volumes an earlier git call has stalled, shared with the scan's signal reads.</param>
-    /// <param name="listWorktrees">Lists a repo's worktrees: the git call whose timeout stalls the repo's volume.</param>
-    /// <returns>What was found.</returns>
-    /// <exception cref="IOException"><paramref name="root"/> itself cannot be listed; the message names it.</exception>
+    /// <exception cref="OperationCanceledException"><paramref name="token"/> is cancelled.</exception>
     internal static DiscoveryResult Discover(
         string root,
         Func<string, string> resolve,
         VolumeStalls stalls,
-        Func<string, IReadOnlyList<WorktreeRecord>> listWorktrees
+        Action<int, int> onChild,
+        CancellationToken token
+    ) => Discover(root, resolve, stalls, repo => ListWorktrees(repo, token), onChild, token);
+
+    /// <summary>Finds what <see cref="Discover(string, VolumeStalls, Action{int, int}, CancellationToken)"/> finds, listing each repo's worktrees with <paramref name="listWorktrees"/>.</summary>
+    /// <param name="root">The folder to scan; made absolute.</param>
+    /// <param name="resolve">Resolves the root and each registered worktree's parent folder, as <see cref="PathResolver.Resolve"/> does.</param>
+    /// <param name="stalls">The volumes an earlier git call has stalled, shared with the scan's signal reads.</param>
+    /// <param name="listWorktrees">Lists a repo's worktrees: the git call whose timeout stalls the repo's volume.</param>
+    /// <param name="onChild">Called as each child of the root is classified, with its position, from 1, and the number of children.</param>
+    /// <param name="token">Checked before each child of the root.</param>
+    /// <returns>What was found.</returns>
+    /// <exception cref="IOException"><paramref name="root"/> itself cannot be listed; the message names it.</exception>
+    /// <exception cref="OperationCanceledException"><paramref name="token"/> is cancelled.</exception>
+    internal static DiscoveryResult Discover(
+        string root,
+        Func<string, string> resolve,
+        VolumeStalls stalls,
+        Func<string, IReadOnlyList<WorktreeRecord>> listWorktrees,
+        Action<int, int> onChild,
+        CancellationToken token
     )
     {
         ArgumentNullException.ThrowIfNull(root);
         ArgumentNullException.ThrowIfNull(stalls);
         ArgumentNullException.ThrowIfNull(listWorktrees);
+        ArgumentNullException.ThrowIfNull(onChild);
         string full = Path.GetFullPath(root);
         List<FileSystemInfo> children;
         try
@@ -92,8 +111,11 @@ public static class Discoverer
         var repos = new List<Repo>();
         var containers = new List<string>();
         var errors = new List<DiscoveryError>();
-        foreach (FileSystemInfo child in children)
+        for (int index = 0; index < children.Count; index++)
         {
+            token.ThrowIfCancellationRequested();
+            onChild(index + 1, children.Count);
+            FileSystemInfo child = children[index];
             if (IsPlainDir(child.Attributes))
             {
                 Classify(child.FullName, repos, containers, errors, stalls, listWorktrees);
@@ -241,10 +263,12 @@ public static class Discoverer
 
     /// <summary>Lists the worktrees git registers for the repo at <paramref name="repo"/> (any folder git resolves to it).</summary>
     /// <param name="repo">A folder inside the repo.</param>
+    /// <param name="token">Cancels the call, killing git.</param>
     /// <returns>The records, main worktree first.</returns>
     /// <exception cref="GitException">Git fails.</exception>
-    public static IReadOnlyList<WorktreeRecord> ListWorktrees(string repo) =>
-        ParseWorktreePorcelain(GitRunner.Run(repo, ["worktree", "list", "--porcelain"]));
+    /// <exception cref="OperationCanceledException"><paramref name="token"/> is cancelled.</exception>
+    public static IReadOnlyList<WorktreeRecord> ListWorktrees(string repo, CancellationToken token) =>
+        ParseWorktreePorcelain(GitRunner.Run(repo, ["worktree", "list", "--porcelain"], token));
 
     private static WorktreeRecord ApplyPorcelainLine(WorktreeRecord record, string key, string? value, string line) =>
         key switch

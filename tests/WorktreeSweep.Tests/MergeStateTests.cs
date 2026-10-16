@@ -217,11 +217,17 @@ public sealed class MergeStateTests
         string wt = fx.PathTo("repo.wt/moved-on");
         _ = Fixture.Git(repo, ["worktree", "add", "-q", "--detach", wt, "HEAD"]);
         _ = Fixture.CommitFile(wt, "b.txt", "b\n", "b");
-        DiscoveryResult found = Discoverer.Discover(fx.Root, new VolumeStalls());
+        DiscoveryResult found = Discoverer.Discover(fx.Root, new VolumeStalls(), (_, _) => { }, TestContext.Current.CancellationToken);
         WorktreeRecord record = Assert.Single(found.Registered, candidate => Fixture.SamePath(candidate.Record.Path, wt)).Record;
         var defaults = new DefaultBranches { Local = "main", Origin = "origin/gone" };
 
-        WorktreeSignals signals = SignalReader.ReadWorktreeSignals(defaults, record, new VolumeStalls());
+        WorktreeSignals signals = SignalReader.ReadWorktreeSignals(
+            defaults,
+            record,
+            new VolumeStalls(),
+            (_, _) => { },
+            TestContext.Current.CancellationToken
+        );
         Assert.Equal(MergeState.Detached(contained: false), signals.MergeState);
         Assert.Equal("main", signals.MergeStateAgainst);
         Assert.Empty(signals.Errors);
@@ -236,7 +242,7 @@ public sealed class MergeStateTests
         _ = fx.Origin(repo);
         _ = Fixture.Git(repo, ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/gone"]);
 
-        DefaultBranches defaults = SignalReader.ReadDefaultBranches(repo, new VolumeStalls());
+        DefaultBranches defaults = SignalReader.ReadDefaultBranches(repo, new VolumeStalls(), TestContext.Current.CancellationToken);
         Assert.Null(defaults.Origin);
         Assert.Equal("main", defaults.Local);
     }

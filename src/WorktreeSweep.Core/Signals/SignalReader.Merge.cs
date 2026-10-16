@@ -18,11 +18,18 @@ public static partial class SignalReader
     /// <param name="dir">The worktree.</param>
     /// <param name="defaults">The default branches of its repo.</param>
     /// <param name="record">The worktree's record.</param>
+    /// <param name="token">Cancels the read, killing a running git.</param>
     /// <returns>The state and the default's short name; <see langword="null"/> when the repo has no default branch.</returns>
     /// <exception cref="GitTimeoutException">A git read times out; it is not retried against another default.</exception>
     /// <exception cref="GitException">A git command fails unexpectedly; for a branch, against every default.</exception>
     /// <exception cref="IOException">The scratch object directory merge-tree writes to cannot be created.</exception>
-    public static (MergeState State, string Against)? ReadMergeState(string dir, DefaultBranches defaults, WorktreeRecord record)
+    /// <exception cref="OperationCanceledException"><paramref name="token"/> is cancelled.</exception>
+    public static (MergeState State, string Against)? ReadMergeState(
+        string dir,
+        DefaultBranches defaults,
+        WorktreeRecord record,
+        CancellationToken token
+    )
     {
         ArgumentNullException.ThrowIfNull(dir);
         ArgumentNullException.ThrowIfNull(defaults);
@@ -30,11 +37,11 @@ public static partial class SignalReader
         IReadOnlyList<(string Name, string Ref)> refs = defaults.Refs();
         if (record.Branch is not { } branch)
         {
-            return DetachedState(dir, refs, record.Head ?? "HEAD");
+            return DetachedState(dir, refs, record.Head ?? "HEAD", token);
         }
         string branchRef = $"refs/heads/{branch}";
-        (MergeState State, string Against)? best = BestState(dir, branchRef, refs);
-        if (best is { State.Kind: MergeStateKind.Ancestor } found && BranchHasNoOwnCommits(dir, branchRef))
+        (MergeState State, string Against)? best = BestState(dir, branchRef, refs, token);
+        if (best is { State.Kind: MergeStateKind.Ancestor } found && BranchHasNoOwnCommits(dir, branchRef, token))
         {
             return (MergeState.NoCommits, found.Against);
         }
@@ -68,10 +75,15 @@ public static partial class SignalReader
     /// <exception cref="GitTimeoutException">A read times out; the remaining defaults are not tried.</exception>
     /// <exception cref="GitException">Measuring fails against every default; the first failure is rethrown.</exception>
     /// <exception cref="IOException">The scratch object directory cannot be created.</exception>
-    private static (MergeState State, string Against)? BestState(string dir, string branchRef, IReadOnlyList<(string Name, string Ref)> refs)
+    private static (MergeState State, string Against)? BestState(
+        string dir,
+        string branchRef,
+        IReadOnlyList<(string Name, string Ref)> refs,
+        CancellationToken token
+    )
     {
-        using var scratch = new LazyScratch(dir);
-        return BestState(refs, target => StateAgainst(dir, branchRef, target, scratch));
+        using var scratch = new LazyScratch(dir, token);
+        return BestState(refs, target => StateAgainst(dir, branchRef, target, scratch, token));
     }
 
     /// <summary>The best merge state of a branch over the default refs, reading each ref with <paramref name="stateAgainst"/>.</summary>
@@ -134,7 +146,12 @@ public static partial class SignalReader
     /// </summary>
     /// <exception cref="GitTimeoutException">A read times out; the remaining defaults are not tried.</exception>
     /// <exception cref="GitException">Measuring fails against every default; the first failure is rethrown.</exception>
-    private static (MergeState State, string Against)? DetachedState(string dir, IReadOnlyList<(string Name, string Ref)> refs, string head)
+    private static (MergeState State, string Against)? DetachedState(
+        string dir,
+        IReadOnlyList<(string Name, string Ref)> refs,
+        string head,
+        CancellationToken token
+    )
     {
         string? firstAnswered = null;
         GitException? firstFailure = null;
@@ -143,7 +160,7 @@ public static partial class SignalReader
             bool contained;
             try
             {
-                contained = IsAncestor(dir, head, target.Ref);
+                contained = IsAncestor(dir, head, target.Ref, token);
             }
             catch (GitException error) when (error is not GitTimeoutException)
             {
@@ -160,8 +177,8 @@ public static partial class SignalReader
         return BestDespiteFailure(notContained, firstFailure);
     }
 
-    private static bool BranchHasNoOwnCommits(string dir, string branchRef) =>
-        HasNoOwnCommits(GitRunner.Run(dir, ["reflog", "show", "--format=%gs", branchRef]));
+    private static bool BranchHasNoOwnCommits(string dir, string branchRef, CancellationToken token) =>
+        HasNoOwnCommits(GitRunner.Run(dir, ["reflog", "show", "--format=%gs", branchRef], token));
 
     private static bool IsNoCommitEntry(string entry)
     {
@@ -171,28 +188,29 @@ public static partial class SignalReader
         return fastForward || NoCommitPrefixes.Any(prefix => entry.StartsWith(prefix, StringComparison.Ordinal));
     }
 
-    private static MergeState StateAgainst(string dir, string branch, string defaultRef, LazyScratch scratch)
+    private static MergeState StateAgainst(string dir, string branch, string defaultRef, LazyScratch scratch, CancellationToken token)
     {
-        if (IsAncestor(dir, branch, defaultRef))
+        if (IsAncestor(dir, branch, defaultRef, token))
         {
             return MergeState.Ancestor;
         }
-        string cherry = GitRunner.Run(dir, ["cherry", defaultRef, branch]);
+        string cherry = GitRunner.Run(dir, ["cherry", defaultRef, branch], token);
         if (cherry.Length > 0 && !Lines(cherry).Any(line => line.StartsWith('+')))
         {
             return MergeState.PatchesApplied;
         }
-        if (ContentContained(dir, branch, defaultRef, scratch))
+        if (ContentContained(dir, branch, defaultRef, scratch, token))
         {
             return MergeState.ContentContained;
         }
-        return MergeState.Unmerged(Count(dir, $"{defaultRef}..{branch}"));
+        return MergeState.Unmerged(Count(dir, $"{defaultRef}..{branch}", token));
     }
 
-    private static bool IsAncestor(string dir, string commit, string defaultRef) =>
-        ExitIsAnswer(dir, ["merge-base", "--is-ancestor", commit, defaultRef]);
+    private static bool IsAncestor(string dir, string commit, string defaultRef, CancellationToken token) =>
+        ExitIsAnswer(dir, ["merge-base", "--is-ancestor", commit, defaultRef], token);
 
-    private static bool ShareHistory(string dir, string defaultRef, string branch) => ExitIsAnswer(dir, ["merge-base", defaultRef, branch]);
+    private static bool ShareHistory(string dir, string defaultRef, string branch, CancellationToken token) =>
+        ExitIsAnswer(dir, ["merge-base", defaultRef, branch], token);
 
     /// <summary>
     /// Whether <c>git merge-tree --write-tree {default} {branch}</c> gives the default branch's own tree; a branch that shares no
@@ -203,17 +221,17 @@ public static partial class SignalReader
     /// cannot be read, merge-tree exits with a code other than 0 (merged) or 1 (conflicts), or git cannot be started, does not exit
     /// within <see cref="GitRunner.CallTimeout"/> or leaves its output open.</exception>
     /// <exception cref="IOException">The scratch object directory cannot be created.</exception>
-    private static bool ContentContained(string dir, string branch, string defaultRef, LazyScratch scratch)
+    private static bool ContentContained(string dir, string branch, string defaultRef, LazyScratch scratch, CancellationToken token)
     {
-        if (!ShareHistory(dir, defaultRef, branch))
+        if (!ShareHistory(dir, defaultRef, branch, token))
         {
             return false;
         }
-        string defaultTree = GitRunner.Run(dir, ["rev-parse", $"{defaultRef}^{{tree}}"]);
+        string defaultTree = GitRunner.Run(dir, ["rev-parse", $"{defaultRef}^{{tree}}"], token);
         ScratchObjects objects = scratch.Get();
         string[] args = ["merge-tree", "--write-tree", defaultRef, branch];
         var env = new Dictionary<string, string> { ["GIT_OBJECT_DIRECTORY"] = objects.Dir, ["GIT_ALTERNATE_OBJECT_DIRECTORIES"] = objects.Alternate };
-        GitStatus status = GitRunner.RunStatusWithEnv(dir, args, env);
+        GitStatus status = GitRunner.RunStatusWithEnv(dir, args, env, token);
         return status.Code switch
         {
             0 => Lines(status.Stdout).FirstOrDefault() == defaultTree,
@@ -224,7 +242,8 @@ public static partial class SignalReader
 
     /// <summary>A worktree's scratch object directory, created on first use and deleted on dispose if it was created.</summary>
     /// <param name="worktree">The worktree whose repo the directory borrows objects from.</param>
-    private sealed class LazyScratch(string worktree) : IDisposable
+    /// <param name="token">Cancels the git call that finds the repo's common dir.</param>
+    private sealed class LazyScratch(string worktree, CancellationToken token) : IDisposable
     {
         private ScratchObjects? scratch;
 
@@ -232,7 +251,7 @@ public static partial class SignalReader
         /// <returns>The directory.</returns>
         /// <exception cref="GitException">Git cannot find the repo's common dir.</exception>
         /// <exception cref="IOException">The directory cannot be created.</exception>
-        public ScratchObjects Get() => scratch ??= ScratchObjects.Create(worktree);
+        public ScratchObjects Get() => scratch ??= ScratchObjects.Create(worktree, token);
 
         /// <inheritdoc/>
         public void Dispose() => scratch?.Dispose();
