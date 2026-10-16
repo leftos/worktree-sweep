@@ -41,6 +41,3 @@ FILE_ACCESS_RIGHTS
 CancelSynchronousIo
 OpenThread
 GetCurrentThreadId
-GetACP
-GetOEMCP
-GetConsoleOutputCP

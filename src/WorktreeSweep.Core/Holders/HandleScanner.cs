@@ -5,7 +5,7 @@ namespace WorktreeSweep.Holders;
 /// processes cover only <c>pids</c>; the processes using the folder may be any.
 /// </summary>
 /// <param name="pids">The inspected processes: those running as the current user.</param>
-/// <param name="roots">Every spelling of the folder, the fully resolved one first.</param>
+/// <param name="roots">Each folder once, fully resolved.</param>
 /// <returns>What the handles showed.</returns>
 internal delegate HandleFindings HandleScanner(IReadOnlyCollection<int> pids, IReadOnlyList<string> roots);
 
@@ -25,5 +25,5 @@ internal sealed record HandleFindings(IReadOnlyList<NamedHandle> Names, IReadOnl
 
 /// <summary>A process the file system reports as using a root.</summary>
 /// <param name="Pid">The process.</param>
-/// <param name="Root">The root, one of the spellings the scan was given.</param>
+/// <param name="Root">The root, as the scan was given it.</param>
 internal sealed record RootUser(int Pid, string Root);

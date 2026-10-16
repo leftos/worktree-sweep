@@ -15,8 +15,8 @@ public sealed class LockerScanTests : IDisposable
     private readonly Fixture fx = new();
 
     /// <summary>
-    /// Elevated, the scan over every process finds a child holding <c>.tmp\δοκιμή\αρχείο.txt</c> shared with no one, with the Greek
-    /// path intact. Run by hand, elevated, from the repo root after a Release build:
+    /// Elevated, the scan over every process finds a child holding <c>δοκιμή\αρχείο.txt</c> under the fixture folder, shared with no
+    /// one, with the Greek path intact. Run by hand, elevated, from the repo root after a Release build:
     /// <c>sudo dotnet test WorktreeSweep.slnx -c Release --no-build -- --filter-method *ElevatedScanFindsTheHolderOfAGreekPath --explicit on</c>.
     /// </summary>
     [Fact(Explicit = true)]
@@ -26,29 +26,21 @@ public sealed class LockerScanTests : IDisposable
         {
             Assert.Skip($"run elevated: {RunCommand}");
         }
-        string folder = Path.Join(RepoRoot(), ".tmp", "δοκιμή");
+        string folder = fx.PathTo("δοκιμή");
         _ = Directory.CreateDirectory(folder);
         string file = Path.Join(folder, "αρχείο.txt");
         File.WriteAllText(file, "held");
         string ready = fx.PathTo("ready-elevated");
-        try
-        {
-            using var child = ReadyChild.Run(fx.Root, ready, HoldScript(file, ready));
-            int own = Environment.ProcessId;
-            IReadOnlyList<int> pids = [.. ProcessTable.Snapshot().Keys.Where(pid => pid is not (0 or 4) && pid != own)];
+        using var child = ReadyChild.Run(fx.Root, ready, HoldScript(file, ready));
+        int own = Environment.ProcessId;
+        IReadOnlyList<int> pids = [.. ProcessTable.Snapshot().Keys.Where(pid => !ProcessTable.SystemPids.Contains(pid) && pid != own)];
 
-            LockerFindings found = LockerScan.Elevated().Find([folder], pids);
+        LockerFindings found = LockerScan.Elevated().Find([folder], pids);
 
-            Locker locker = Assert.Single(found.Lockers, candidate => candidate.Pid == child.Id);
-            HeldHandle held = Assert.Single(locker.Handles);
-            Assert.EndsWith(@"\.tmp\δοκιμή\αρχείο.txt", held.Name, StringComparison.Ordinal);
-            child.Stop();
-        }
-        finally
-        {
-            File.Delete(file);
-            Directory.Delete(folder);
-        }
+        Locker locker = Assert.Single(found.Lockers, candidate => candidate.Pid == child.Id);
+        HeldHandle held = Assert.Single(locker.Handles);
+        Assert.EndsWith(@"\δοκιμή\αρχείο.txt", held.Name, StringComparison.Ordinal);
+        child.Stop();
     }
 
     /// <summary>
@@ -84,19 +76,6 @@ public sealed class LockerScanTests : IDisposable
     {
         using var identity = WindowsIdentity.GetCurrent();
         return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
-    }
-
-    /// <summary>The repository root: the first folder above the test binaries that holds <c>WorktreeSweep.slnx</c>.</summary>
-    private static string RepoRoot()
-    {
-        for (DirectoryInfo? folder = new(AppContext.BaseDirectory); folder is not null; folder = folder.Parent)
-        {
-            if (File.Exists(Path.Join(folder.FullName, "WorktreeSweep.slnx")))
-            {
-                return folder.FullName;
-            }
-        }
-        throw new InvalidOperationException($"no WorktreeSweep.slnx above {AppContext.BaseDirectory}");
     }
 
     /// <summary>A child script that holds <paramref name="file"/> shared with no one, then writes <paramref name="ready"/>.</summary>
