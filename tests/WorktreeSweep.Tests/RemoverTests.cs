@@ -199,11 +199,17 @@ public sealed class RemoverTests
         Assert.False(Directory.Exists(wt), $"{wt} still exists");
         Assert.Equal(1, run.Offers);
         Assert.True(Fixture.SamePath(Assert.Single(run.OfferedPaths), wt), $"offered: {string.Join(", ", run.OfferedPaths)}");
-        Progress.Started[] started = [.. run.Progress.OfType<Progress.Started>()];
         Progress.Done[] finished = [.. run.Progress.OfType<Progress.Done>()];
-        Assert.Equal([new Progress.Started(0), new Progress.Started(0)], started);
         Assert.StartsWith("locked (", Assert.IsType<Outcome.Failed>(finished[0].Outcome).Reason, StringComparison.Ordinal);
-        Assert.Equal(new Outcome.Permanent(registered.KnownSize), finished[1].Outcome);
+        Assert.Equal(
+            [
+                new Progress.Started(0),
+                new Progress.Done(0, finished[0].Outcome),
+                new Progress.Started(0),
+                new Progress.Done(0, new Outcome.Permanent(registered.KnownSize)),
+            ],
+            run.Progress
+        );
         Assert.DoesNotContain("repo.wt/feat", Fixture.Git(repo, ["worktree", "list", "--porcelain"]), StringComparison.Ordinal);
     }
 
@@ -296,6 +302,37 @@ public sealed class RemoverTests
 
         Assert.IsType<Outcome.Permanent>(swept[0].Outcome);
         Assert.Equal([new Progress.Started(0), new Progress.Done(0, swept[0].Outcome)], run.Progress);
+    }
+
+    /// <summary>A retry pass the token stops before it runs reports the pick it skips as skipped, as Results does.</summary>
+    [Fact]
+    public void CancelledRetryPassReportsTheSkippedOutcome()
+    {
+        using var fx = new Fixture();
+        (_, string wt, string held) = GitLockedWorktree(fx);
+        RegisteredCandidate registered = Assert.IsType<RegisteredCandidate>(CandidateAt(fx, wt));
+        using var source = new CancellationTokenSource();
+        var run = new Recorder
+        {
+            Answer = () =>
+            {
+                source.Cancel();
+                return UnlockOutcome.Unlocked;
+            },
+        };
+
+        IReadOnlyList<Swept> swept;
+        using (new FileStream(held, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            swept = run.Remove([PermanentDecision(registered, new BranchChoice.NotOffered())], source.Token);
+        }
+
+        Assert.True(Directory.Exists(wt), $"{wt} was removed after the token was cancelled");
+        Assert.Equal(new Outcome.Skipped("cancelled"), swept[0].Outcome);
+        Assert.Equal(3, run.Progress.Count);
+        Assert.Equal(new Progress.Started(0), run.Progress[0]);
+        Assert.IsType<Outcome.Failed>(Assert.IsType<Progress.Done>(run.Progress[1]).Outcome);
+        Assert.Equal(new Progress.Done(0, new Outcome.Skipped("cancelled")), run.Progress[2]);
     }
 
     /// <summary>A worktree on <c>feat</c> at <c>repo.wt\feat</c>, git-locked with the reason <c>keep me</c>, holding <c>held.txt</c>.</summary>
