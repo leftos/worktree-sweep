@@ -94,6 +94,7 @@ public sealed class TwoPassSweepTests
 
         Assert.Empty(sweeper.Removes);
         Assert.Empty(sweeper.Offers);
+        Assert.Empty(sweeper.SkippedPicks);
         Assert.All(results, result => Assert.IsType<SweepResult.Cancelled>(result));
     }
 
@@ -108,6 +109,7 @@ public sealed class TwoPassSweepTests
 
         Assert.Equal([0, 1], sweeper.Removes);
         Assert.Empty(sweeper.Offers);
+        Assert.Empty(sweeper.SkippedPicks);
         Assert.IsType<SweepResult.Removed>(results[0]);
         Assert.IsType<SweepResult.Locked>(results[1]);
         Assert.IsType<SweepResult.Cancelled>(results[2]);
@@ -125,6 +127,7 @@ public sealed class TwoPassSweepTests
 
         Assert.Single(sweeper.Offers);
         Assert.Equal([0, 1, 2, 3], sweeper.Removes);
+        Assert.Equal([1, 2], sweeper.SkippedPicks);
         Assert.IsType<SweepResult.Removed>(results[0]);
         Assert.IsType<SweepResult.Cancelled>(results[1]);
         Assert.IsType<SweepResult.Cancelled>(results[2]);
