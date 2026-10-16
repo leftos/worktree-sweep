@@ -72,7 +72,7 @@ public static class Scanner
         return new ScanProgress.Discovered(discovery.Repos.Count, discovery.Containers.Count, worktrees, discovery.Orphans.Count - links, links);
     }
 
-    /// <summary>Looks up every repo in parallel, reporting each one done.</summary>
+    /// <summary>Looks up every repo in parallel, reporting each one done under one lock, so the counts arrive in order.</summary>
     private static IReadOnlyList<RepoLookup> LookUpAll(
         IReadOnlyList<Repo> repos,
         VolumeStalls stalls,
@@ -81,19 +81,24 @@ public static class Scanner
     )
     {
         int done = 0;
+        var counter = new Lock();
         return SignalReader.ParallelMap(
             repos,
             repo =>
             {
                 RepoLookup lookup = LookUp(repo, stalls, token);
-                onProgress(new ScanProgress.RepoLookedUp(Interlocked.Increment(ref done), repos.Count));
+                lock (counter)
+                {
+                    done++;
+                    onProgress(new ScanProgress.RepoLookedUp(done, repos.Count));
+                }
                 return lookup;
             },
             token
         );
     }
 
-    /// <summary>Reads every candidate in parallel, reporting each one done.</summary>
+    /// <summary>Reads every candidate in parallel, reporting each one done under one lock, so the counts arrive in order.</summary>
     private static IReadOnlyList<Candidate> ReadAll(
         IReadOnlyList<ScanJob> jobs,
         VolumeStalls stalls,
@@ -102,12 +107,17 @@ public static class Scanner
     )
     {
         int done = 0;
+        var counter = new Lock();
         return SignalReader.ParallelMap(
             jobs,
             job =>
             {
                 Candidate candidate = ReadCandidate(job, stalls, onProgress, token);
-                onProgress(new ScanProgress.CandidateRead(Interlocked.Increment(ref done), jobs.Count));
+                lock (counter)
+                {
+                    done++;
+                    onProgress(new ScanProgress.CandidateRead(done, jobs.Count));
+                }
                 return candidate;
             },
             token

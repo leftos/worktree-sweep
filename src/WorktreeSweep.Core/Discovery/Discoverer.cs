@@ -57,11 +57,16 @@ public static class Discoverer
     public static DiscoveryResult Discover(string root, VolumeStalls stalls, Action<int, int> onChild, CancellationToken token) =>
         Discover(root, PathResolver.Resolve, stalls, onChild, token);
 
-    /// <summary>Finds what <see cref="Discover(string, VolumeStalls, Action{int, int}, CancellationToken)"/> finds, resolving paths with <paramref name="resolve"/>.</summary>
+    /// <summary>
+    /// Finds what <see cref="Discover(string, VolumeStalls, Action{int, int}, CancellationToken)"/> finds, resolving paths with
+    /// <paramref name="resolve"/>.
+    /// </summary>
     /// <param name="root">The folder to scan; made absolute.</param>
-    /// <param name="resolve">Resolves the root and each registered worktree's parent folder, as <see cref="PathResolver.Resolve"/> does.</param>
+    /// <param name="resolve">Resolves the root and each registered worktree's parent folder, as <see cref="PathResolver.Resolve"/>
+    /// does.</param>
     /// <param name="stalls">The volumes an earlier git call has stalled, shared with the scan's signal reads.</param>
-    /// <param name="onChild">Called as each child of the root is classified, with its position, from 1, and the number of children.</param>
+    /// <param name="onChild">Called as each child of the root is classified, with its position, from 1, and the number of
+    /// children.</param>
     /// <param name="token">Checked before each child of the root, and cancels <c>git worktree list</c>, killing it.</param>
     /// <returns>What was found.</returns>
     /// <exception cref="IOException"><paramref name="root"/> itself cannot be listed; the message names it.</exception>
@@ -72,31 +77,28 @@ public static class Discoverer
         VolumeStalls stalls,
         Action<int, int> onChild,
         CancellationToken token
-    ) => Discover(root, resolve, stalls, repo => ListWorktrees(repo, token), onChild, token);
+    ) => Discover(root, new DiscoverySeams(resolve, stalls, repo => ListWorktrees(repo, token)), onChild, token);
 
-    /// <summary>Finds what <see cref="Discover(string, VolumeStalls, Action{int, int}, CancellationToken)"/> finds, listing each repo's worktrees with <paramref name="listWorktrees"/>.</summary>
+    /// <summary>
+    /// Finds what <see cref="Discover(string, VolumeStalls, Action{int, int}, CancellationToken)"/> finds, through
+    /// <paramref name="seams"/>.
+    /// </summary>
     /// <param name="root">The folder to scan; made absolute.</param>
-    /// <param name="resolve">Resolves the root and each registered worktree's parent folder, as <see cref="PathResolver.Resolve"/> does.</param>
-    /// <param name="stalls">The volumes an earlier git call has stalled, shared with the scan's signal reads.</param>
-    /// <param name="listWorktrees">Lists a repo's worktrees: the git call whose timeout stalls the repo's volume.</param>
-    /// <param name="onChild">Called as each child of the root is classified, with its position, from 1, and the number of children.</param>
+    /// <param name="seams">How paths are resolved and worktrees listed, and the scan's stalled volumes.</param>
+    /// <param name="onChild">Called as each child of the root is classified, with its position, from 1, and the number of
+    /// children.</param>
     /// <param name="token">Checked before each child of the root.</param>
     /// <returns>What was found.</returns>
     /// <exception cref="IOException"><paramref name="root"/> itself cannot be listed; the message names it.</exception>
     /// <exception cref="OperationCanceledException"><paramref name="token"/> is cancelled.</exception>
-    internal static DiscoveryResult Discover(
-        string root,
-        Func<string, string> resolve,
-        VolumeStalls stalls,
-        Func<string, IReadOnlyList<WorktreeRecord>> listWorktrees,
-        Action<int, int> onChild,
-        CancellationToken token
-    )
+    internal static DiscoveryResult Discover(string root, DiscoverySeams seams, Action<int, int> onChild, CancellationToken token)
     {
         ArgumentNullException.ThrowIfNull(root);
-        ArgumentNullException.ThrowIfNull(stalls);
-        ArgumentNullException.ThrowIfNull(listWorktrees);
+        ArgumentNullException.ThrowIfNull(seams);
         ArgumentNullException.ThrowIfNull(onChild);
+        Func<string, string> resolve = seams.Resolve;
+        VolumeStalls stalls = seams.Stalls;
+        Func<string, IReadOnlyList<WorktreeRecord>> listWorktrees = seams.ListWorktrees;
         string full = Path.GetFullPath(root);
         List<FileSystemInfo> children;
         try

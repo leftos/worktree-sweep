@@ -53,7 +53,7 @@ public static class CandidateRemover
         ArgumentNullException.ThrowIfNull(registered);
         if (registered.Record.Locked is not null)
         {
-            _ = GitRunner.Run(registered.Repo, ["worktree", "unlock", registered.Record.Path]);
+            _ = GitRunner.Run(registered.Repo, ["worktree", "unlock", registered.Record.Path], CancellationToken.None);
         }
     }
 
@@ -73,7 +73,7 @@ public static class CandidateRemover
         }
         string worktree = registered.Record.Path;
         string[] args = reason.Length == 0 ? ["worktree", "lock", worktree] : ["worktree", "lock", "--reason", reason, worktree];
-        _ = GitRunner.Run(registered.Repo, args);
+        _ = GitRunner.Run(registered.Repo, args, CancellationToken.None);
     }
 
     /// <summary>Runs <c>git worktree prune</c> in <paramref name="repo"/>.</summary>
@@ -82,7 +82,7 @@ public static class CandidateRemover
     public static void PruneRepo(string repo)
     {
         ArgumentException.ThrowIfNullOrEmpty(repo);
-        _ = GitRunner.Run(repo, ["worktree", "prune"]);
+        _ = GitRunner.Run(repo, ["worktree", "prune"], CancellationToken.None);
     }
 
     /// <summary>Prunes a registered worktree's repo; an orphan has no registration to prune.</summary>

@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using WorktreeSweep.Report;
 using WorktreeSweep.Scan;
+using WorktreeSweep.Signals;
 
 namespace WorktreeSweep.Tests;
 
@@ -108,6 +109,34 @@ public sealed class ScanProgressTests
             .. events.OfType<ScanProgress.CandidateStep>().Where(step => step.Path == cancelledAt.Path).Select(step => step.Step),
         ];
         Assert.Equal([ScanStep.Merge], stepsOfCancelled);
+    }
+
+    /// <summary>
+    /// A scan cancelled while a worktree's git call hangs throws, and the hung git's process tree is gone. The repo's clean filter
+    /// opens a file and then loops on one-second sleeps; an index stat that no longer matches makes <c>git status</c> run it on
+    /// <c>README.md</c>. The test cancels once the file exists, and the file is released only when the filter's shell is killed.
+    /// </summary>
+    /// <returns>A task that completes when the test ends.</returns>
+    [Fact]
+    public async Task ScanCancelledWhileGitHangsKillsItsProcessTree()
+    {
+        using var fx = new Fixture();
+        string repo = fx.Repo("repo");
+        string worktree = fx.PathTo("repo.wt/one");
+        Fixture.AddWorktree(repo, worktree, "one");
+        string held = fx.PathTo("held");
+        _ = Fixture.Git(repo, ["config", "filter.hang.clean", $"exec 3> '{held.Replace('\\', '/')}'; while :; do sleep 1; done"]);
+        File.WriteAllText(Path.Join(repo, ".git", "info", "attributes"), "README.md filter=hang\n");
+        File.SetLastWriteTimeUtc(Path.Join(worktree, "README.md"), DateTime.UtcNow.AddHours(-1));
+        using var cancel = new CancellationTokenSource();
+
+        Task<ScanReport> scan = Task.Run(() => Scanner.Scan(fx.Root, _ => { }, cancel.Token), TestContext.Current.CancellationToken);
+        Fixture.WaitUntil(() => File.Exists(held) || scan.IsCompleted, "the status read's clean filter to start");
+        Assert.False(scan.IsCompleted, "the scan ended before its git call hung");
+        await cancel.CancelAsync();
+
+        _ = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => scan);
+        Fixture.WaitUntil(() => Fixture.IsReleased(held), "the killed clean filter to release its output file");
     }
 
     /// <summary>Builds a repo with two linked worktrees and an orphan folder beside them in its container.</summary>

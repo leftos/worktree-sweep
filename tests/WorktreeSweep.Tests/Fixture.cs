@@ -112,7 +112,7 @@ public sealed class Fixture : IDisposable
         string? firstHeld = null;
         while (true)
         {
-            GitStatus status = GitRunner.RunStatus(dir, full);
+            GitStatus status = GitRunner.RunStatus(dir, full, CancellationToken.None);
             if (status.Success)
             {
                 return status.Stdout.Trim();
@@ -246,6 +246,44 @@ public sealed class Fixture : IDisposable
     /// <summary>Scans the root.</summary>
     /// <returns>The scan report.</returns>
     public ScanReport Scan() => Scanner.Scan(Root, _ => { }, CancellationToken.None);
+
+    /// <summary>
+    /// Waits until <paramref name="condition"/> holds, checking every 50 ms. Two minutes is a hang guard a passing run never
+    /// reaches; the test fails there, naming what it waited for.
+    /// </summary>
+    /// <param name="condition">The state waited for.</param>
+    /// <param name="what">What the state means, for the failure message.</param>
+    public static void WaitUntil(Func<bool> condition, string what)
+    {
+        ArgumentNullException.ThrowIfNull(condition);
+        var guard = TimeSpan.FromMinutes(2);
+        var clock = Stopwatch.StartNew();
+        while (!condition())
+        {
+            if (clock.Elapsed > guard)
+            {
+                Assert.Fail($"waited {guard} for {what}");
+            }
+            Thread.Sleep(50);
+        }
+    }
+
+    /// <summary>Whether no process holds <paramref name="path"/> open: it opens with no sharing allowed.</summary>
+    /// <param name="path">An existing file.</param>
+    /// <returns><see langword="true"/> when the open succeeds; <see langword="false"/> while another handle is open or the file is
+    /// missing.</returns>
+    public static bool IsReleased(string path)
+    {
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            return true;
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+    }
 
     /// <summary>Makes a directory junction with <c>mklink /J</c>.</summary>
     /// <param name="link">The junction to create.</param>

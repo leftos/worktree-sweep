@@ -105,15 +105,17 @@ public sealed class VolumeStallsTests
 
         DiscoveryResult found = Discoverer.Discover(
             fx.Root,
-            PathResolver.Resolve,
-            stalls,
-            repo =>
-            {
-                listed.Add(repo);
-                return Fixture.SamePath(repo, first)
-                    ? throw new GitTimeoutException("`git -C a worktree list --porcelain` did not exit within 60 s")
-                    : Discoverer.ListWorktrees(repo, TestContext.Current.CancellationToken);
-            },
+            new DiscoverySeams(
+                PathResolver.Resolve,
+                stalls,
+                repo =>
+                {
+                    listed.Add(repo);
+                    return Fixture.SamePath(repo, first)
+                        ? throw new GitTimeoutException("`git -C a worktree list --porcelain` did not exit within 60 s")
+                        : Discoverer.ListWorktrees(repo, TestContext.Current.CancellationToken);
+                }
+            ),
             (_, _) => { },
             TestContext.Current.CancellationToken
         );
