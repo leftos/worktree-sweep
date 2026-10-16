@@ -17,6 +17,9 @@ public sealed partial class RemovalRowViewModel : ObservableObject
     /// <summary>The status once the pick is finished, removed or failed.</summary>
     public const string Done = "done";
 
+    /// <summary>The size the scan read; <see langword="null"/> when it read none.</summary>
+    private readonly KnownSize? size;
+
     /// <summary>What became of the pick; <see langword="null"/> until its removal finishes.</summary>
     private Outcome? outcome;
 
@@ -36,7 +39,7 @@ public sealed partial class RemovalRowViewModel : ObservableObject
         Index = index;
         Path = path;
         Action = run.Action;
-        Size = decision.Candidate.KnownSize?.Bytes;
+        size = decision.Candidate.KnownSize;
         Status = Pending;
         ActionText = PendingText;
     }
@@ -51,10 +54,13 @@ public sealed partial class RemovalRowViewModel : ObservableObject
     public RemoveAction Action { get; }
 
     /// <summary>Gets the size the scan read; <see langword="null"/> when it read none, which counts as no bytes.</summary>
-    public long? Size { get; }
+    public long? Size => size?.Bytes;
 
-    /// <summary>Gets the pick's size as <see cref="ReportTable.HumanBytes"/> writes it; empty when the size is unknown.</summary>
-    public string SizeText => Size is { } bytes ? ReportTable.HumanBytes(bytes) : "";
+    /// <summary>Gets the pick's size as the report writes it, <c>at least …</c> when the scan read only part of it; empty when none.</summary>
+    public string SizeText => size is { } known ? ReportTable.SizeText(known.Bytes, known.Partial) : "";
+
+    /// <summary>Gets whether the scan read only part of the pick, which makes <see cref="Size"/> a lower bound.</summary>
+    public bool SizeIsPartial => size?.Partial ?? false;
 
     /// <summary>Gets whether the pick was removed, as opposed to failing or being skipped.</summary>
     public bool Succeeded => outcome is Outcome.Recycled or Outcome.Permanent or Outcome.LinkRemoved or Outcome.Pruned;

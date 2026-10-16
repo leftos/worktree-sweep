@@ -119,8 +119,8 @@ public sealed class RemovingViewModelTests
         RemovingViewModel mixed = Runs((Recycle(), 2 * ViewModelSamples.Mb), (Permanent(), ViewModelSamples.Mb));
         Assert.Equal("0 B of 3.0 MB removed", mixed.BytesLine);
 
-        RemovingViewModel link = Runs((new RemoveAction.RemoveLink(), 2 * ViewModelSamples.Mb));
-        Assert.Equal("0 B of 2.0 MB removed", link.BytesLine);
+        RemovingViewModel link = Runs((new RemoveAction.RemoveLink(), null));
+        Assert.Equal("", link.BytesLine);
     }
 
     /// <summary>No pick with a size the scan read means no byte line at all.</summary>
@@ -131,6 +131,33 @@ public sealed class RemovingViewModelTests
 
         Assert.Equal(0, removing.BytesTotal);
         Assert.Equal("", removing.BytesLine);
+    }
+
+    /// <summary>A size the scan read only in part shows as "at least", as the List and Review screens do.</summary>
+    [Fact]
+    public void RowSizeTextSaysAtLeastForAPartlyReadSize()
+    {
+        RemovingViewModel partial = RunOfPartialSize(Recycle(), 2 * ViewModelSamples.Mb);
+        Assert.Equal("at least 2.0 MB", partial.Rows[0].SizeText);
+
+        RemovingViewModel whole = Runs((Recycle(), 2 * ViewModelSamples.Mb));
+        Assert.Equal("2.0 MB", whole.Rows[0].SizeText);
+
+        RemovingViewModel unknown = Runs((Recycle(), null));
+        Assert.Equal("", unknown.Rows[0].SizeText);
+    }
+
+    /// <summary>The byte line says "at least" on either side when a size it counts was read only in part.</summary>
+    [Fact]
+    public void BytesLineSaysAtLeastForPartlyReadSizes()
+    {
+        RemovingViewModel removing = RunOfPartialSize(Recycle(), 2 * ViewModelSamples.Mb);
+
+        Assert.Equal("0 B of at least 2.0 MB moved to the Recycle Bin", removing.BytesLine);
+
+        removing.OnProgress(new Progress.Done(0, new Outcome.Recycled(new KnownSize(2 * ViewModelSamples.Mb, true))));
+
+        Assert.Equal("at least 2.0 MB of at least 2.0 MB moved to the Recycle Bin", removing.BytesLine);
     }
 
     /// <summary>A pending row says what its plan will do, in each plan's words.</summary>
@@ -208,6 +235,25 @@ public sealed class RemovingViewModelTests
         removing.OnProgress(new Progress.Done(0, new Outcome.Permanent(new KnownSize(2 * ViewModelSamples.Mb, false))));
         Assert.Equal("Deleted permanently", removing.Rows[0].ActionText);
         Assert.Equal(2 * ViewModelSamples.Mb, removing.BytesDone);
+        Assert.Equal(1, removing.Done);
+    }
+
+    /// <summary>A pick the Stop token skips in the retry pass says so, in the words the Results screen uses.</summary>
+    [Fact]
+    public void SkippedRetryShowsTheSkippedWording()
+    {
+        RemovingViewModel removing = Runs((Permanent(), 2 * ViewModelSamples.Mb));
+
+        removing.OnProgress(new Progress.Started(0));
+        removing.OnProgress(new Progress.Done(0, new Outcome.Failed("locked (held.txt)")));
+        Assert.Equal("failed: locked (held.txt)", removing.Rows[0].ActionText);
+        Assert.Equal(0, removing.BytesDone);
+
+        removing.OnProgress(new Progress.Done(0, new Outcome.Skipped("cancelled")));
+
+        Assert.Equal("skipped (cancelled)", removing.Rows[0].ActionText);
+        Assert.Equal("done", removing.Rows[0].Status);
+        Assert.Equal(0, removing.BytesDone);
         Assert.Equal(1, removing.Done);
     }
 
@@ -317,11 +363,20 @@ public sealed class RemovingViewModelTests
     {
         Decision[] decisions =
         [
-            .. picks.Select((pick, index) => new Decision(Sized(index, pick.Bytes), new Plan.Run(pick.Action), new BranchChoice.NotOffered())),
+            .. picks.Select(
+                (pick, index) => new Decision(Sized(index, pick.Bytes, partial: false), new Plan.Run(pick.Action), new BranchChoice.NotOffered())
+            ),
         ];
         string[] paths = [.. picks.Select((_, index) => $@"repo.wt\p{index}")];
         return new RemovingViewModel(decisions, paths, _ => { });
     }
+
+    /// <summary>A Removing screen over one runnable pick whose size the scan read only in part.</summary>
+    /// <param name="action">How the pick is removed.</param>
+    /// <param name="bytes">The size the scan read, a lower bound.</param>
+    /// <returns>The view model.</returns>
+    private static RemovingViewModel RunOfPartialSize(RemoveAction action, long bytes) =>
+        new([new Decision(Sized(0, bytes, partial: true), new Plan.Run(action), new BranchChoice.NotOffered())], [@"repo.wt\p0"], _ => { });
 
     /// <summary>A Removing screen over one runnable pick of each plan: recycle, permanent delete, link and prune.</summary>
     /// <returns>The view model.</returns>
@@ -342,13 +397,26 @@ public sealed class RemovingViewModelTests
         return new RemovingViewModel(decisions, [@"repo.wt\a", @"repo.wt\b", @"repo.wt\c"], _ => { });
     }
 
-    /// <summary>The scanned candidate <c>repo.wt\p{index}</c>, with <paramref name="bytes"/> or with no size the scan could read.</summary>
+    /// <summary>The scanned candidate <c>repo.wt\p{index}</c>: its size, none, or a size the scan read only in part.</summary>
     /// <param name="index">The pick's number.</param>
     /// <param name="bytes">Its size, <see langword="null"/> when the scan read none.</param>
+    /// <param name="partial">Whether the scan could not read every entry, so the bytes are a lower bound.</param>
     /// <returns>The candidate.</returns>
-    private static RegisteredCandidate Sized(int index, long? bytes)
+    private static RegisteredCandidate Sized(int index, long? bytes, bool partial)
     {
         RegisteredCandidate candidate = ViewModelSamples.Worktree($"p{index}", MergeState.Ancestor, bytes ?? 0);
-        return bytes is null ? candidate with { Signals = candidate.Signals with { Size = null } } : candidate;
+        if (bytes is null)
+        {
+            return candidate with { Signals = candidate.Signals with { Size = null } };
+        }
+        return partial
+            ? candidate with
+            {
+                Signals = candidate.Signals with
+                {
+                    Size = new SizeInfo { Bytes = bytes.Value, Unreadable = 1 },
+                },
+            }
+            : candidate;
     }
 }

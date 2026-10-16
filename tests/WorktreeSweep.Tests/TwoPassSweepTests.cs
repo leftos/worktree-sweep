@@ -156,6 +156,9 @@ public sealed class TwoPassSweepTests
         /// <summary>Gets the picks <see cref="Finish"/> was called for, in order.</summary>
         public List<int> Finished { get; } = [];
 
+        /// <summary>Gets the picks <see cref="Skipped"/> was called for, in order.</summary>
+        public List<int> SkippedPicks { get; } = [];
+
         /// <summary>Gets the paths each offer carried, in order.</summary>
         public List<IReadOnlyList<string>> Offers { get; } = [];
 
@@ -200,6 +203,9 @@ public sealed class TwoPassSweepTests
                 throw new InvalidOperationException("broken follow-up");
             }
         }
+
+        /// <inheritdoc/>
+        public void Skipped(int index) => SkippedPicks.Add(index);
 
         /// <inheritdoc/>
         public UnlockOutcome OfferUnlock(IReadOnlyList<string> paths)
