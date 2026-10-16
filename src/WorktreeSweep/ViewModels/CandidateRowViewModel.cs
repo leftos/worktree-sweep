@@ -17,8 +17,25 @@ public sealed partial class CandidateRowViewModel : ObservableObject
         ArgumentNullException.ThrowIfNull(row);
         this.row = row;
         IsTicked = row.Candidate is RegisteredCandidate { Released: not null };
-        LosesNothing = LossText.For(row.Candidate) is null;
+        LosesNothing = !HasUnknownSignals(row.Candidate) && LossText.For(row.Candidate) is null;
     }
+
+    /// <summary>
+    /// Whether <paramref name="candidate"/> is a worktree whose signals were not all read: an error was recorded, or its merge state,
+    /// uncommitted work or (on a branch) upstream is unknown. A detached worktree has no upstream, so its absence is not unknown, and a
+    /// prunable registration has no signals by design, since its folder is gone.
+    /// </summary>
+    /// <param name="candidate">The candidate.</param>
+    /// <returns><see langword="true"/> when what removing it loses cannot be known.</returns>
+    private static bool HasUnknownSignals(Candidate candidate) =>
+        candidate is RegisteredCandidate { Signals: var signals } registered
+        && registered.Record.Prunable is null
+        && (
+            signals.Errors.Count > 0
+            || signals.MergeState is null
+            || signals.Dirty is null
+            || (signals.Upstream is null && registered.Record.Branch is not null)
+        );
 
     /// <summary>Gets the PATH cell, relative to the scanned root.</summary>
     public string Path => row.Path;

@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
+using System.Windows.Input;
 using System.Windows.Interop;
 using WorktreeSweep.ViewModels;
 
@@ -40,6 +41,17 @@ public partial class MainWindow
     /// <param name="sender">The button.</param>
     /// <param name="e">The click.</param>
     private void OnCloseClick(object sender, RoutedEventArgs e) => Close();
+
+    /// <summary>Keeps Enter in the List's search box from pressing the default Review button.</summary>
+    /// <param name="sender">The search box.</param>
+    /// <param name="e">The key pressed.</param>
+    private void OnSearchKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            e.Handled = true;
+        }
+    }
 
     /// <summary>Hands a column header click to the List's sort instead of letting the grid sort its rows itself.</summary>
     /// <param name="sender">The List's grid.</param>

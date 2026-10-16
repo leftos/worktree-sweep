@@ -16,7 +16,7 @@ public sealed class ReviewViewModelTests
     {
         RegisteredCandidate folder = ViewModelSamples.Worktree("a", MergeState.Ancestor, 10);
         MainViewModel main = ViewModelSamples.Listed(folder, ViewModelSamples.Link("link"));
-        ViewModelSamples.ListOf(main).TickAllCommand.Execute(null);
+        ViewModelSamples.ListOf(main).TickShownCommand.Execute(null);
 
         ViewModelSamples.ListOf(main).ReviewCommand.Execute(null);
 
@@ -49,7 +49,7 @@ public sealed class ReviewViewModelTests
     {
         MainViewModel main = ViewModelSamples.Listed(ViewModelSamples.Worktree("a", MergeState.Ancestor, 10));
         ListViewModel list = ViewModelSamples.ListOf(main);
-        list.TickAllCommand.Execute(null);
+        list.TickShownCommand.Execute(null);
         list.ReviewCommand.Execute(null);
         ReviewViewModel? review = main.Review;
         Assert.NotNull(review);

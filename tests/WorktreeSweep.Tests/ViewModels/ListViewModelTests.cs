@@ -35,7 +35,7 @@ public sealed class ListViewModelTests
         list.Rows[0].IsTicked = true;
 
         Assert.Equal("2 candidates · 2 shown · 1 ticked · 1.5 KB selected for removal", list.Header);
-        list.TickAllCommand.Execute(null);
+        list.TickShownCommand.Execute(null);
         Assert.Equal("2 candidates · 2 shown · 2 ticked · 1.5 KB selected for removal", list.Header);
         list.Search = "repo.wt\\b";
         Assert.Equal("2 candidates · 1 shown · 2 ticked · 1.5 KB selected for removal", list.Header);
@@ -50,7 +50,7 @@ public sealed class ListViewModelTests
         OrphanCandidate partial = ReportSamples.Orphan(@"repo.wt\stray", OrphanKind.Folder, new SizeInfo { Bytes = 10, Unreadable = 1 });
         ListViewModel list = ListFor(partial);
 
-        list.TickAllCommand.Execute(null);
+        list.TickShownCommand.Execute(null);
 
         Assert.Equal("1 candidates · 1 shown · 1 ticked · at least 10 B selected for removal", list.Header);
     }
@@ -101,9 +101,9 @@ public sealed class ListViewModelTests
         Assert.Null(list.Message);
     }
 
-    /// <summary>Tick all and Untick all each announce one header change, however many rows they tick.</summary>
+    /// <summary>Tick shown and Untick all each announce one header change, however many rows they tick.</summary>
     [Fact]
-    public void TickAllRaisesHeaderOnce()
+    public void TickShownRaisesHeaderOnce()
     {
         ListViewModel list = ListFor(
             Worktree("a", MergeState.Ancestor, 10),
@@ -119,7 +119,7 @@ public sealed class ListViewModelTests
             }
         };
 
-        list.TickAllCommand.Execute(null);
+        list.TickShownCommand.Execute(null);
 
         Assert.Equal(1, headerChanges);
         list.UntickAllCommand.Execute(null);
@@ -214,6 +214,23 @@ public sealed class ListViewModelTests
         list.SortByCommand.Execute(SortKey.Branch);
 
         string[] ascending = [@"repo.wt\b", @"repo.wt\c", @"repo.wt\a"];
+        Assert.Equal(ascending, ShownPaths(list));
+    }
+
+    /// <summary>The Branch column sorts by the full branch name, past the 28 characters the cell keeps.</summary>
+    [Fact]
+    public void SortByBranchUsesTheFullBranchName()
+    {
+        const string shared = "feature/a-very-long-branch-n";
+        ListViewModel list = ListFor(
+            OnBranch(Worktree("a", MergeState.Ancestor, 10), shared + "z-two"),
+            OnBranch(Worktree("b", MergeState.Ancestor, 10), shared + "a-one")
+        );
+        Assert.Equal(28, shared.Length);
+
+        list.SortByCommand.Execute(SortKey.Branch);
+
+        string[] ascending = [@"repo.wt\b", @"repo.wt\a"];
         Assert.Equal(ascending, ShownPaths(list));
     }
 
@@ -395,6 +412,46 @@ public sealed class ListViewModelTests
         Assert.Equal([@"repo.wt\safe"], ShownPaths(list));
     }
 
+    /// <summary>A prunable registration has no signals by design, and pruning it loses nothing: it passes Nothing lost and is counted.</summary>
+    [Fact]
+    public void NothingLostKeepsPrunableRegistrations()
+    {
+        RegisteredCandidate gone = Worktree("gone", MergeState.Ancestor, 10) with { Signals = new WorktreeSignals() };
+        ListViewModel list = ListFor(
+            gone with
+            {
+                Record = gone.Record with { Prunable = "gitdir file points to non-existent location" },
+            },
+            Worktree("risky", MergeState.Unmerged(1), 10)
+        );
+
+        list.NothingLost = true;
+
+        Assert.Equal([@"repo.wt\gone"], ShownPaths(list));
+        Assert.Equal(1, list.NothingLostCount);
+    }
+
+    /// <summary>A worktree whose signals were not all read is never "nothing lost": it is filtered out and not counted.</summary>
+    [Fact]
+    public void NothingLostLeavesOutWorktreesWithUnknownSignals()
+    {
+        ListViewModel list = ListFor(
+            Worktree("safe", MergeState.Ancestor, 10),
+            WithSignals(Worktree("errored", MergeState.Ancestor, 10), signals => signals with { Errors = ["git status failed"] }),
+            WithSignals(Worktree("no-merge", MergeState.Ancestor, 10), signals => signals with { MergeState = null }),
+            WithSignals(Worktree("no-dirty", MergeState.Ancestor, 10), signals => signals with { Dirty = null }),
+            WithSignals(Worktree("no-upstream", MergeState.Ancestor, 10), signals => signals with { Upstream = null })
+        );
+
+        list.NothingLost = true;
+
+        Assert.Equal([@"repo.wt\safe"], ShownPaths(list));
+        Assert.Equal(1, list.NothingLostCount);
+        list.NothingLost = false;
+        list.Selected = list.Rows.Single(row => row.Path == @"repo.wt\errored");
+        Assert.False(list.SelectedLosesNothing);
+    }
+
     /// <summary>The search matches the path or the branch, ignoring case.</summary>
     [Fact]
     public void SearchMatchesPathOrBranchIgnoringCase()
@@ -446,6 +503,28 @@ public sealed class ListViewModelTests
         Assert.Empty(list.Shown);
     }
 
+    /// <summary>Clear the filter rebuilds the shown rows once, not once per filter it resets.</summary>
+    [Fact]
+    public void ClearFiltersRebuildsTheShownRowsOnce()
+    {
+        ListViewModel list = ListFor(Worktree("a", MergeState.Ancestor, 10), Link("l"));
+        list.KindFilter = KindFilter.Link;
+        list.NothingLost = true;
+        list.Search = "zzz";
+        int rebuilds = 0;
+        list.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(ListViewModel.Shown))
+            {
+                rebuilds++;
+            }
+        };
+
+        list.ClearFiltersCommand.Execute(null);
+
+        Assert.Equal(1, rebuilds);
+    }
+
     /// <summary>Clear the filter resets the kind, Nothing lost and the search, and every row is shown again.</summary>
     [Fact]
     public void ClearFiltersResetsEveryFilter()
@@ -482,7 +561,7 @@ public sealed class ListViewModelTests
     public void UntickAllUnticksHiddenRowsToo()
     {
         ListViewModel list = ListFor(Worktree("a", MergeState.Ancestor, 10), Link("l"));
-        list.TickAllCommand.Execute(null);
+        list.TickShownCommand.Execute(null);
         list.KindFilter = KindFilter.Link;
 
         list.UntickAllCommand.Execute(null);
@@ -516,7 +595,7 @@ public sealed class ListViewModelTests
     public void HiddenTickedCountsTickedRowsTheFilterHides()
     {
         ListViewModel list = ListFor(Worktree("a", MergeState.Ancestor, 10), Worktree("b", MergeState.Ancestor, 10), Link("l"));
-        list.TickAllCommand.Execute(null);
+        list.TickShownCommand.Execute(null);
         Assert.Equal(0, list.HiddenTicked);
         Assert.Null(list.HiddenTickedText);
 
