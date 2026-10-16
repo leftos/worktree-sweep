@@ -15,10 +15,10 @@ public sealed class GitRunnerTests
         using var fx = new Fixture();
         string repo = fx.Repo("repo");
 
-        GitException error = Assert.Throws<GitException>(() => GitRunner.Run(repo, BadRef));
+        GitException error = Assert.Throws<GitException>(() => GitRunner.Run(repo, BadRef, TestContext.Current.CancellationToken));
 
         Assert.Equal($"`git -C {repo} rev-parse --verify no-such-ref` exited with code 128: fatal: Needed a single revision", error.Message);
-        Assert.Equal(error.Message, Assert.Throws<GitException>(() => GitRunner.RunRaw(repo, BadRef)).Message);
+        Assert.Equal(error.Message, Assert.Throws<GitException>(() => GitRunner.RunRaw(repo, BadRef, TestContext.Current.CancellationToken)).Message);
     }
 
     /// <summary>Extra environment variables cannot turn optional locks back on: git still runs with <c>GIT_OPTIONAL_LOCKS=0</c>.</summary>
@@ -31,7 +31,8 @@ public sealed class GitRunnerTests
         GitStatus status = GitRunner.RunStatusWithEnv(
             repo,
             ["-c", "alias.print-env=!env", "print-env"],
-            new Dictionary<string, string> { ["GIT_OPTIONAL_LOCKS"] = "1" }
+            new Dictionary<string, string> { ["GIT_OPTIONAL_LOCKS"] = "1" },
+            TestContext.Current.CancellationToken
         );
 
         Assert.True(status.Success, $"git exited with code {status.Code}: {status.Stderr}");
@@ -51,7 +52,8 @@ public sealed class GitRunnerTests
         GitStatus status = GitRunner.RunStatusWithEnv(
             repo,
             ["-c", "alias.print-env=!env", "print-env"],
-            new Dictionary<string, string> { ["GIT_TERMINAL_PROMPT"] = "1", ["GCM_INTERACTIVE"] = "always" }
+            new Dictionary<string, string> { ["GIT_TERMINAL_PROMPT"] = "1", ["GCM_INTERACTIVE"] = "always" },
+            TestContext.Current.CancellationToken
         );
 
         Assert.True(status.Success, $"git exited with code {status.Code}: {status.Stderr}");
@@ -77,13 +79,44 @@ public sealed class GitRunnerTests
                 ["-c", "alias.hang=!sleep 30", "hang"],
                 new Dictionary<string, string>(),
                 TimeSpan.FromSeconds(1),
-                TimeSpan.FromSeconds(15)
+                TimeSpan.FromSeconds(15),
+                TestContext.Current.CancellationToken
             )
         );
 
         clock.Stop();
         Assert.Equal($"`git -C {repo} -c alias.hang=!sleep 30 hang` did not exit within 1 s and was killed", error.Message);
         Assert.True(clock.Elapsed < TimeSpan.FromSeconds(10), $"the call took {clock.Elapsed}");
+    }
+
+    /// <summary>
+    /// A cancelled call kills git with its whole process tree, as a timeout does, and throws: the sleeping grandchild that holds the
+    /// output pipes is gone, or the call would wait out the two-minute grace for them to close.
+    /// </summary>
+    [Fact]
+    public void RunCancelledKillsGitTreeAndThrows()
+    {
+        using var fx = new Fixture();
+        string repo = fx.Repo("repo");
+        var grace = TimeSpan.FromMinutes(2);
+        using var cancel = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+        var clock = Stopwatch.StartNew();
+
+        OperationCanceledException error = Assert.ThrowsAny<OperationCanceledException>(() =>
+            GitRunner.RunStatusWithEnv(
+                repo,
+                ["-c", "alias.hang=!sleep 600", "hang"],
+                new Dictionary<string, string>(),
+                TimeSpan.FromMinutes(10),
+                grace,
+                cancel.Token
+            )
+        );
+
+        clock.Stop();
+        Assert.Equal($"`git -C {repo} -c alias.hang=!sleep 600 hang` was cancelled and was killed", error.Message);
+        Assert.Equal(cancel.Token, error.CancellationToken);
+        Assert.True(clock.Elapsed < grace, $"the call took {clock.Elapsed}, so the grandchild held the pipes until the grace ran out");
     }
 
     /// <summary>
@@ -103,7 +136,8 @@ public sealed class GitRunnerTests
                 ["-c", "alias.bg=!cd / && sleep 30 &", "bg"],
                 new Dictionary<string, string>(),
                 TimeSpan.FromSeconds(10),
-                TimeSpan.FromSeconds(1)
+                TimeSpan.FromSeconds(1),
+                TestContext.Current.CancellationToken
             )
         );
 
@@ -119,7 +153,7 @@ public sealed class GitRunnerTests
         using var fx = new Fixture();
         string repo = fx.Repo("repo");
 
-        GitStatus status = GitRunner.RunStatus(repo, BadRef);
+        GitStatus status = GitRunner.RunStatus(repo, BadRef, TestContext.Current.CancellationToken);
 
         Assert.False(status.Success);
         Assert.Equal(128, status.Code);

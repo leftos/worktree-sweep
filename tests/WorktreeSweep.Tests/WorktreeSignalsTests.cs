@@ -19,7 +19,13 @@ public sealed class WorktreeSignalsTests
         using var fx = new Fixture();
         var record = new WorktreeRecord { Path = fx.PathTo("bad") + "\0name", Branch = "feat" };
 
-        WorktreeSignals signals = SignalReader.ReadWorktreeSignals(new DefaultBranches { Local = "main" }, record, new VolumeStalls());
+        WorktreeSignals signals = SignalReader.ReadWorktreeSignals(
+            new DefaultBranches { Local = "main" },
+            record,
+            new VolumeStalls(),
+            (_, _) => { },
+            TestContext.Current.CancellationToken
+        );
 
         Assert.Null(signals.MergeState);
         Assert.Null(signals.Dirty);

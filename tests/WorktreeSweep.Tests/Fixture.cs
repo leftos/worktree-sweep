@@ -192,10 +192,10 @@ public sealed class Fixture : IDisposable
     public (WorktreeRecord Record, WorktreeSignals Signals) Registered(string path)
     {
         var stalls = new VolumeStalls();
-        DiscoveryResult found = Discoverer.Discover(Root, stalls);
+        DiscoveryResult found = Discoverer.Discover(Root, stalls, (_, _) => { }, CancellationToken.None);
         (Repo Repo, WorktreeRecord Record) pair = RegisteredOnly(found, path);
-        DefaultBranches defaults = SignalReader.ReadDefaultBranches(pair.Repo.Path, stalls);
-        return (pair.Record, SignalReader.ReadWorktreeSignals(defaults, pair.Record, stalls));
+        DefaultBranches defaults = SignalReader.ReadDefaultBranches(pair.Repo.Path, stalls, CancellationToken.None);
+        return (pair.Record, SignalReader.ReadWorktreeSignals(defaults, pair.Record, stalls, (_, _) => { }, CancellationToken.None));
     }
 
     /// <summary>
@@ -245,7 +245,7 @@ public sealed class Fixture : IDisposable
 
     /// <summary>Scans the root.</summary>
     /// <returns>The scan report.</returns>
-    public ScanReport Scan() => Scanner.Scan(Root);
+    public ScanReport Scan() => Scanner.Scan(Root, _ => { }, CancellationToken.None);
 
     /// <summary>Makes a directory junction with <c>mklink /J</c>.</summary>
     /// <param name="link">The junction to create.</param>

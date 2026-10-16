@@ -77,7 +77,7 @@ internal static class Program
         }
         try
         {
-            ScanReport report = Scanner.Scan(root);
+            ScanReport report = Scanner.Scan(root, _ => { }, CancellationToken.None);
             if (json)
             {
                 ReportJson.Write(report, Console.Out);

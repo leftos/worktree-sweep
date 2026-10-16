@@ -36,7 +36,13 @@ public static class PathResolution
     /// folder.</exception>
     /// <exception cref="IOException">The path's attributes cannot be read for a reason other than its absence.</exception>
     /// <exception cref="UnauthorizedAccessException">The path's attributes cannot be read for lack of access.</exception>
-    public static Resolution ResolveOne(string path) => ResolveOne(path, new VolumeStalls(), Discoverer.ListWorktrees, Scanner.CommonDirOrNull);
+    public static Resolution ResolveOne(string path) =>
+        ResolveOne(
+            path,
+            new VolumeStalls(),
+            repo => Discoverer.ListWorktrees(repo, CancellationToken.None),
+            (dir, stalls) => Scanner.CommonDirOrNull(dir, stalls, CancellationToken.None)
+        );
 
     /// <summary>
     /// Resolves what <see cref="ResolveOne(string)"/> resolves, finding each repo's common git dir with <paramref name="commonDir"/> and
@@ -271,8 +277,14 @@ public static class PathResolution
     /// </summary>
     private static RegisteredCandidate BuildCandidate(string mainWorktree, string common, WorktreeRecord record, VolumeStalls stalls)
     {
-        DefaultBranches defaults = Scanner.DefaultBranchesOrNone(mainWorktree, stalls);
-        RegisteredCandidate candidate = Scanner.ReadRegistered(mainWorktree, defaults, common, record, stalls);
+        DefaultBranches defaults = Scanner.DefaultBranchesOrNone(mainWorktree, stalls, CancellationToken.None);
+        RegisteredCandidate candidate = Scanner.ReadRegistered(
+            new Scanner.RepoLookup(mainWorktree, defaults, common),
+            record,
+            stalls,
+            (_, _) => { },
+            CancellationToken.None
+        );
         return record.Prunable is null ? candidate : WithMergeStateFromMain(candidate, mainWorktree, defaults, stalls);
     }
 
@@ -288,7 +300,9 @@ public static class PathResolution
     )
     {
         var reads = new SignalReads(stalls, mainWorktree);
-        (MergeState State, string Against)? merge = reads.Read(() => SignalReader.ReadMergeState(mainWorktree, defaults, candidate.Record));
+        (MergeState State, string Against)? merge = reads.Read(() =>
+            SignalReader.ReadMergeState(mainWorktree, defaults, candidate.Record, CancellationToken.None)
+        );
         foreach (string error in reads.Errors)
         {
             Trace.TraceWarning($"worktree {candidate.Path}: {error}");

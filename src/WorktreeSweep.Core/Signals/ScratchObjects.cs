@@ -21,12 +21,13 @@ internal sealed class ScratchObjects(string dir, string alternate) : IDisposable
 
     /// <summary>Creates a scratch object directory under the temp folder for the repo <paramref name="worktree"/> belongs to.</summary>
     /// <param name="worktree">A worktree of the repo.</param>
+    /// <param name="token">Cancels the git call that finds the repo's common dir.</param>
     /// <returns>The scratch directory.</returns>
     /// <exception cref="GitException">Git cannot find the repo's common dir.</exception>
     /// <exception cref="IOException">The scratch directory cannot be created; the message says so.</exception>
-    public static ScratchObjects Create(string worktree)
+    public static ScratchObjects Create(string worktree, CancellationToken token)
     {
-        string alternate = Path.Join(GitRunner.CommonDir(worktree), "objects");
+        string alternate = Path.Join(GitRunner.CommonDir(worktree, token), "objects");
         try
         {
             return new ScratchObjects(Directory.CreateTempSubdirectory("worktree-sweep-objects-").FullName, alternate);

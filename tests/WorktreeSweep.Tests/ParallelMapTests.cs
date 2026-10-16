@@ -17,7 +17,8 @@ public sealed class ParallelMapTests
             {
                 Thread.Sleep((item * 7) % 5);
                 return item * 2;
-            }
+            },
+            TestContext.Current.CancellationToken
         );
 
         Assert.Equal(items.Select(item => item * 2), results);
@@ -30,7 +31,11 @@ public sealed class ParallelMapTests
         List<int> items = [.. Enumerable.Range(0, 20)];
 
         InvalidOperationException error = Assert.Throws<InvalidOperationException>(() =>
-            SignalReader.ParallelMap(items, item => item == 10 ? throw new InvalidOperationException("item 10") : item)
+            SignalReader.ParallelMap(
+                items,
+                item => item == 10 ? throw new InvalidOperationException("item 10") : item,
+                TestContext.Current.CancellationToken
+            )
         );
 
         Assert.Equal("item 10", error.Message);

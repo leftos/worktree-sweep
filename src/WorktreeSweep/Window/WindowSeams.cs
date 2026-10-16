@@ -43,7 +43,7 @@ public sealed record WindowSeams
     public static WindowSeams Production(IUiDispatcher dispatcher) =>
         new()
         {
-            Scan = Scanner.Scan,
+            Scan = root => Scanner.Scan(root, _ => { }, CancellationToken.None),
             ReadCapacity = RemovalPlanner.ReadCapacity,
             RemovePicks = Remover.RemovePicks,
             OfferUnlock = paths => new UnlockOffer(Console.In, Console.Out, new SudoRunner(), SweepProcess.Current()).Offer(paths),
