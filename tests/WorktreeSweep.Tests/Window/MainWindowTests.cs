@@ -99,8 +99,9 @@ public sealed class MainWindowTests
     }
 
     /// <summary>
-    /// The window takes the Removing screen with a populated view model, off screen, as the app takes it: the screen is on and its rows
-    /// are built.
+    /// The window takes the Removing screen with a populated view model, off screen, as the app takes it, and pumps the dispatcher at
+    /// context idle so that screen's bindings resolve against it: a read-only property bound two-way throws here rather than in the
+    /// shown window.
     /// </summary>
     [Fact]
     public void MainWindowTakesTheRemovingScreenPopulated()
@@ -117,6 +118,7 @@ public sealed class MainWindowTests
 
                 ViewModelSamples.Reviewing(main, ViewModelSamples.Roomy).Answer(true);
                 main.Review?.ConfirmCommand.Execute(null);
+                Dispatcher.CurrentDispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
 
                 rows = main.Removing?.Rows.Count ?? 0;
                 heading = main.Removing?.Heading;
