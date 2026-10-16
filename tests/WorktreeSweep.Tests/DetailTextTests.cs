@@ -5,7 +5,7 @@ using static WorktreeSweep.Tests.ReportSamples;
 
 namespace WorktreeSweep.Tests;
 
-/// <summary>The picker's detail pane: the seven lines and the local date line.</summary>
+/// <summary>The picker's detail pane: the labelled fields and the local date line.</summary>
 public sealed class DetailTextTests
 {
     /// <summary>2026-09-21 00:00 UTC, the day <see cref="ReportSamples.Now"/> falls on.</summary>
@@ -80,9 +80,9 @@ public sealed class DetailTextTests
         }
     }
 
-    /// <summary>A registered worktree with work, unpushed commits, a size and a git lock reads as seven exact lines.</summary>
+    /// <summary>A registered worktree with work, unpushed commits, a size and a git lock reads as five exact fields.</summary>
     [Fact]
-    public void RegisteredDetailHasSevenLines()
+    public void RegisteredDetailHasItsLabelledFields()
     {
         var signals = new WorktreeSignals
         {
@@ -96,18 +96,19 @@ public sealed class DetailTextTests
         RegisteredCandidate baseCandidate = Registered(@"yaat.wt\one", "one", signals);
         RegisteredCandidate candidate = baseCandidate with { Record = baseCandidate.Record with { Locked = "on a USB drive" } };
 
-        string[] expected =
+        DetailField[] expected =
         [
-            @"D:\yaat.wt\one",
-            @"repo D:\yaat; branch one",
-            "2 commits not on main; 1 modified, 0 untracked; +3 not pushed",
-            "last activity 2026-09-18 14:13 (3d ago); 1.5 KB, 1 files",
-            "git-locked: on a USB drive",
-            "1 modified file, 2 commits not on main and 3 commits not pushed will be lost. It is git-locked: on a USB drive.",
-            "",
+            new("What it is", @"repo D:\yaat; branch one"),
+            new("State", "2 commits not on main; 1 modified, 0 untracked; +3 not pushed"),
+            new("Activity and size", "last activity 2026-09-18 14:13 (3d ago); 1.5 KB, 1 files"),
+            new("Marks", "git-locked: on a USB drive"),
+            new(
+                "Removing it loses",
+                "1 modified file, 2 commits not on main and 3 commits not pushed will be lost. It is git-locked: on a USB drive."
+            ),
         ];
 
-        Assert.Equal(expected, DetailText.Lines(candidate, Now, UtcZone));
+        Assert.Equal(expected, DetailText.Fields(candidate, Now, UtcZone));
     }
 
     /// <summary>A detached worktree reads as detached with its short head, and its release carries the date and reason label.</summary>
@@ -126,14 +127,13 @@ public sealed class DetailTextTests
             },
         };
 
-        string[] lines = [.. DetailText.Lines(candidate, Now, UtcZone)];
+        IReadOnlyList<DetailField> fields = DetailText.Fields(candidate, Now, UtcZone);
 
-        Assert.Equal(7, lines.Length);
-        Assert.Equal(@"repo D:\yaat; detached abc1234", lines[1]);
-        Assert.Contains("released 2026-09-21 14:13 (0m ago): locked", lines[4], StringComparison.Ordinal);
+        Assert.Equal(@"repo D:\yaat; detached abc1234", Field(fields, "What it is"));
+        Assert.Contains("released 2026-09-21 14:13 (0m ago): locked", Field(fields, "Marks"), StringComparison.Ordinal);
     }
 
-    /// <summary>An orphan link reads as a link with its target's note, no size words, and empty mark and error lines.</summary>
+    /// <summary>An orphan link reads as a link with its target's note and no size words, and has no marks or error field.</summary>
     [Fact]
     public void OrphanLinkDetail()
     {
@@ -143,15 +143,12 @@ public sealed class DetailTextTests
             Orphan = orphan.Orphan with { Container = Under("yaat-server.wt"), LinkTarget = Under("yaat-server") },
         };
 
-        string[] lines = [.. DetailText.Lines(candidate, Now, UtcZone)];
+        IReadOnlyList<DetailField> fields = DetailText.Fields(candidate, Now, UtcZone);
 
-        Assert.Equal(7, lines.Length);
-        Assert.Equal(@"container D:\yaat-server.wt; link", lines[1]);
-        Assert.Equal(@"→ D:\yaat-server, not touched", lines[2]);
-        Assert.Equal("last write 2026-09-21 12:13 (2h ago)", lines[3]);
-        Assert.DoesNotContain("files", lines[3], StringComparison.Ordinal);
-        Assert.Equal("", lines[4]);
-        Assert.Equal("", lines[6]);
+        Assert.Equal(["What it is", "State", "Activity and size", "Removing it loses"], fields.Select(field => field.Label));
+        Assert.Equal(@"container D:\yaat-server.wt; link", Field(fields, "What it is"));
+        Assert.Equal(@"→ D:\yaat-server, not touched", Field(fields, "State"));
+        Assert.Equal("last write 2026-09-21 12:13 (2h ago)", Field(fields, "Activity and size"));
     }
 
     /// <summary>A merged, clean, pushed worktree loses nothing.</summary>
@@ -166,18 +163,22 @@ public sealed class DetailTextTests
             Upstream = Upstream.Tracking(0),
         };
 
-        string[] lines = [.. DetailText.Lines(Registered(@"yaat.wt\clean", "clean", signals), Now, UtcZone)];
+        IReadOnlyList<DetailField> fields = DetailText.Fields(Registered(@"yaat.wt\clean", "clean", signals), Now, UtcZone);
 
-        Assert.Equal("Nothing is lost.", lines[5]);
+        Assert.Equal("Nothing is lost.", Field(fields, "Removing it loses"));
     }
 
-    /// <summary>The signals that could not be read join on the last line.</summary>
+    /// <summary>The signals that could not be read join in the last field.</summary>
     [Fact]
-    public void SignalErrorsAreJoinedOnLineSeven()
+    public void SignalErrorsAreJoinedInTheLastField()
     {
-        string[] lines = [.. DetailText.Lines(Registered(@"yaat.wt\one", "one", new WorktreeSignals { Errors = ["a", "b"] }), Now, UtcZone)];
+        IReadOnlyList<DetailField> fields = DetailText.Fields(
+            Registered(@"yaat.wt\one", "one", new WorktreeSignals { Errors = ["a", "b"] }),
+            Now,
+            UtcZone
+        );
 
-        Assert.Equal("a; b", lines[6]);
+        Assert.Equal(new DetailField("Unreadable signals", "a; b"), fields[^1]);
     }
 
     /// <summary>Each signal error is flattened to one line before the errors are joined.</summary>
@@ -186,10 +187,10 @@ public sealed class DetailTextTests
     {
         RegisteredCandidate candidate = Registered(@"yaat.wt\one", "one", new WorktreeSignals { Errors = ["git failed\nfatal: x"] });
 
-        string[] lines = [.. DetailText.Lines(candidate, Now, UtcZone)];
+        string errors = Field(DetailText.Fields(candidate, Now, UtcZone), "Unreadable signals");
 
-        Assert.Equal("git failed; fatal: x", lines[6]);
-        Assert.DoesNotContain("\n", lines[6], StringComparison.Ordinal);
+        Assert.Equal("git failed; fatal: x", errors);
+        Assert.DoesNotContain("\n", errors, StringComparison.Ordinal);
     }
 
     /// <summary>Every reason kind a released marker can hold renders in the detail pane rather than throwing.</summary>
@@ -278,8 +279,23 @@ public sealed class DetailTextTests
             },
         };
 
-        string[] lines = [.. DetailText.Lines(Registered(@"yaat.wt\one", "one", signals), Now, UtcZone)];
+        IReadOnlyList<DetailField> fields = DetailText.Fields(Registered(@"yaat.wt\one", "one", signals), Now, UtcZone);
 
-        Assert.Equal("at least 1.5 KB, 12 files, 3 unreadable", lines[3]);
+        Assert.Equal("at least 1.5 KB, 12 files, 3 unreadable", Field(fields, "Activity and size"));
     }
+
+    /// <summary>A worktree with no signals read has no state, activity, marks or error field.</summary>
+    [Fact]
+    public void FieldsWithoutContentAreLeftOut()
+    {
+        IReadOnlyList<DetailField> fields = DetailText.Fields(Registered(@"yaat.wt\one", "one", new WorktreeSignals()), Now, UtcZone);
+
+        Assert.Equal(["What it is", "Removing it loses"], fields.Select(field => field.Label));
+    }
+
+    /// <summary>The text of the field labelled <paramref name="label"/>, failing when there is not exactly one.</summary>
+    /// <param name="fields">The fields.</param>
+    /// <param name="label">The label.</param>
+    /// <returns>The field's text.</returns>
+    private static string Field(IReadOnlyList<DetailField> fields, string label) => Assert.Single(fields, field => field.Label == label).Text;
 }
