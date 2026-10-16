@@ -142,35 +142,33 @@ public static class GitRunner
         process.StandardInput.Close();
         Task<byte[]> stdout = ReadAllAsync(process.StandardOutput.BaseStream);
         Task<byte[]> stderr = ReadAllAsync(process.StandardError.BaseStream);
-        Task reads = Observe(Task.WhenAll(stdout, stderr));
-        string command = Describe(dir, args);
-        Exception? cancelKillFailure = null;
+        var call = new Call(process, Observe(Task.WhenAll(stdout, stderr)), Describe(dir, args), new Lazy<Exception?>(() => KillTree(process)));
         bool exited;
         // Disposing the registration waits for a running kill, so no kill can reach the process after it is disposed.
-        using (token.Register(() => cancelKillFailure = KillTree(process)))
+        using (token.Register(() => _ = call.Kill.Value))
         {
             exited = process.WaitForExit(timeout);
         }
         if (token.IsCancellationRequested)
         {
-            throw Cancelled(process, reads, command, cancelKillFailure, token);
+            throw Cancelled(call, token);
         }
         if (!exited)
         {
-            throw TimedOut(process, reads, command, timeout, grace);
+            throw TimedOut(call, timeout, grace, token);
         }
         bool closed;
         try
         {
-            closed = reads.Wait(grace, token);
+            closed = call.Reads.Wait(grace, token);
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
-            throw Cancelled(process, reads, command, killFailure: null, token);
+            throw Cancelled(call, token);
         }
         if (!closed)
         {
-            throw new GitException($"{command} exited but its output stayed open for {Seconds(grace)} s");
+            throw new GitException($"{call.Command} exited but its output stayed open for {Seconds(grace)} s");
         }
         byte[] stdoutBytes = stdout.GetAwaiter().GetResult();
         byte[] stderrBytes = stderr.GetAwaiter().GetResult();
@@ -276,31 +274,40 @@ public static class GitRunner
     }
 
     /// <summary>
-    /// The error for a git child that outlived its limit, after <see cref="KillTree"/> kills it and its exit and reads are each
-    /// waited for up to <paramref name="grace"/>.
+    /// The error for a git child that outlived its limit, after its tree is killed and its exit and reads are each waited for up to
+    /// <paramref name="grace"/>. A cancel that arrives during those waits cuts them to <see cref="CancelGrace"/> and turns the error
+    /// into the cancel's.
     /// </summary>
-    private static GitTimeoutException TimedOut(Process process, Task reads, string command, TimeSpan timeout, TimeSpan grace)
+    private static Exception TimedOut(Call call, TimeSpan timeout, TimeSpan grace, CancellationToken token)
     {
-        string limit = $"{command} did not exit within {Seconds(timeout)} s";
-        Exception? failure = KillTree(process);
-        AwaitEnd(process, reads, grace);
+        Exception? failure = call.Kill.Value;
+        if (AwaitEnd(call, grace, token))
+        {
+            return CancelledError(call.Command, failure, token);
+        }
+        string limit = $"{call.Command} did not exit within {Seconds(timeout)} s";
         return failure is not null
             ? new GitTimeoutException($"{limit}; killing it failed: {failure.Message}", failure)
             : new GitTimeoutException($"{limit} and was killed");
     }
 
     /// <summary>
-    /// The error for a cancelled call. The token's callback has already killed git with <see cref="KillTree"/>, unless the token
-    /// was cancelled after git's wait ended, when it is killed here if still running. Its exit and reads are each waited for up to
-    /// <see cref="CancelGrace"/>, so a cancel never waits the longer <see cref="ReadGrace"/>.
+    /// The error for a cancelled call, after git's tree is killed, whether or not git itself has exited: a process git started
+    /// may still hold its output. Its exit and reads are each waited for up to <see cref="CancelGrace"/>, so a cancel never waits
+    /// the longer <see cref="ReadGrace"/>.
     /// </summary>
-    private static OperationCanceledException Cancelled(Process process, Task reads, string command, Exception? killFailure, CancellationToken token)
+    private static OperationCanceledException Cancelled(Call call, CancellationToken token)
     {
-        Exception? failure = killFailure ?? (process.HasExited ? null : KillTree(process));
-        AwaitEnd(process, reads, CancelGrace);
+        Exception? failure = call.Kill.Value;
+        _ = AwaitEnd(call, CancelGrace, token);
+        return CancelledError(call.Command, failure, token);
+    }
+
+    private static OperationCanceledException CancelledError(string command, Exception? killFailure, CancellationToken token)
+    {
         string cancelled = $"{command} was cancelled";
-        return failure is not null
-            ? new OperationCanceledException($"{cancelled}; killing it failed: {failure.Message}", failure, token)
+        return killFailure is not null
+            ? new OperationCanceledException($"{cancelled}; killing it failed: {killFailure.Message}", killFailure, token)
             : new OperationCanceledException($"{cancelled} and was killed", token);
     }
 
@@ -322,12 +329,40 @@ public static class GitRunner
         }
     }
 
-    /// <summary>Waits up to <paramref name="grace"/> each for a killed git to exit and for its output pipes to close.</summary>
-    private static void AwaitEnd(Process process, Task reads, TimeSpan grace)
+    /// <summary>
+    /// Waits for a killed git to exit and for its output pipes to close, up to <paramref name="grace"/> each, or up to
+    /// <see cref="CancelGrace"/> each once <paramref name="token"/> is cancelled.
+    /// </summary>
+    /// <returns>Whether <paramref name="token"/> was cancelled by the end of the waits.</returns>
+    private static bool AwaitEnd(Call call, TimeSpan grace, CancellationToken token)
     {
-        _ = process.WaitForExit(grace);
-        _ = reads.Wait(grace);
+        WaitFor(call.Process.WaitForExitAsync(CancellationToken.None), grace, token);
+        WaitFor(call.Reads, grace, token);
+        return token.IsCancellationRequested;
     }
+
+    /// <summary>Waits up to <paramref name="grace"/> for <paramref name="task"/>, cut to <see cref="CancelGrace"/> once
+    /// <paramref name="token"/> is cancelled.</summary>
+    private static void WaitFor(Task task, TimeSpan grace, CancellationToken token)
+    {
+        if (!token.IsCancellationRequested)
+        {
+            try
+            {
+                _ = task.Wait(grace, token);
+                return;
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                // The cancel arrived during the wait: the rest of it is cut to the cancel's grace below.
+            }
+        }
+        _ = task.Wait(CancelGrace, CancellationToken.None);
+    }
+
+    /// <summary>One git call: the process, the task reading its output, the command as messages name it, and the kill of its
+    /// tree, run at most once whether a cancel, a timeout or both ask for it.</summary>
+    private sealed record Call(Process Process, Task Reads, string Command, Lazy<Exception?> Kill);
 
     /// <summary>
     /// A task that ends when the reads do and observes any fault they end with, so waiting on it never throws and a fault after

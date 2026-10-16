@@ -253,7 +253,7 @@ public static partial class SignalReader
         }
         catch (AggregateException error) when (error.InnerExceptions.Count > 0)
         {
-            // A worker's real failure explains the run better than another worker's cancellation it caused.
+            // A cancel and an unrelated failure in another worker can coincide; the failure explains the run better, so it wins.
             Exception first = error.InnerExceptions.FirstOrDefault(inner => inner is not OperationCanceledException) ?? error.InnerExceptions[0];
             ExceptionDispatchInfo.Capture(first).Throw();
             throw;
