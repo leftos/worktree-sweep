@@ -11,17 +11,14 @@ namespace WorktreeSweep.Unlock;
 /// </summary>
 /// <param name="input">Where the answers come from.</param>
 /// <param name="output">Where the session prints, flushed before every read.</param>
-/// <param name="handleExe">The <c>handle.exe</c> the session dumps and closes handles through.</param>
+/// <param name="scan">Finds the lockers, and re-checks each handle before it is closed.</param>
+/// <param name="handleExe">The <c>handle.exe</c> the session closes handles through.</param>
 /// <param name="processes">The process table and the stop operation.</param>
-/// <param name="handleExeCanName">Whether <c>handle.exe</c> can print a path at all; one it cannot is never reported clear.</param>
-public sealed class ElevatedSession(
-    TextReader input,
-    TextWriter output,
-    IHandleExe handleExe,
-    IProcessControl processes,
-    Func<string, bool> handleExeCanName
-)
+public sealed class ElevatedSession(TextReader input, TextWriter output, ILockerScan scan, IHandleExe handleExe, IProcessControl processes)
 {
+    /// <summary>The idle and System processes, which are never scanned.</summary>
+    private static readonly int[] SystemPids = [0, 4];
+
     /// <summary>How many of a locker's handles the description shows before it says how many it left out.</summary>
     private const int ShownHandles = 5;
 
@@ -32,10 +29,10 @@ public sealed class ElevatedSession(
     private readonly Dictionary<int, bool> callerVerdicts = [];
 
     /// <summary>
-    /// Runs the session, scanning, offering and acting until nothing holds the files or the user ends it. A path
-    /// <c>handle.exe</c> cannot name is warned about before the first scan, and the session never reports clear while one is in
-    /// play: nothing it can see holding the others is no proof about that path. Such a path ends the session at
-    /// <see cref="UnlockExit.SomeLeft"/> even when nothing is found holding the others, so the sweep retries every locked pick.
+    /// Runs the session, scanning, offering and acting until nothing holds the files or the user ends it. Each scan opens every
+    /// running process but the idle and System processes, this one and the excluded ones. A process the file system reports using a
+    /// folder, whose handles there the scan could not read, is reported after each scan and never lets the session report clear: it
+    /// ends the session at <see cref="UnlockExit.SomeLeft"/>, so the sweep retries every locked pick.
     /// </summary>
     /// <param name="paths">The folders whose open handles are cleared.</param>
     /// <param name="callerPid">The process that started the unelevated run, usually the user's shell, whose stopping is not the
@@ -44,31 +41,32 @@ public sealed class ElevatedSession(
     /// when it is not known.</param>
     /// <param name="sweepPid">The unelevated worktree-sweep, which with its children is never offered; <see langword="null"/>
     /// when it is not known.</param>
-    /// <returns><see cref="UnlockExit.AllClear"/> when nothing holds the files and <c>handle.exe</c> can name every path;
-    /// <see cref="UnlockExit.SomeLeft"/> when something still holds them after an action, or when a path could not be named at
-    /// all; otherwise <see cref="UnlockExit.NothingDone"/>.</returns>
-    /// <exception cref="UnlockException"><c>handle.exe</c> is missing or fails.</exception>
+    /// <returns><see cref="UnlockExit.AllClear"/> when nothing holds the files and every process using them could be read;
+    /// <see cref="UnlockExit.SomeLeft"/> when something still holds them after an action, or when a process using them could not
+    /// be read; otherwise <see cref="UnlockExit.NothingDone"/>.</returns>
+    /// <exception cref="IOException">A locked folder that still exists cannot be resolved, or the scan cannot learn which handles
+    /// are files.</exception>
     /// <exception cref="Win32Exception">The process table cannot be read.</exception>
     public int Run(IReadOnlyList<string> paths, int? callerPid, ulong? callerStarted, int? sweepPid)
     {
         ArgumentNullException.ThrowIfNull(paths);
-        IReadOnlyList<string> unnameable = [.. paths.Where(path => !handleExeCanName(path))];
-        foreach (string path in unnameable)
-        {
-            Say(UnnameableLine(path));
-        }
         IReadOnlySet<int> excluded = ProcessTable.ExcludedPids(Environment.ProcessId, sweepPid, processes.Snapshot(), processes.StartedAt);
         bool acted = false;
         bool finished = false;
         while (true)
         {
             Say("Scanning open handles…");
-            IReadOnlyList<Locker> lockers = LockerFinder.Find(handleExe.Dump(), paths, excluded, processes.StartedAt);
+            LockerFindings found = Scan(paths, excluded);
+            foreach (UnreadableUser user in found.Unreadable)
+            {
+                Say($"{user.Process} ({user.Pid}) uses {user.Path}, but its handles cannot be read.");
+            }
+            IReadOnlyList<Locker> lockers = found.Lockers;
             if (lockers.Count == 0)
             {
-                if (unnameable.Count > 0)
+                if (found.Unreadable.Count > 0)
                 {
-                    Say("Nothing handle.exe can see holds files under those folders.");
+                    Say("Nothing else holds files under those folders.");
                     return UnlockExit.SomeLeft;
                 }
                 Say("Nothing holds files under those folders.");
@@ -83,6 +81,21 @@ public sealed class ElevatedSession(
             acted |= round.Acted;
             finished = round.Done || !round.Acted;
         }
+    }
+
+    /// <summary>
+    /// Scans every running process but the idle and System processes, this one and <paramref name="excluded"/>, and drops those
+    /// same processes from the ones reported using a folder unread, so the tool's own chain is never opened or offered.
+    /// </summary>
+    /// <param name="paths">The folders whose open handles are cleared.</param>
+    /// <param name="excluded">This process's chain, the unelevated worktree-sweep and its children.</param>
+    /// <returns>What the scan found.</returns>
+    private LockerFindings Scan(IReadOnlyList<string> paths, IReadOnlySet<int> excluded)
+    {
+        bool Skipped(int pid) => SystemPids.Contains(pid) || pid == Environment.ProcessId || excluded.Contains(pid);
+        IReadOnlyList<int> pids = [.. processes.Snapshot().Keys.Where(pid => !Skipped(pid)).Order()];
+        LockerFindings found = scan.Find(paths, pids);
+        return found with { Unreadable = [.. found.Unreadable.Where(user => !Skipped(user.Pid))] };
     }
 
     /// <summary>Offers every locker in turn and applies the answer.</summary>
@@ -167,7 +180,7 @@ public sealed class ElevatedSession(
         Say($"{label} holds {locker.Handles.Count} handle(s) there:");
         foreach (HeldHandle held in locker.Handles.Take(ShownHandles))
         {
-            Say($"  {held.Kind, -8} {held.Name}");
+            Say($"  {held.Name}");
         }
         if (locker.Handles.Count > ShownHandles)
         {
@@ -246,47 +259,38 @@ public sealed class ElevatedSession(
         {
             return Skipped(label, state);
         }
-        IReadOnlyList<HandleRow> now = HandleCsv.Parse(handleExe.DumpProcess(locker.Pid));
         int closed = 0;
         foreach (HeldHandle held in locker.Handles)
         {
-            closed += CloseOne(held, locker.Pid, label, StillNamesALockedFile(now, locker.Pid, held, paths));
+            closed += CloseOne(held, locker, label, paths);
         }
         return new Outcome($"Closed {closed} of {locker.Handles.Count} handle(s) of {label}.", closed > 0);
     }
 
     /// <summary>
-    /// Whether a fresh dump of the locker's handles still shows this handle naming a file under the locked folders: a handle
-    /// value can be reused between the scan and the answer, so one that now names something else is never closed.
+    /// Closes one handle once the scan confirms that the same process still holds it on a file under the locked folders: a handle
+    /// value can be reused between the scan and the answer, so one that now names something else is never closed. A failure is
+    /// traced as a warning.
     /// </summary>
-    /// <param name="now">The locker's handles as a fresh dump lists them.</param>
-    /// <param name="pid">The process holding the handle.</param>
-    /// <param name="held">The handle the scan saw.</param>
-    /// <param name="paths">The folders whose open handles are cleared.</param>
-    /// <returns><see langword="true"/> when the handle still names a locked file.</returns>
-    private static bool StillNamesALockedFile(IReadOnlyList<HandleRow> now, int pid, HeldHandle held, IReadOnlyList<string> paths) =>
-        now.Any(row => row.Pid == pid && row.Handle == held.Handle && LockedPaths.Matches(row.Name, paths));
-
-    /// <summary>Closes one handle, tracing a failure as a warning.</summary>
     /// <param name="held">The handle to close.</param>
-    /// <param name="pid">The process holding it.</param>
+    /// <param name="locker">The process holding it, with the start time the scan read.</param>
     /// <param name="label">The process, as <c>{name} (pid {pid})</c>.</param>
-    /// <param name="stillNamesALockedFile">Whether a fresh dump still shows the handle naming a locked file.</param>
+    /// <param name="paths">The folders whose open handles are cleared.</param>
     /// <returns>1 when the handle was closed, otherwise 0.</returns>
-    private int CloseOne(HeldHandle held, int pid, string label, bool stillNamesALockedFile)
+    private int CloseOne(HeldHandle held, Locker locker, string label, IReadOnlyList<string> paths)
     {
-        if (!stillNamesALockedFile)
+        if (!scan.StillHolds(locker.Pid, locker.Started, held.Handle, paths))
         {
             Trace.TraceWarning($"handle {held.Handle:X} of {label} no longer names a locked file; not closed");
             return 0;
         }
         try
         {
-            if (handleExe.Close(held.Handle, pid, out string failure))
+            if (handleExe.Close(held.Handle, locker.Pid, out string failure))
             {
                 return 1;
             }
-            Trace.TraceWarning($"handle.exe could not close {held.Kind} handle {held.Handle:X} ({held.Name}) of {label}: {failure.Trim()}");
+            Trace.TraceWarning($"handle.exe could not close handle {held.Handle:X} ({held.Name}) of {label}: {failure.Trim()}");
         }
         catch (UnlockException error)
         {
@@ -358,13 +362,6 @@ public sealed class ElevatedSession(
     /// <param name="label">The process, as <c>{name} (pid {pid})</c>.</param>
     /// <returns>The line.</returns>
     private static string UnconfirmedLine(string label) => $"{label} could not be confirmed as the process the scan saw; skipped.";
-
-    /// <summary>The warning for a path <c>handle.exe</c> cannot print, and what the user can do about it.</summary>
-    /// <param name="path">The path.</param>
-    /// <returns>The line.</returns>
-    private static string UnnameableLine(string path) =>
-        $"handle.exe cannot name files under {path}: its path holds characters outside this machine's code pages; "
-        + "close what holds it, then run the sweep again.";
 
     /// <summary>Writes one line and flushes it, so a user sees it before the next read.</summary>
     /// <param name="line">The line.</param>

@@ -4,7 +4,6 @@ using System.CommandLine.Parsing;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
-using System.Text;
 using WorktreeSweep.Agent;
 using WorktreeSweep.Git;
 using WorktreeSweep.Report;
@@ -128,15 +127,7 @@ internal static class Program
     {
         try
         {
-            CodePageReach.RegisterProvider();
-            IReadOnlyList<Encoding> codePages = CodePageReach.SystemCodePages();
-            var session = new ElevatedSession(
-                Console.In,
-                Console.Out,
-                new HandleExe(),
-                new ProcessControl(),
-                path => CodePageReach.CanName(path, codePages)
-            );
+            var session = new ElevatedSession(Console.In, Console.Out, LockerScan.Elevated(), new HandleExe(), new ProcessControl());
             return session.Run(paths, callerPid, callerStarted, sweepPid);
         }
 #pragma warning disable CA1031 // Every failure of the elevated session ends it with exit 1 and its message.

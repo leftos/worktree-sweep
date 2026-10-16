@@ -26,24 +26,34 @@ internal enum CheckOutcome
 /// <summary>What checking one handle found.</summary>
 /// <param name="Outcome">Whether the handle was skipped, failed or named.</param>
 /// <param name="Name">The file's name, or <see langword="null"/> unless the handle was named.</param>
-internal readonly record struct CheckedHandle(CheckOutcome Outcome, string? Name)
+/// <param name="Handle">The handle's value in its process, or 0 unless the handle was named.</param>
+internal readonly record struct CheckedHandle(CheckOutcome Outcome, string? Name, nint Handle)
 {
     /// <summary>Gets the result for a handle that is not a file on disk.</summary>
-    internal static CheckedHandle Skipped => new(CheckOutcome.Skipped, null);
+    internal static CheckedHandle Skipped => new(CheckOutcome.Skipped, null, 0);
 
     /// <summary>Gets the result for a handle that could not be duplicated or named.</summary>
-    internal static CheckedHandle Failed => new(CheckOutcome.Failed, null);
+    internal static CheckedHandle Failed => new(CheckOutcome.Failed, null, 0);
 
     /// <summary>The result for a named file on disk.</summary>
     /// <param name="name">Its name.</param>
+    /// <param name="handle">The handle's value in its process.</param>
     /// <returns>The result.</returns>
-    internal static CheckedHandle Disk(string name) => new(CheckOutcome.Disk, name);
+    internal static CheckedHandle Disk(string name, nint handle) => new(CheckOutcome.Disk, name, handle);
 }
 
+/// <summary>One disk handle a scan found in a process.</summary>
+/// <param name="Pid">The process holding it.</param>
+/// <param name="Name">The file's name, or <see langword="null"/> when it could not be read in time, or when the check failed on a
+/// process the file system reports as using the folder.</param>
+/// <param name="Handle">The handle's value in that process, meaningful only with the process's start time; 0 when the name is
+/// <see langword="null"/>.</param>
+internal sealed record NamedHandle(int Pid, string? Name, nint Handle);
+
 /// <summary>What naming a set of handles found.</summary>
-/// <param name="Names">Each named disk handle's process and name; the name is <see langword="null"/> when its lookup timed out.</param>
+/// <param name="Names">Each named disk handle; the name is <see langword="null"/> when its lookup timed out.</param>
 /// <param name="Failed">Processes with a handle whose check failed at once.</param>
-internal sealed record NamedHandles(IReadOnlyList<(int Pid, string? Name)> Names, IReadOnlySet<int> Failed);
+internal sealed record NamedHandles(IReadOnlyList<NamedHandle> Names, IReadOnlySet<int> Failed);
 
 /// <summary>Checks one handle on a <see cref="HandleNaming"/> worker.</summary>
 /// <typeparam name="T">What identifies the handle.</typeparam>
@@ -175,7 +185,7 @@ internal static class HandleNaming
         private readonly TimeSpan timeout;
         private readonly Action<SafeHandle> cancel;
         private readonly StopSignal stop;
-        private readonly List<(int Pid, string? Name)> names = [];
+        private readonly List<NamedHandle> names = [];
         private readonly HashSet<int> failed = [];
         private readonly Thread thread;
 
@@ -190,7 +200,7 @@ internal static class HandleNaming
         }
 
         /// <summary>Gets the names this driver found.</summary>
-        internal IReadOnlyList<(int Pid, string? Name)> Names => names;
+        internal IReadOnlyList<NamedHandle> Names => names;
 
         /// <summary>Gets the processes with a handle whose check failed at once.</summary>
         internal IReadOnlyCollection<int> Failed => failed;
@@ -236,7 +246,7 @@ internal static class HandleNaming
                         Record(next.Pid, pending.Done.GetAwaiter().GetResult());
                         continue;
                     }
-                    names.Add((next.Pid, null));
+                    names.Add(new NamedHandle(next.Pid, null, 0));
                     if (!CancelledInTime(worker, pending, next.Pid))
                     {
                         Trace.WriteLine($"naming a handle of pid {next.Pid} timed out and did not stop; abandoning its worker");
@@ -261,7 +271,7 @@ internal static class HandleNaming
         {
             if (found.Outcome == CheckOutcome.Disk)
             {
-                names.Add((pid, found.Name));
+                names.Add(new NamedHandle(pid, found.Name, found.Handle));
             }
             else if (found.Outcome == CheckOutcome.Failed)
             {

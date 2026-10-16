@@ -2,6 +2,7 @@ using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 using WorktreeSweep.Holders;
+using WorktreeSweep.Processes;
 
 namespace WorktreeSweep.Tests;
 
@@ -100,8 +101,53 @@ public sealed class OpenHandlesTests : IDisposable
         Assert.Empty(findings.Names);
     }
 
+    /// <summary>
+    /// A child holding a file under a Greek folder, shared with no one, is named by the scan with the Greek path intact and the
+    /// handle's value: names are read in UTF-16, where <c>handle.exe</c> printed <c>?</c> for every character outside the code page.
+    /// </summary>
+    [Fact]
+    public void ScanNamesAGreekPathIntact()
+    {
+        string folder = fx.PathTo("δοκιμή");
+        _ = Directory.CreateDirectory(folder);
+        string file = Path.Join(folder, "αρχείο.txt");
+        File.WriteAllText(file, "held");
+        string ready = fx.PathTo("ready-greek");
+        using var child = ReadyChild.Run(fx.Root, ready, HoldScript(file, ready));
+        IReadOnlyList<string> roots = HolderFinder.FolderForms(folder);
+
+        HandleFindings findings = OpenHandles.Scan([child.Id], roots);
+
+        NamedHandle held = Assert.Single(findings.Names, handle => handle.Name is string name && LockedPaths.Matches(name, roots));
+        Assert.Equal(child.Id, held.Pid);
+        Assert.EndsWith(@"\δοκιμή\αρχείο.txt", held.Name, StringComparison.Ordinal);
+        Assert.NotEqual(nint.Zero, held.Handle);
+    }
+
+    /// <summary>The scan asks the file system for the users of every root it is given, not only the first.</summary>
+    [Fact]
+    public void ScanListsTheUsersOfEveryRoot()
+    {
+        string first = fx.PathTo("first");
+        string second = fx.PathTo("second");
+        _ = Directory.CreateDirectory(first);
+        _ = Directory.CreateDirectory(second);
+        using var firstChild = ReadyChild.Start(first, fx.PathTo("ready-first"));
+        using var secondChild = ReadyChild.Start(second, fx.PathTo("ready-second"));
+
+        HandleFindings findings = OpenHandles.Scan([], [.. HolderFinder.FolderForms(first), .. HolderFinder.FolderForms(second)]);
+
+        Assert.Contains(firstChild.Id, findings.Using);
+        Assert.Contains(secondChild.Id, findings.Using);
+    }
+
     /// <inheritdoc/>
     public void Dispose() => fx.Dispose();
+
+    /// <summary>A child script that holds <paramref name="file"/> shared with no one, then writes <paramref name="ready"/>.</summary>
+    private static string HoldScript(string file, string ready) =>
+        $"$f = [IO.File]::Open({ReadyChild.Quoted(file)}, 'Open', 'Read', 'None'); "
+        + $"Set-Content -LiteralPath {ReadyChild.Quoted(ready)} ready; Start-Sleep 300";
 
     private static ulong ValueOf(SafeHandle handle) => (ulong)handle.DangerousGetHandle();
 

@@ -1,15 +1,15 @@
 using System.ComponentModel;
-using System.Globalization;
-using System.Text;
 using WorktreeSweep.Processes;
 using WorktreeSweep.Unlock;
 
 namespace WorktreeSweep.Tests;
 
-/// <summary>The elevated unlock session, driven through its seams with scripted dumps, tables and answers.</summary>
-public sealed class ElevatedSessionTests
+/// <summary>The elevated unlock session, driven through its seams with scripted scans, tables and answers.</summary>
+public sealed class ElevatedSessionTests : IDisposable
 {
     private const string Locked = @"D:\a.wt\x";
+
+    private readonly Fixture fx = new();
 
     /// <summary>Nothing holds the files, so the session never asks and ends all clear.</summary>
     [Fact]
@@ -19,7 +19,8 @@ public sealed class ElevatedSessionTests
         ElevatedSession session = Session(
             new StringReader(""),
             output,
-            new FakeHandleExe("No matching handles found.\n"),
+            new FakeScan(Found()),
+            new FakeHandleExe(),
             new ScriptedProcessControl(Running())
         );
 
@@ -37,7 +38,7 @@ public sealed class ElevatedSessionTests
         StringWriter output = Writer();
         var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
         processes.StartedTimes[642] = 1000;
-        ElevatedSession session = Session(new StringReader("\n"), output, new FakeHandleExe(OneLocker(), ""), processes);
+        ElevatedSession session = Session(new StringReader("\n"), output, new FakeScan(Found(Pwsh(1000)), Found()), new FakeHandleExe(), processes);
 
         int exit = session.Run([Locked], null, null, null);
 
@@ -52,7 +53,7 @@ public sealed class ElevatedSessionTests
     {
         StringWriter output = Writer();
         var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
-        ElevatedSession session = Session(new StringReader("\n"), output, new FakeHandleExe(OneLocker(), OneLocker()), processes);
+        ElevatedSession session = Session(new StringReader("\n"), output, new FakeScan(Found(Pwsh(null))), new FakeHandleExe(), processes);
 
         int exit = session.Run([Locked], callerPid: 642, callerStarted: null, sweepPid: null);
 
@@ -71,7 +72,7 @@ public sealed class ElevatedSessionTests
         StringWriter output = Writer();
         var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
         processes.StartedTimes[642] = 1000;
-        ElevatedSession session = Session(new StringReader("\n"), output, new FakeHandleExe(OneLocker(), OneLocker()), processes);
+        ElevatedSession session = Session(new StringReader("\n"), output, new FakeScan(Found(Pwsh(1000))), new FakeHandleExe(), processes);
 
         int exit = session.Run([Locked], callerPid: 642, callerStarted: 1000, sweepPid: null);
 
@@ -89,7 +90,7 @@ public sealed class ElevatedSessionTests
         StringWriter output = Writer();
         var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
         processes.StartedTimes[642] = 2000;
-        ElevatedSession session = Session(new StringReader("\n"), output, new FakeHandleExe(OneLocker(), ""), processes);
+        ElevatedSession session = Session(new StringReader("\n"), output, new FakeScan(Found(Pwsh(2000)), Found()), new FakeHandleExe(), processes);
 
         int exit = session.Run([Locked], callerPid: 642, callerStarted: 1000, sweepPid: null);
 
@@ -106,7 +107,7 @@ public sealed class ElevatedSessionTests
     {
         StringWriter output = Writer();
         var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
-        ElevatedSession session = Session(new StringReader("\n"), output, new FakeHandleExe(OneLocker(), OneLocker()), processes);
+        ElevatedSession session = Session(new StringReader("\n"), output, new FakeScan(Found(Pwsh(null))), new FakeHandleExe(), processes);
 
         int exit = session.Run([Locked], callerPid: 642, callerStarted: 1000, sweepPid: null);
 
@@ -125,7 +126,8 @@ public sealed class ElevatedSessionTests
         ElevatedSession session = Session(
             new StringReader("3\n"),
             output,
-            new FakeHandleExe(OneLocker()),
+            new FakeScan(Found(Pwsh(null))),
+            new FakeHandleExe(),
             new ScriptedProcessControl(Running(("pwsh.exe", 642)))
         );
 
@@ -144,12 +146,8 @@ public sealed class ElevatedSessionTests
         StringWriter output = Writer();
         var processes = new ScriptedProcessControl(Running(("code.exe", 200), ("pwsh.exe", 642)));
         processes.StartedTimes[200] = 1000;
-        ElevatedSession session = Session(
-            new StringReader("\n4\n"),
-            output,
-            new FakeHandleExe(TwoLockers(), OneLockerFor("pwsh.exe", 642)),
-            processes
-        );
+        var scan = new FakeScan(Found(LockerOf("code.exe", 200, 1000), Pwsh(null)), Found(Pwsh(null)));
+        ElevatedSession session = Session(new StringReader("\n4\n"), output, scan, new FakeHandleExe(), processes);
 
         int exit = session.Run([Locked], null, null, null);
 
@@ -169,7 +167,8 @@ public sealed class ElevatedSessionTests
         ElevatedSession session = Session(
             new StringReader(""),
             output,
-            new FakeHandleExe(OneLocker()),
+            new FakeScan(Found(Pwsh(null))),
+            new FakeHandleExe(),
             new ScriptedProcessControl(Running(("pwsh.exe", 642)))
         );
 
@@ -185,7 +184,7 @@ public sealed class ElevatedSessionTests
     {
         StringWriter output = Writer();
         var processes = new ScriptedProcessControl(Running());
-        ElevatedSession session = Session(new StringReader("\n"), output, new FakeHandleExe(OneLocker()), processes);
+        ElevatedSession session = Session(new StringReader("\n"), output, new FakeScan(Found(Pwsh(1000))), new FakeHandleExe(), processes);
 
         int exit = session.Run([Locked], null, null, null);
 
@@ -194,23 +193,25 @@ public sealed class ElevatedSessionTests
         Assert.Contains("pwsh.exe (pid 642) has exited; skipped.\n", output.ToString(), StringComparison.Ordinal);
     }
 
-    /// <summary>Close its handles warns first, then closes every handle and reports how many, ending all clear when nothing is
-    /// left.</summary>
+    /// <summary>Close its handles warns first, re-checks each handle with the locker's PID and scan start time, then closes every
+    /// handle and reports how many, ending all clear when nothing is left.</summary>
     [Fact]
     public void CloseHandlesAsksAndClosesEachHandle()
     {
         StringWriter output = Writer();
-        var handleExe = new FakeHandleExe(TwoHandles(), "");
+        var scan = new FakeScan(Found(TwoHandles(1000)), Found());
+        var handleExe = new FakeHandleExe();
         var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
         processes.StartedTimes[642] = 1000;
-        ElevatedSession session = Session(new StringReader("2\ny\n"), output, handleExe, processes);
+        ElevatedSession session = Session(new StringReader("2\ny\n"), output, scan, handleExe, processes);
 
         int exit = session.Run([Locked], null, null, null);
 
         string text = output.ToString();
         Assert.Equal(UnlockExit.AllClear, exit);
-        Assert.Equal<ulong[]>([0x1A0, 0x58], [.. handleExe.Closed.Select(entry => entry.Handle)]);
+        Assert.Equal<nint[]>([0x1A0, 0x58], [.. handleExe.Closed.Select(entry => entry.Handle)]);
         Assert.Equal<int[]>([642, 642], [.. handleExe.Closed.Select(entry => entry.Pid)]);
+        Assert.Equal<(int, ulong?, nint)[]>([(642, 1000, 0x1A0), (642, 1000, 0x58)], [.. scan.Rechecked]);
         Assert.Contains("Closing handles behind a program's back can make it crash or lose data.\n", text, StringComparison.Ordinal);
         Assert.Contains("Closed 2 of 2 handle(s) of pwsh.exe (pid 642).\n", text, StringComparison.Ordinal);
     }
@@ -220,8 +221,14 @@ public sealed class ElevatedSessionTests
     public void CloseHandlesAsksAndLeavesAloneByDefault()
     {
         StringWriter output = Writer();
-        var handleExe = new FakeHandleExe(TwoHandles());
-        ElevatedSession session = Session(new StringReader("2\n\n"), output, handleExe, new ScriptedProcessControl(Running(("pwsh.exe", 642))));
+        var handleExe = new FakeHandleExe();
+        ElevatedSession session = Session(
+            new StringReader("2\n\n"),
+            output,
+            new FakeScan(Found(TwoHandles(null))),
+            handleExe,
+            new ScriptedProcessControl(Running(("pwsh.exe", 642)))
+        );
 
         int exit = session.Run([Locked], null, null, null);
 
@@ -234,7 +241,7 @@ public sealed class ElevatedSessionTests
         );
     }
 
-    /// <summary>The description shows five handle lines and says how many it left out.</summary>
+    /// <summary>The description shows five handle lines, each the file's name alone, and says how many it left out.</summary>
     [Fact]
     public void ShowsAtMostFiveHandles()
     {
@@ -242,7 +249,8 @@ public sealed class ElevatedSessionTests
         ElevatedSession session = Session(
             new StringReader("3\n"),
             output,
-            new FakeHandleExe(SevenHandles()),
+            new FakeScan(Found(SevenHandles())),
+            new FakeHandleExe(),
             new ScriptedProcessControl(Running(("pwsh.exe", 642)))
         );
 
@@ -251,29 +259,47 @@ public sealed class ElevatedSessionTests
         string text = output.ToString();
         Assert.Equal(UnlockExit.NothingDone, exit);
         Assert.Contains("pwsh.exe (pid 642) holds 7 handle(s) there:\n", text, StringComparison.Ordinal);
-        Assert.Contains("  File     D:\\a.wt\\x\\f1\n", text, StringComparison.Ordinal);
-        Assert.Contains("  File     D:\\a.wt\\x\\f5\n", text, StringComparison.Ordinal);
+        Assert.Contains("  D:\\a.wt\\x\\f1\n", text, StringComparison.Ordinal);
+        Assert.Contains("  D:\\a.wt\\x\\f5\n", text, StringComparison.Ordinal);
         Assert.DoesNotContain(@"D:\a.wt\x\f6", text, StringComparison.Ordinal);
         Assert.Contains("  … and 2 more\n", text, StringComparison.Ordinal);
     }
 
-    /// <summary>The unelevated worktree-sweep and its children are never offered.</summary>
+    /// <summary>
+    /// The scan is given every running process but the idle and System processes, this one and the unelevated worktree-sweep with
+    /// its children, so those are never opened or offered; one of them the file system reports using the folder is not reported.
+    /// </summary>
     [Fact]
     public void ExcludedPidsAreNotOffered()
     {
         StringWriter output = Writer();
-        var processes = new ScriptedProcessControl(Running(("code.exe", 800), ("worktree-sweep.exe", 900)));
+        int own = Environment.ProcessId;
+        Dictionary<int, ProcessEntry> table = Running(
+            ("Idle", 0),
+            ("System", 4),
+            ("code.exe", 800),
+            ("worktree-sweep.exe", 900),
+            ("conhost.exe", 901)
+        );
+        table[901] = new ProcessEntry(900, "conhost.exe");
+        table[own] = new ProcessEntry(1, "worktree-sweep.exe");
+        var processes = new ScriptedProcessControl(table);
         processes.StartedTimes[800] = 1000;
-        ElevatedSession session = Session(new StringReader("\n"), output, new FakeHandleExe(ExcludedAndKept(), ""), processes);
+        processes.StartedTimes[900] = 10;
+        processes.StartedTimes[901] = 20;
+        var unreadable = new UnreadableUser("worktree-sweep.exe", 900, Locked);
+        var scan = new FakeScan(new LockerFindings([LockerOf("code.exe", 800, 1000)], [unreadable]), Found());
+        ElevatedSession session = Session(new StringReader("\n"), output, scan, new FakeHandleExe(), processes);
 
         int exit = session.Run([Locked], callerPid: null, callerStarted: null, sweepPid: 900);
 
         Assert.Equal(UnlockExit.AllClear, exit);
         Assert.Equal<int[]>([800], [.. processes.Stopped]);
-        Assert.DoesNotContain("pid 900", output.ToString(), StringComparison.Ordinal);
+        Assert.Equal<int[]>([800], [.. scan.Scanned[0]]);
+        Assert.DoesNotContain("900", output.ToString(), StringComparison.Ordinal);
     }
 
-    /// <summary>An ancestor's PID that was reused is not excluded, so a locker that now holds it is still offered.</summary>
+    /// <summary>An ancestor's PID that was reused is not excluded, so it is scanned and a locker that now holds it is still offered.</summary>
     [Fact]
     public void ReusedAncestorPidIsStillOffered()
     {
@@ -291,12 +317,14 @@ public sealed class ElevatedSessionTests
         processes.StartedTimes[600] = 60;
         processes.StartedTimes[500] = 200; // newer than its child 600: the PID no longer names the sudo.exe
         processes.StartedTimes[400] = 50;
-        ElevatedSession session = Session(new StringReader("3\n"), output, new FakeHandleExe(OneLockerFor("code.exe", 500)), processes);
+        var scan = new FakeScan(Found(LockerOf("code.exe", 500, 200)));
+        ElevatedSession session = Session(new StringReader("3\n"), output, scan, new FakeHandleExe(), processes);
 
         int exit = session.Run([Locked], null, null, null);
 
         string text = output.ToString();
         Assert.Equal(UnlockExit.NothingDone, exit);
+        Assert.Contains(500, scan.Scanned[0]);
         Assert.Contains("code.exe (pid 500)", text, StringComparison.Ordinal);
     }
 
@@ -307,7 +335,7 @@ public sealed class ElevatedSessionTests
         StringWriter output = Writer();
         var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642))) { StopThrows = new Win32Exception("cannot open process 642") };
         processes.StartedTimes[642] = 1000;
-        ElevatedSession session = Session(new StringReader("\n"), output, new FakeHandleExe(OneLocker()), processes);
+        ElevatedSession session = Session(new StringReader("\n"), output, new FakeScan(Found(Pwsh(1000))), new FakeHandleExe(), processes);
 
         int exit = session.Run([Locked], null, null, null);
 
@@ -326,7 +354,7 @@ public sealed class ElevatedSessionTests
             StopThrows = new InvalidOperationException("process 642 is now other.exe, not pwsh.exe; not stopped"),
         };
         processes.StartedTimes[642] = 1000;
-        ElevatedSession session = Session(new StringReader("\n"), output, new FakeHandleExe(OneLocker()), processes);
+        ElevatedSession session = Session(new StringReader("\n"), output, new FakeScan(Found(Pwsh(1000))), new FakeHandleExe(), processes);
 
         int exit = session.Run([Locked], null, null, null);
 
@@ -344,16 +372,16 @@ public sealed class ElevatedSessionTests
     public void CloseFailureCountsAsNotClosed()
     {
         StringWriter output = Writer();
-        var handleExe = new FakeHandleExe(TwoHandles(), "");
+        var handleExe = new FakeHandleExe();
         handleExe.Failing.Add(0x58);
         var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
         processes.StartedTimes[642] = 1000;
-        ElevatedSession session = Session(new StringReader("2\ny\n"), output, handleExe, processes);
+        ElevatedSession session = Session(new StringReader("2\ny\n"), output, new FakeScan(Found(TwoHandles(1000)), Found()), handleExe, processes);
 
         int exit = session.Run([Locked], null, null, null);
 
         Assert.Equal(UnlockExit.AllClear, exit);
-        Assert.Equal<ulong[]>([0x1A0], [.. handleExe.Closed.Select(entry => entry.Handle)]);
+        Assert.Equal<nint[]>([0x1A0], [.. handleExe.Closed.Select(entry => entry.Handle)]);
         Assert.Contains("Closed 1 of 2 handle(s) of pwsh.exe (pid 642).\n", output.ToString(), StringComparison.Ordinal);
     }
 
@@ -362,10 +390,10 @@ public sealed class ElevatedSessionTests
     public void CloseThrowIsCountedAsNotClosed()
     {
         StringWriter output = Writer();
-        var handleExe = new FakeHandleExe(TwoHandles()) { CloseThrows = new UnlockException("cannot run handle.exe: it went missing") };
+        var handleExe = new FakeHandleExe { CloseThrows = new UnlockException("cannot run handle.exe: it went missing") };
         var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
         processes.StartedTimes[642] = 1000;
-        ElevatedSession session = Session(new StringReader("2\ny\n"), output, handleExe, processes);
+        ElevatedSession session = Session(new StringReader("2\ny\n"), output, new FakeScan(Found(TwoHandles(1000))), handleExe, processes);
 
         int exit = session.Run([Locked], null, null, null);
 
@@ -374,23 +402,23 @@ public sealed class ElevatedSessionTests
         Assert.Contains("Closed 0 of 2 handle(s) of pwsh.exe (pid 642).\n", output.ToString(), StringComparison.Ordinal);
     }
 
-    /// <summary>A handle value that now names another file is not closed: the value may have been reused since the scan.</summary>
+    /// <summary>A handle the re-check no longer finds holding a locked file is not closed: the value may have been reused since the
+    /// scan.</summary>
     [Fact]
     public void HandleThatNoLongerNamesALockedFileIsNotClosed()
     {
         StringWriter output = Writer();
-        var handleExe = new FakeHandleExe(TwoHandles(), "")
-        {
-            ProcessDump = Dump(("pwsh.exe", 642, "File", 0x1A0, @"D:\elsewhere\a.txt"), ("pwsh.exe", 642, "File", 0x58, @"D:\a.wt\x\b.txt")),
-        };
+        var scan = new FakeScan(Found(TwoHandles(1000)), Found());
+        scan.NoLongerHeld.Add(0x1A0);
+        var handleExe = new FakeHandleExe();
         var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
         processes.StartedTimes[642] = 1000;
-        ElevatedSession session = Session(new StringReader("2\ny\n"), output, handleExe, processes);
+        ElevatedSession session = Session(new StringReader("2\ny\n"), output, scan, handleExe, processes);
 
         int exit = session.Run([Locked], null, null, null);
 
         Assert.Equal(UnlockExit.AllClear, exit);
-        Assert.Equal<ulong[]>([0x58], [.. handleExe.Closed.Select(entry => entry.Handle)]);
+        Assert.Equal<nint[]>([0x58], [.. handleExe.Closed.Select(entry => entry.Handle)]);
         Assert.Contains("Closed 1 of 2 handle(s) of pwsh.exe (pid 642).\n", output.ToString(), StringComparison.Ordinal);
     }
 
@@ -399,8 +427,10 @@ public sealed class ElevatedSessionTests
     public void SnapshotFailureInTheSameProcessCheckCountsAsExited()
     {
         StringWriter output = Writer();
-        var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642))) { SnapshotThrowsOn = 2 };
-        ElevatedSession session = Session(new StringReader("\n"), output, new FakeHandleExe(OneLocker()), processes);
+        // The first snapshot finds the excluded processes, the second lists the processes to scan, the third is the check.
+        var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642))) { SnapshotThrowsOn = 3 };
+        processes.StartedTimes[642] = 1000;
+        ElevatedSession session = Session(new StringReader("\n"), output, new FakeScan(Found(Pwsh(1000))), new FakeHandleExe(), processes);
 
         int exit = session.Run([Locked], null, null, null);
 
@@ -415,8 +445,8 @@ public sealed class ElevatedSessionTests
     {
         StringWriter output = Writer();
         var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
-        processes.StartedTimeSequence[642] = StartTimes(1000, 2000);
-        ElevatedSession session = Session(new StringReader("1\n"), output, new FakeHandleExe(OneLocker()), processes);
+        processes.StartedTimes[642] = 2000;
+        ElevatedSession session = Session(new StringReader("1\n"), output, new FakeScan(Found(Pwsh(1000))), new FakeHandleExe(), processes);
 
         int exit = session.Run([Locked], null, null, null);
 
@@ -425,20 +455,22 @@ public sealed class ElevatedSessionTests
         Assert.Contains("pwsh.exe (pid 642) is no longer the process the scan saw; skipped.\n", output.ToString(), StringComparison.Ordinal);
     }
 
-    /// <summary>A PID taken by a newer process since the scan has no handles closed.</summary>
+    /// <summary>A PID taken by a newer process since the scan has no handles closed, nor re-checked.</summary>
     [Fact]
     public void CloseOfAPidTakenByANewerProcessIsSkipped()
     {
         StringWriter output = Writer();
         var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
-        processes.StartedTimeSequence[642] = StartTimes(1000, 2000);
-        var handleExe = new FakeHandleExe(OneLocker(), OneLocker());
-        ElevatedSession session = Session(new StringReader("2\ny\n"), output, handleExe, processes);
+        processes.StartedTimes[642] = 2000;
+        var scan = new FakeScan(Found(Pwsh(1000)));
+        var handleExe = new FakeHandleExe();
+        ElevatedSession session = Session(new StringReader("2\ny\n"), output, scan, handleExe, processes);
 
         int exit = session.Run([Locked], null, null, null);
 
         Assert.Equal(UnlockExit.NothingDone, exit);
         Assert.Empty(handleExe.Closed);
+        Assert.Empty(scan.Rechecked);
         Assert.Contains("pwsh.exe (pid 642) is no longer the process the scan saw; skipped.\n", output.ToString(), StringComparison.Ordinal);
     }
 
@@ -448,8 +480,8 @@ public sealed class ElevatedSessionTests
     {
         StringWriter output = Writer();
         var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
-        processes.StartedTimeSequence[642] = StartTimes(1000);
-        ElevatedSession session = Session(new StringReader("\n"), output, new FakeHandleExe(OneLocker(), ""), processes);
+        processes.StartedTimes[642] = 1000;
+        ElevatedSession session = Session(new StringReader("\n"), output, new FakeScan(Found(Pwsh(1000)), Found()), new FakeHandleExe(), processes);
 
         int exit = session.Run([Locked], null, null, null);
 
@@ -466,7 +498,8 @@ public sealed class ElevatedSessionTests
     {
         StringWriter output = Writer();
         var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
-        ElevatedSession session = Session(new StringReader("\n"), output, new FakeHandleExe(OneLocker()), processes);
+        processes.StartedTimes[642] = 1000;
+        ElevatedSession session = Session(new StringReader("\n"), output, new FakeScan(Found(Pwsh(null))), new FakeHandleExe(), processes);
 
         int exit = session.Run([Locked], null, null, null);
 
@@ -485,8 +518,7 @@ public sealed class ElevatedSessionTests
     {
         StringWriter output = Writer();
         var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
-        processes.StartedTimeSequence[642] = StartTimes(1000, null);
-        ElevatedSession session = Session(new StringReader("1\n"), output, new FakeHandleExe(OneLocker()), processes);
+        ElevatedSession session = Session(new StringReader("1\n"), output, new FakeScan(Found(Pwsh(1000))), new FakeHandleExe(), processes);
 
         int exit = session.Run([Locked], null, null, null);
 
@@ -499,94 +531,78 @@ public sealed class ElevatedSessionTests
         );
     }
 
-    /// <summary>A path <c>handle.exe</c> cannot name is warned about, and the session never reports it clear.</summary>
+    /// <summary>
+    /// A process the file system reports using a folder, for which the scan named no handle there, is reported and never lets the
+    /// session report clear, even when nothing else holds the files.
+    /// </summary>
     [Fact]
-    public void UnnameablePathIsWarnedAndNeverReportedClear()
+    public void ProcessUsingAFolderUnreadIsReportedAndEndsSomeLeft()
     {
         StringWriter output = Writer();
-        var session = new ElevatedSession(
+        var scan = new FakeScan(new LockerFindings([], [new UnreadableUser("pwsh.exe", 642, Locked)]));
+        ElevatedSession session = Session(
             new StringReader(""),
             output,
-            new FakeHandleExe("No matching handles found.\n"),
-            new ScriptedProcessControl(Running()),
-            path => path != Locked
+            scan,
+            new FakeHandleExe(),
+            new ScriptedProcessControl(Running(("pwsh.exe", 642)))
         );
 
         int exit = session.Run([Locked], null, null, null);
 
         string text = output.ToString();
         Assert.Equal(UnlockExit.SomeLeft, exit);
-        Assert.Contains(
-            @"handle.exe cannot name files under D:\a.wt\x: its path holds characters outside this machine's code pages; close what holds it, then run the sweep again."
-                + "\n",
-            text,
-            StringComparison.Ordinal
-        );
-        Assert.Contains("Nothing handle.exe can see holds files under those folders.\n", text, StringComparison.Ordinal);
+        Assert.Contains("pwsh.exe (642) uses D:\\a.wt\\x, but its handles cannot be read.\n", text, StringComparison.Ordinal);
+        Assert.Contains("Nothing else holds files under those folders.\n", text, StringComparison.Ordinal);
         Assert.DoesNotContain("Nothing holds files under those folders.", text, StringComparison.Ordinal);
     }
 
-    /// <summary>A locker under a nameable path is still offered while another path cannot be named, and the stop that clears it
-    /// leaves the session at some left, because the unnameable path was never seen.</summary>
+    /// <summary>
+    /// With the production scan, a process using the folder that the scan was not given, so its handles were never read, is reported
+    /// by name and ends the session with something left.
+    /// </summary>
     [Fact]
-    public void UnnameablePathStillOffersLockersOfOtherPaths()
+    public void UnscannedProcessUsingTheFolderEndsSomeLeftWithTheRealScan()
     {
-        const string Other = @"D:\b.wt\y";
         StringWriter output = Writer();
-        var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
-        processes.StartedTimes[642] = 1000;
-        var session = new ElevatedSession(
-            new StringReader("\n"),
-            output,
-            new FakeHandleExe(Dump(("pwsh.exe", 642, "File", 0x54, @"D:\b.wt\y\file.txt")), ""),
-            processes,
-            path => path == Other
-        );
+        string folder = fx.PathTo("used");
+        _ = Directory.CreateDirectory(folder);
+        using var child = ReadyChild.Start(folder, fx.PathTo("ready-used"));
+        ElevatedSession session = Session(new StringReader(""), output, new LockerScan(), new FakeHandleExe(), new ScriptedProcessControl(Running()));
 
-        int exit = session.Run([Locked, Other], null, null, null);
+        int exit = session.Run([folder], null, null, null);
 
         string text = output.ToString();
         Assert.Equal(UnlockExit.SomeLeft, exit);
-        Assert.Equal<int[]>([642], [.. processes.Stopped]);
-        Assert.Contains("Stopped pwsh.exe (pid 642).\n", text, StringComparison.Ordinal);
-        Assert.Contains("Nothing handle.exe can see holds files under those folders.\n", text, StringComparison.Ordinal);
+        Assert.Contains($"pwsh.exe ({child.Id}) uses {folder}, but its handles cannot be read.\n", text, StringComparison.Ordinal);
     }
 
-    /// <summary>A nameable path that is clear and one <c>handle.exe</c> cannot name still leave the session at some left, so the
-    /// sweep retries every locked pick rather than believing the unnameable one is clear.</summary>
+    /// <summary>
+    /// With the production scan, a process that cannot be opened, and that the file system does not report using the folder, does
+    /// not block a clear.
+    /// </summary>
     [Fact]
-    public void UnnameablePathWithANameableOneExitsSomeLeft()
+    public void UnopenedProcessNotUsingTheFolderDoesNotBlockAClear()
     {
-        const string Other = @"D:\b.wt\y";
         StringWriter output = Writer();
-        var session = new ElevatedSession(
-            new StringReader(""),
-            output,
-            new FakeHandleExe("No matching handles found.\n"),
-            new ScriptedProcessControl(Running()),
-            path => path == Other
-        );
+        string folder = fx.PathTo("unused");
+        _ = Directory.CreateDirectory(folder);
+        // No process has this PID, so it cannot be opened, as a protected process cannot be.
+        var processes = new ScriptedProcessControl(Running(("ghost.exe", 0x7FFFFFFC)));
+        ElevatedSession session = Session(new StringReader(""), output, new LockerScan(), new FakeHandleExe(), processes);
 
-        int exit = session.Run([Locked, Other], null, null, null);
+        int exit = session.Run([folder], null, null, null);
 
-        string text = output.ToString();
-        Assert.Equal(UnlockExit.SomeLeft, exit);
-        Assert.Contains("Nothing handle.exe can see holds files under those folders.\n", text, StringComparison.Ordinal);
+        Assert.Equal(UnlockExit.AllClear, exit);
+        Assert.Contains("Nothing holds files under those folders.\n", output.ToString(), StringComparison.Ordinal);
     }
 
-    /// <summary>The start times <see cref="ScriptedProcessControl.StartedAt"/> answers with, in turn, the last repeating.</summary>
-    /// <param name="times">The times, in the order they are read.</param>
-    /// <returns>The queue.</returns>
-    private static Queue<ulong?> StartTimes(params ulong?[] times) => new(times);
+    /// <inheritdoc/>
+    public void Dispose() => fx.Dispose();
 
-    /// <summary>An elevated session whose <c>handle.exe</c> can name every path, driven through the given seams.</summary>
-    /// <param name="input">Where the answers come from.</param>
-    /// <param name="output">Where the session prints.</param>
-    /// <param name="handleExe">The <c>handle.exe</c> the session dumps and closes handles through.</param>
-    /// <param name="processes">The process table and the stop operation.</param>
-    /// <returns>The session.</returns>
-    private static ElevatedSession Session(TextReader input, TextWriter output, IHandleExe handleExe, IProcessControl processes) =>
-        new(input, output, handleExe, processes, _ => true);
+    /// <summary>An elevated session driven through the given seams.</summary>
+    private static ElevatedSession Session(TextReader input, TextWriter output, ILockerScan scan, IHandleExe handleExe, IProcessControl processes) =>
+        new(input, output, scan, handleExe, processes);
 
     /// <summary>A <c>StringWriter</c> that ends its lines with <c>\n</c>.</summary>
     private static StringWriter Writer() => new() { NewLine = "\n" };
@@ -602,70 +618,67 @@ public sealed class ElevatedSessionTests
         return table;
     }
 
-    /// <summary>A <c>handle.exe -nobanner -v</c> dump holding the given rows.</summary>
-    private static string Dump(params (string Process, int Pid, string Kind, ulong Handle, string Name)[] rows)
+    /// <summary>A scan that found these lockers and no process it could not read.</summary>
+    private static LockerFindings Found(params Locker[] lockers) => new(lockers, []);
+
+    /// <summary>A locker holding one file under the locked folder.</summary>
+    private static Locker LockerOf(string process, int pid, ulong? started) =>
+        new(process, pid, [new HeldHandle(0x54, @"D:\a.wt\x\file.txt")], started);
+
+    /// <summary>pwsh.exe, pid 642, holding one file, with the start time the scan read.</summary>
+    private static Locker Pwsh(ulong? started) => LockerOf("pwsh.exe", 642, started);
+
+    private static Locker TwoHandles(ulong? started) =>
+        new("pwsh.exe", 642, [new HeldHandle(0x1A0, @"D:\a.wt\x\a.txt"), new HeldHandle(0x58, @"D:\a.wt\x\b.txt")], started);
+
+    private static Locker SevenHandles() =>
+        new("pwsh.exe", 642, [.. Enumerable.Range(1, 7).Select(index => new HeldHandle(0x100 + index, $@"D:\a.wt\x\f{index}"))], null);
+
+    /// <summary>
+    /// A scan that returns its scripted findings in order, repeats the last, records the processes it was given and each re-check,
+    /// and confirms every re-check with a known start time except for the handles it was told are no longer held.
+    /// </summary>
+    private sealed class FakeScan(params LockerFindings[] rounds) : ILockerScan
     {
-        var text = new StringBuilder("Process,PID,User,Handle,Type,Share Flags,Name\n");
-        foreach ((string Process, int Pid, string Kind, ulong Handle, string Name) row in rows)
+        private readonly Queue<LockerFindings> pending = new(rounds);
+
+        /// <summary>Gets the processes each scan was given, in order.</summary>
+        public List<IReadOnlyList<int>> Scanned { get; } = [];
+
+        /// <summary>Gets each re-check: the PID, the start time and the handle value it was given.</summary>
+        public List<(int Pid, ulong? Started, nint Handle)> Rechecked { get; } = [];
+
+        /// <summary>Gets the handle values the re-check no longer finds holding a locked file.</summary>
+        public HashSet<nint> NoLongerHeld { get; } = [];
+
+        public LockerFindings Find(IReadOnlyList<string> lockedPaths, IReadOnlyCollection<int> pids)
         {
-            text.Append(CultureInfo.InvariantCulture, $"{row.Process},{row.Pid},EXAMPLE-PC\\user,0x{row.Handle:X8},{row.Kind},,{row.Name}\n");
+            Scanned.Add([.. pids]);
+            return pending.Count > 1 ? pending.Dequeue() : pending.Peek();
         }
-        return text.ToString();
+
+        public bool StillHolds(int pid, ulong? started, nint handle, IReadOnlyList<string> lockedPaths)
+        {
+            Rechecked.Add((pid, started, handle));
+            return started is not null && !NoLongerHeld.Contains(handle);
+        }
     }
 
-    private static string OneLocker() => Dump(("pwsh.exe", 642, "File", 0x54, @"D:\a.wt\x\file.txt"));
-
-    private static string OneLockerFor(string process, int pid) => Dump((process, pid, "File", 0x54, @"D:\a.wt\x\file.txt"));
-
-    private static string TwoLockers() =>
-        Dump(("code.exe", 200, "File", 0x10, @"D:\a.wt\x\a.txt"), ("pwsh.exe", 642, "File", 0x54, @"D:\a.wt\x\file.txt"));
-
-    private static string TwoHandles() =>
-        Dump(("pwsh.exe", 642, "File", 0x1A0, @"D:\a.wt\x\a.txt"), ("pwsh.exe", 642, "File", 0x58, @"D:\a.wt\x\b.txt"));
-
-    private static string ExcludedAndKept() =>
-        Dump(("worktree-sweep.exe", 900, "File", 0x20, @"D:\a.wt\x\held.txt"), ("code.exe", 800, "File", 0x30, @"D:\a.wt\x\other.txt"));
-
-    private static string SevenHandles() =>
-        Dump(
-            ("pwsh.exe", 642, "File", 0x101, @"D:\a.wt\x\f1"),
-            ("pwsh.exe", 642, "File", 0x102, @"D:\a.wt\x\f2"),
-            ("pwsh.exe", 642, "File", 0x103, @"D:\a.wt\x\f3"),
-            ("pwsh.exe", 642, "File", 0x104, @"D:\a.wt\x\f4"),
-            ("pwsh.exe", 642, "File", 0x105, @"D:\a.wt\x\f5"),
-            ("pwsh.exe", 642, "File", 0x106, @"D:\a.wt\x\f6"),
-            ("pwsh.exe", 642, "File", 0x107, @"D:\a.wt\x\f7")
-        );
-
-    /// <summary>A handle.exe that returns its scripted dumps in order, repeats the last, and records what it closed.</summary>
-    private sealed class FakeHandleExe(params string[] dumps) : IHandleExe
+    /// <summary>A handle.exe that records what it closed.</summary>
+    private sealed class FakeHandleExe : IHandleExe
     {
-        private readonly Queue<string> pending = new(dumps);
-        private readonly List<(ulong Handle, int Pid)> closed = [];
-        private string last = "";
+        private readonly List<(nint Handle, int Pid)> closed = [];
 
         /// <summary>Gets the handles closed, with the process each belonged to.</summary>
-        public IReadOnlyList<(ulong Handle, int Pid)> Closed => closed;
-
-        /// <summary>Gets or sets the dump <see cref="DumpProcess"/> answers with, or <see langword="null"/> to answer with the
-        /// last <see cref="Dump"/>.</summary>
-        public string? ProcessDump { get; set; }
+        public IReadOnlyList<(nint Handle, int Pid)> Closed => closed;
 
         /// <summary>Gets the handles whose closing reports failure.</summary>
-        public HashSet<ulong> Failing { get; } = [];
+        public HashSet<nint> Failing { get; } = [];
 
         /// <summary>Gets or sets the failure every closing throws, or <see langword="null"/> for none.</summary>
         public UnlockException? CloseThrows { get; set; }
 
-        public string Dump()
-        {
-            last = pending.Count > 1 ? pending.Dequeue() : pending.Peek();
-            return last;
-        }
-
-        public string DumpProcess(int pid) => ProcessDump ?? last;
-
-        public bool Close(ulong handle, int pid, out string output)
+        public bool Close(nint handle, int pid, out string output)
         {
             if (CloseThrows is UnlockException failure)
             {
@@ -705,9 +718,6 @@ public sealed class ElevatedSessionTests
         /// unknown.</summary>
         public Dictionary<int, ulong?> StartedTimes { get; } = [];
 
-        /// <summary>Gets the creation times <see cref="StartedAt"/> answers with in turn per PID, the last value repeating.</summary>
-        public Dictionary<int, Queue<ulong?>> StartedTimeSequence { get; } = [];
-
         public IReadOnlyDictionary<int, ProcessEntry> Snapshot()
         {
             snapshots++;
@@ -718,14 +728,7 @@ public sealed class ElevatedSessionTests
             return table;
         }
 
-        public ulong? StartedAt(int pid)
-        {
-            if (StartedTimeSequence.TryGetValue(pid, out Queue<ulong?>? times) && times.Count > 0)
-            {
-                return times.Count > 1 ? times.Dequeue() : times.Peek();
-            }
-            return StartedTimes.TryGetValue(pid, out ulong? started) ? started : null;
-        }
+        public ulong? StartedAt(int pid) => StartedTimes.TryGetValue(pid, out ulong? started) ? started : null;
 
         public void Stop(int pid, string exe, ulong? started)
         {

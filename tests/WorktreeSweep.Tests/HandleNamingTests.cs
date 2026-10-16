@@ -22,9 +22,9 @@ public sealed class HandleNamingTests
     [Fact]
     public async Task CompletedLookupIsNamed()
     {
-        IReadOnlyList<(int Pid, string? Name)> names = await NameWithin([(7, 1)], Quick, 4, LongTimeout);
+        IReadOnlyList<NamedHandle> names = await NameWithin([(7, 1)], Quick, 4, LongTimeout);
 
-        Assert.Equal<(int, string?)>([(7, "file 1")], names);
+        Assert.Equal<NamedHandle>([new(7, "file 1", 1)], names);
     }
 
     /// <summary>A lookup that outlasts the timeout and its cancel gives no name, and the call returns without waiting for it.</summary>
@@ -37,9 +37,9 @@ public sealed class HandleNamingTests
         {
             var clock = Stopwatch.StartNew();
 
-            IReadOnlyList<(int Pid, string? Name)> names = await NameWithin([(7, 1)], (_, started, _) => Blocked(gate, started), 4, ShortTimeout);
+            IReadOnlyList<NamedHandle> names = await NameWithin([(7, 1)], (_, started, _) => Blocked(gate, started), 4, ShortTimeout);
 
-            Assert.Equal<(int, string?)>([(7, null)], names);
+            Assert.Equal<NamedHandle>([new(7, null, 0)], names);
             Assert.True(clock.Elapsed < TimeSpan.FromSeconds(5), $"the call waited {clock.Elapsed} for a hung lookup");
         }
         finally
@@ -86,9 +86,9 @@ public sealed class HandleNamingTests
             gate.Set();
         }
 
-        IReadOnlyList<(int Pid, string? Name)> names = await NameWithin([(1, 1), (2, 2)], Check, 1, TimeSpan.FromMilliseconds(500), Cancel);
+        IReadOnlyList<NamedHandle> names = await NameWithin([(1, 1), (2, 2)], Check, 1, TimeSpan.FromMilliseconds(500), Cancel);
 
-        Assert.Equal<(int, string?)>([(1, null), (2, "file 2")], [.. names.OrderBy(name => name.Pid)]);
+        Assert.Equal<NamedHandle>([new(1, null, 0), new(2, "file 2", 2)], [.. names.OrderBy(name => name.Pid)]);
         Assert.Equal(1, cancels);
         Assert.Equal(0, held);
         Assert.Single(threads);
@@ -114,15 +114,9 @@ public sealed class HandleNamingTests
             throw new IOException("the lookup was aborted");
         }
 
-        IReadOnlyList<(int Pid, string? Name)> names = await NameWithin(
-            [(1, 1), (2, 2), (3, 3)],
-            Check,
-            1,
-            TimeSpan.FromMilliseconds(500),
-            _ => cancelled.Set()
-        );
+        IReadOnlyList<NamedHandle> names = await NameWithin([(1, 1), (2, 2), (3, 3)], Check, 1, TimeSpan.FromMilliseconds(500), _ => cancelled.Set());
 
-        Assert.Equal<(int, string?)>([(1, null), (2, "file 2"), (3, "file 3")], [.. names.OrderBy(name => name.Pid)]);
+        Assert.Equal<NamedHandle>([new(1, null, 0), new(2, "file 2", 2), new(3, "file 3", 3)], [.. names.OrderBy(name => name.Pid)]);
     }
 
     /// <summary>A worker whose cancelled lookup still hangs is abandoned, and the handles after it are named by a fresh worker.</summary>
@@ -133,14 +127,14 @@ public sealed class HandleNamingTests
         using var gate = new ManualResetEventSlim();
         try
         {
-            IReadOnlyList<(int Pid, string? Name)> names = await NameWithin(
+            IReadOnlyList<NamedHandle> names = await NameWithin(
                 [(1, 1), (2, 2), (3, 3)],
                 (handle, started, ended) => handle == 1 ? Blocked(gate, started) : Quick(handle, started, ended),
                 1,
                 ShortTimeout
             );
 
-            Assert.Equal<(int, string?)>([(1, null), (2, "file 2"), (3, "file 3")], [.. names.OrderBy(name => name.Pid)]);
+            Assert.Equal<NamedHandle>([new(1, null, 0), new(2, "file 2", 2), new(3, "file 3", 3)], [.. names.OrderBy(name => name.Pid)]);
         }
         finally
         {
@@ -153,7 +147,7 @@ public sealed class HandleNamingTests
     [Fact]
     public async Task SlowToStartQuickLookupIsNamed()
     {
-        IReadOnlyList<(int Pid, string? Name)> names = await NameWithin(
+        IReadOnlyList<NamedHandle> names = await NameWithin(
             [(7, 1)],
             (handle, started, ended) =>
             {
@@ -164,7 +158,7 @@ public sealed class HandleNamingTests
             ShortTimeout
         );
 
-        Assert.Equal<(int, string?)>([(7, "file 1")], names);
+        Assert.Equal<NamedHandle>([new(7, "file 1", 1)], names);
     }
 
     /// <summary>Exactly as many lookups as there are workers run at once.</summary>
@@ -194,11 +188,11 @@ public sealed class HandleNamingTests
                 running--;
             }
             ended();
-            return CheckedHandle.Disk($"file {handle}");
+            return CheckedHandle.Disk($"file {handle}", handle);
         }
         (int, int)[] handles = [.. Enumerable.Range(1, 12).Select(handle => (handle, handle))];
 
-        IReadOnlyList<(int Pid, string? Name)> names = await NameWithin(handles, Check, HandleNaming.DefaultWorkers, LongTimeout);
+        IReadOnlyList<NamedHandle> names = await NameWithin(handles, Check, HandleNaming.DefaultWorkers, LongTimeout);
 
         Assert.Equal(12, names.Count);
         Assert.Equal(HandleNaming.DefaultWorkers, peak);
@@ -209,14 +203,14 @@ public sealed class HandleNamingTests
     [Fact]
     public async Task SkippedHandlesAreOmitted()
     {
-        IReadOnlyList<(int Pid, string? Name)> names = await NameWithin(
+        IReadOnlyList<NamedHandle> names = await NameWithin(
             [(1, 1), (2, 2), (3, 3)],
             (handle, started, ended) => handle == 2 ? CheckedHandle.Skipped : Quick(handle, started, ended),
             4,
             LongTimeout
         );
 
-        Assert.Equal<(int, string?)>([(1, "file 1"), (3, "file 3")], [.. names.OrderBy(name => name.Pid)]);
+        Assert.Equal<NamedHandle>([new(1, "file 1", 1), new(3, "file 3", 3)], [.. names.OrderBy(name => name.Pid)]);
     }
 
     /// <summary>A check that fails at once adds its process to the failed ones, not to the unnamed ones; only a timeout does that.</summary>
@@ -250,21 +244,21 @@ public sealed class HandleNamingTests
     {
         int cancels = 0;
 
-        IReadOnlyList<(int Pid, string? Name)> names = await NameWithin(
+        IReadOnlyList<NamedHandle> names = await NameWithin(
             [(7, 1)],
             (handle, started, ended) =>
             {
                 started();
                 ended();
                 Thread.Sleep(ShortTimeout * 3);
-                return CheckedHandle.Disk($"file {handle}");
+                return CheckedHandle.Disk($"file {handle}", handle);
             },
             1,
             ShortTimeout,
             _ => Interlocked.Increment(ref cancels)
         );
 
-        Assert.Equal<(int, string?)>([(7, null)], names);
+        Assert.Equal<NamedHandle>([new(7, null, 0)], names);
         Assert.Equal(0, Volatile.Read(ref cancels));
     }
 
@@ -310,7 +304,7 @@ public sealed class HandleNamingTests
     {
         started();
         ended();
-        return CheckedHandle.Disk($"file {handle}");
+        return CheckedHandle.Disk($"file {handle}", handle);
     }
 
     /// <summary>A check that starts its lookup, then waits for <paramref name="gate"/>, at most <see cref="HangLimit"/>.</summary>
@@ -318,11 +312,11 @@ public sealed class HandleNamingTests
     {
         started();
         _ = gate.Wait(HangLimit);
-        return CheckedHandle.Disk("late");
+        return CheckedHandle.Disk("late", 0);
     }
 
     /// <summary>Names the handles on a pool thread with a cancel hook that does nothing.</summary>
-    private static Task<IReadOnlyList<(int Pid, string? Name)>> NameWithin(
+    private static Task<IReadOnlyList<NamedHandle>> NameWithin(
         IReadOnlyList<(int Pid, int Handle)> handles,
         HandleCheck<int> check,
         int workers,
@@ -330,7 +324,7 @@ public sealed class HandleNamingTests
     ) => NameWithin(handles, check, workers, timeout, _ => { });
 
     /// <summary>Names the handles on a pool thread, failing the test when that takes longer than <see cref="HangLimit"/>.</summary>
-    private static async Task<IReadOnlyList<(int Pid, string? Name)>> NameWithin(
+    private static async Task<IReadOnlyList<NamedHandle>> NameWithin(
         IReadOnlyList<(int Pid, int Handle)> handles,
         HandleCheck<int> check,
         int workers,
