@@ -103,13 +103,13 @@
     <Style x:Key="DetailValue" TargetType="TextBlock">
       <Setter Property="TextWrapping" Value="Wrap" />
       <Style.Triggers>
-        <DataTrigger Binding="{Binding Label}" Value="Removing it loses">
+        <DataTrigger Binding="{Binding IsLoss}" Value="True">
           <Setter Property="FontWeight" Value="SemiBold" />
           <Setter Property="Foreground" Value="Firebrick" />
         </DataTrigger>
         <MultiDataTrigger>
           <MultiDataTrigger.Conditions>
-            <Condition Binding="{Binding Label}" Value="Removing it loses" />
+            <Condition Binding="{Binding IsLoss}" Value="True" />
             <Condition Binding="{Binding DataContext.SelectedLosesNothing, RelativeSource={RelativeSource AncestorType=ItemsControl}}" Value="True" />
           </MultiDataTrigger.Conditions>
           <Setter Property="Foreground" Value="ForestGreen" />
@@ -233,6 +233,7 @@
               Padding="4,3"
               VerticalContentAlignment="Center"
               AutomationProperties.Name="Filter by path or branch"
+              KeyDown="OnSearchKeyDown"
               Text="{Binding Search, UpdateSourceTrigger=PropertyChanged}"
             />
             <TextBlock

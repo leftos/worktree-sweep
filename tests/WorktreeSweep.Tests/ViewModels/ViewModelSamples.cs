@@ -71,7 +71,7 @@ internal static class ViewModelSamples
     public static ReviewViewModel Reviewing(MainViewModel main, BinCapacity? capacity)
     {
         ListViewModel list = ListOf(main);
-        list.TickAllCommand.Execute(null);
+        list.TickShownCommand.Execute(null);
         return Reenter(main, capacity);
     }
 

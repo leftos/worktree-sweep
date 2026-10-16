@@ -34,7 +34,7 @@ internal static class RowOrder
             {
                 SortKey.Path => Directed(Text(x.Path, y.Path)),
                 SortKey.Kind => Directed(Text(x.Kind, y.Kind)),
-                SortKey.Branch => Directed(Text(x.Branch, y.Branch)),
+                SortKey.Branch => Directed(Text(x.FullBranch, y.FullBranch)),
                 SortKey.Merge => Directed(Risk(x.MergeRisk, x.Merge, y.MergeRisk, y.Merge)),
                 SortKey.Dirty => Directed(Risk(x.DirtyRisk, x.Dirty, y.DirtyRisk, y.Dirty)),
                 SortKey.Upstream => Directed(Risk(x.UpstreamRisk, x.Upstream, y.UpstreamRisk, y.Upstream)),

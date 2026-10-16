@@ -70,7 +70,7 @@ public sealed class WindowWorkersTests
         new WindowWorkers(main, seams).Start(ReportSamples.Root);
 
         ListViewModel list = ViewModelSamples.ListOf(main);
-        list.TickAllCommand.Execute(null);
+        list.TickShownCommand.Execute(null);
         list.ReviewCommand.Execute(null);
 
         ReviewViewModel review = main.Review ?? throw new InvalidOperationException("Review was not entered");
@@ -298,7 +298,7 @@ public sealed class WindowWorkersTests
         new WindowWorkers(main, seams).Start(ReportSamples.Root);
 
         ListViewModel list = ViewModelSamples.ListOf(main);
-        list.TickAllCommand.Execute(null);
+        list.TickShownCommand.Execute(null);
         list.ReviewCommand.Execute(null);
 
         Assert.Equal(Screen.Review, main.Screen);
@@ -393,7 +393,7 @@ public sealed class WindowWorkersTests
     private static void Confirm(MainViewModel main)
     {
         ListViewModel list = ViewModelSamples.ListOf(main);
-        list.TickAllCommand.Execute(null);
+        list.TickShownCommand.Execute(null);
         list.ReviewCommand.Execute(null);
         ReviewViewModel review = main.Review ?? throw new InvalidOperationException("Review was not entered");
         review.Answer(true);
