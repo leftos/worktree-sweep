@@ -183,6 +183,9 @@ public static class Remover
         }
 
         /// <inheritdoc/>
+        public void Skipped(int index) => Report(new Progress.Done(runnable[index], new Outcome.Skipped("cancelled")));
+
+        /// <inheritdoc/>
         public UnlockOutcome OfferUnlock(IReadOnlyList<string> paths) => offerUnlock(paths);
 
         /// <summary>Lifts a registered worktree's git lock the first time through, then removes the pick.</summary>

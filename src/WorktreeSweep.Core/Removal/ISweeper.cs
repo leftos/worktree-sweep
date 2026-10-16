@@ -18,6 +18,10 @@ public interface ISweeper
     /// <param name="index">The item's index.</param>
     void Finish(int index);
 
+    /// <summary>Hears that item <paramref name="index"/> is skipped unattempted, the token having been cancelled before it.</summary>
+    /// <param name="index">The item's index.</param>
+    void Skipped(int index);
+
     /// <summary>
     /// Offers, once, to clear the locks on <paramref name="paths"/>. Called synchronously on the sweeping thread, before any retry.
     /// </summary>

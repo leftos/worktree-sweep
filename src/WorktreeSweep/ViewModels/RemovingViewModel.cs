@@ -23,6 +23,9 @@ public sealed partial class RemovingViewModel : ObservableObject, IDisposable
     /// <summary>Shows the Results.</summary>
     private readonly Action<IReadOnlyList<Swept>> finished;
 
+    /// <summary>Whether every runnable pick is a recycle, which is what puts its bytes in the Recycle Bin.</summary>
+    private readonly bool everyPickRecycles;
+
     /// <summary>Whether Stop was pressed.</summary>
     private bool stopping;
 
@@ -55,6 +58,9 @@ public sealed partial class RemovingViewModel : ObservableObject, IDisposable
                 .Where(entry => entry.Decision.Plan is Plan.Run)
                 .Select(entry => new RemovalRowViewModel(entry.Index, paths[entry.Index], entry.Decision)),
         ];
+        Total = Rows.Count;
+        BytesTotal = Rows.Sum(row => row.Size ?? 0);
+        everyPickRecycles = Rows.All(row => row.Action is RemoveAction.Delete { Method: DeleteMethod.Recycle });
         Heading = HeadingText();
     }
 
@@ -68,18 +74,21 @@ public sealed partial class RemovingViewModel : ObservableObject, IDisposable
     public CancellationToken Token => cancellation.Token;
 
     /// <summary>Gets how many picks the progress bar counts: the runnable decisions.</summary>
-    public int Total => Rows.Count;
+    public int Total { get; }
 
     /// <summary>Gets how many of them are finished, removed or failed.</summary>
     public int Done => Rows.Count(row => row.Status == RemovalRowViewModel.Done);
 
     /// <summary>Gets the size of every runnable pick; a size the scan did not read counts as no bytes at all.</summary>
-    public long BytesTotal => Rows.Sum(row => row.Size ?? 0);
+    public long BytesTotal { get; }
 
     /// <summary>Gets the size of the runnable picks removed so far; a failed pick and an unknown size add nothing.</summary>
     public long BytesDone => Rows.Where(row => row.Succeeded).Sum(row => row.Size ?? 0);
 
-    /// <summary>Gets the line under the bar: the bytes done of the bytes total and where they went; empty when no size is known.</summary>
+    /// <summary>
+    /// Gets the line under the bar: the bytes done of the bytes total, each <c>at least …</c> when a size it counts was read only in
+    /// part, and where they went; empty when no size is known.
+    /// </summary>
     public string BytesLine
     {
         get
@@ -88,10 +97,10 @@ public sealed partial class RemovingViewModel : ObservableObject, IDisposable
             {
                 return "";
             }
-            string where = EveryPickRecycles ? "moved to the Recycle Bin" : "removed";
+            string where = everyPickRecycles ? "moved to the Recycle Bin" : "removed";
             return string.Create(
                 CultureInfo.InvariantCulture,
-                $"{ReportTable.HumanBytes(BytesDone)} of {ReportTable.HumanBytes(BytesTotal)} {where}"
+                $"{ReportTable.SizeText(BytesDone, DoneIsPartial)} of {ReportTable.SizeText(BytesTotal, TotalIsPartial)} {where}"
             );
         }
     }
@@ -108,8 +117,11 @@ public sealed partial class RemovingViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     public partial string? Banner { get; private set; }
 
-    /// <summary>Whether every runnable pick is a recycle, which is what puts its bytes in the Recycle Bin.</summary>
-    private bool EveryPickRecycles => Rows.All(row => row.Action is RemoveAction.Delete { Method: DeleteMethod.Recycle });
+    /// <summary>Whether a size the total counts was read only in part, which makes that total a lower bound.</summary>
+    private bool TotalIsPartial => Rows.Any(row => row.SizeIsPartial);
+
+    /// <summary>Whether a size the removed picks count was read only in part, which makes their bytes a lower bound.</summary>
+    private bool DoneIsPartial => Rows.Any(row => row.Succeeded && row.SizeIsPartial);
 
     /// <summary>Moves the row of the decision <paramref name="progress"/> names; progress for a decision with no row is ignored.</summary>
     /// <param name="progress">Which decision started or finished, with what became of it.</param>

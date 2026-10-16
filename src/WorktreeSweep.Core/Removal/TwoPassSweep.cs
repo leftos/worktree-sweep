@@ -10,8 +10,9 @@ public static class TwoPassSweep
     /// Removes items <c>0</c> to <paramref name="count"/> - 1. Pass 1 attempts every item in order and runs an item's follow-ups right
     /// after it goes; the items whose <see cref="ISweeper.Remove"/> threw <see cref="LockedException"/> go to one
     /// <see cref="ISweeper.OfferUnlock"/>, with their paths in index order, and on <see cref="UnlockOutcome.Unlocked"/> or
-    /// <see cref="UnlockOutcome.PartlyUnlocked"/> each locked item is retried once, with its follow-ups on success. No locked item means
-    /// no offer. The offer runs synchronously on the calling thread.
+    /// <see cref="UnlockOutcome.PartlyUnlocked"/> each locked item is retried once, with its follow-ups on success; a retry the
+    /// cancelled token stops before it starts is reported as skipped, not attempted. No locked item means no offer. The offer runs
+    /// synchronously on the calling thread.
     /// </summary>
     /// <param name="count">How many items there are.</param>
     /// <param name="sweeper">The unit that removes one item, and the one the offer is made to.</param>
@@ -117,7 +118,17 @@ public static class TwoPassSweep
     {
         foreach (int index in locked)
         {
-            results[index] = cancel.IsCancellationRequested ? new SweepResult.Cancelled() : Attempt(sweeper, index);
+            results[index] = cancel.IsCancellationRequested ? Cancelled(sweeper, index) : Attempt(sweeper, index);
         }
+    }
+
+    /// <summary>Marks item <paramref name="index"/> cancelled without attempting it, and hears that it was skipped.</summary>
+    /// <param name="sweeper">The unit that removes one item.</param>
+    /// <param name="index">The item's index.</param>
+    /// <returns>What became of the item.</returns>
+    private static SweepResult.Cancelled Cancelled(ISweeper sweeper, int index)
+    {
+        sweeper.Skipped(index);
+        return new SweepResult.Cancelled();
     }
 }

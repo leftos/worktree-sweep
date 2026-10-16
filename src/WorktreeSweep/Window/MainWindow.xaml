@@ -182,7 +182,7 @@
             Text="{Binding BytesLine}"
           />
         </Grid>
-        <ProgressBar DockPanel.Dock="Top" Height="6" Maximum="{Binding Total}" Value="{Binding Done}" />
+        <ProgressBar DockPanel.Dock="Top" Height="6" Maximum="{Binding Total, Mode=OneWay}" Value="{Binding Done, Mode=OneWay}" />
         <Grid DockPanel.Dock="Bottom" Margin="0,10,0,0">
           <Grid.ColumnDefinitions>
             <ColumnDefinition Width="*" />
