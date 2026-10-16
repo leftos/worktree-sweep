@@ -8,6 +8,9 @@ namespace WorktreeSweep.Removal;
 /// <summary>Removes every decided pick with the two-pass sweep and runs each one's follow-ups once it is gone.</summary>
 public static class Remover
 {
+    /// <summary>What a pick the cancelled token left alone reports, on its row and in the Results alike.</summary>
+    private static readonly Outcome.Skipped CancelledOutcome = new("cancelled");
+
     /// <summary>
     /// Removes and follows up every decided pick with <see cref="TwoPassSweep"/>. A <see cref="Plan.Skip"/> decision becomes
     /// <see cref="Outcome.Skipped"/> without touching the disk, reports no <see cref="Progress"/> and is never offered for unlocking.
@@ -74,7 +77,7 @@ public static class Remover
             SweepResult.Removed => Removed(ActionOf(decision), decision.Candidate),
             SweepResult.Locked locked => Failure(locked.Error),
             SweepResult.Failed failed => Failure(failed.Error),
-            SweepResult.Cancelled => new Outcome.Skipped("cancelled"),
+            SweepResult.Cancelled => CancelledOutcome,
             _ => throw new UnreachableException($"unknown sweep result {result}"),
         };
 
@@ -183,7 +186,7 @@ public static class Remover
         }
 
         /// <inheritdoc/>
-        public void Skipped(int index) => Report(new Progress.Done(runnable[index], new Outcome.Skipped("cancelled")));
+        public void Skipped(int index) => Report(new Progress.Done(runnable[index], CancelledOutcome));
 
         /// <inheritdoc/>
         public UnlockOutcome OfferUnlock(IReadOnlyList<string> paths) => offerUnlock(paths);

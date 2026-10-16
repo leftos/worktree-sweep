@@ -18,7 +18,10 @@ public interface ISweeper
     /// <param name="index">The item's index.</param>
     void Finish(int index);
 
-    /// <summary>Hears that item <paramref name="index"/> is skipped unattempted, the token having been cancelled before it.</summary>
+    /// <summary>
+    /// Hears that item <paramref name="index"/> is skipped unattempted in the retry pass, the token having been cancelled before it.
+    /// A cancellation before the first pass reports nothing, as that item never started.
+    /// </summary>
     /// <param name="index">The item's index.</param>
     void Skipped(int index);
 
