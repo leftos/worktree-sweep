@@ -43,7 +43,7 @@ public static class FollowUps
     {
         ArgumentException.ThrowIfNullOrEmpty(repo);
         ArgumentException.ThrowIfNullOrEmpty(branch);
-        _ = GitRunner.Run(repo, ["branch", force ? "-D" : "-d", branch]);
+        _ = GitRunner.Run(repo, ["branch", force ? "-D" : "-d", branch], CancellationToken.None);
     }
 
     /// <summary>Prunes the worktree's repo unless the removal already did, then deletes or keeps its branch.</summary>

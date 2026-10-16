@@ -1,3 +1,5 @@
+using WorktreeSweep.Signals;
+
 namespace WorktreeSweep.Scan;
 
 /// <summary>How far a scan has got, as <see cref="Scanner.Scan"/> reports it.</summary>

@@ -184,7 +184,7 @@ public sealed class ScanTests
 
     private static bool GitHasRelativeWorktrees(string dir)
     {
-        string[] numbers = GitRunner.Run(dir, ["--version"]).Split(' ')[2].Split('.');
+        string[] numbers = GitRunner.Run(dir, ["--version"], TestContext.Current.CancellationToken).Split(' ')[2].Split('.');
         (int Major, int Minor) version = (int.Parse(numbers[0], CultureInfo.InvariantCulture), int.Parse(numbers[1], CultureInfo.InvariantCulture));
         return version.CompareTo((2, 48)) >= 0;
     }

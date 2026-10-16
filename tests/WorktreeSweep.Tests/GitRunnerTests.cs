@@ -90,33 +90,41 @@ public sealed class GitRunnerTests
     }
 
     /// <summary>
-    /// A cancelled call kills git with its whole process tree, as a timeout does, and throws: the sleeping grandchild that holds the
-    /// output pipes is gone, or the call would wait out the two-minute grace for them to close.
+    /// A cancelled call kills git with its whole process tree, as a timeout does, and throws. The alias's shell opens a file and then
+    /// loops on one-second sleeps, so the test cancels once the file exists, and the file is released only when the shell is gone; a
+    /// sleep started as the tree is killed holds it at most a second longer.
     /// </summary>
+    /// <returns>A task that completes when the test ends.</returns>
     [Fact]
-    public void RunCancelledKillsGitTreeAndThrows()
+    public async Task RunCancelledKillsGitTreeAndThrows()
     {
         using var fx = new Fixture();
         string repo = fx.Repo("repo");
-        var grace = TimeSpan.FromMinutes(2);
-        using var cancel = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
-        var clock = Stopwatch.StartNew();
+        string held = fx.PathTo("held");
+        string alias = $"alias.hang=!exec 3> '{held.Replace('\\', '/')}'; while :; do sleep 1; done";
+        using var cancel = new CancellationTokenSource();
 
-        OperationCanceledException error = Assert.ThrowsAny<OperationCanceledException>(() =>
-            GitRunner.RunStatusWithEnv(
-                repo,
-                ["-c", "alias.hang=!sleep 600", "hang"],
-                new Dictionary<string, string>(),
-                TimeSpan.FromMinutes(10),
-                grace,
-                cancel.Token
-            )
+        Task<GitStatus> run = Task.Run(
+            () =>
+                GitRunner.RunStatusWithEnv(
+                    repo,
+                    ["-c", alias, "hang"],
+                    new Dictionary<string, string>(),
+                    TimeSpan.FromMinutes(10),
+                    TimeSpan.FromSeconds(15),
+                    cancel.Token
+                ),
+            TestContext.Current.CancellationToken
         );
+        Fixture.WaitUntil(() => File.Exists(held) || run.IsCompleted, "the alias to start sleeping");
+        Assert.False(run.IsCompleted, "git ended before it was cancelled");
+        await cancel.CancelAsync();
 
-        clock.Stop();
-        Assert.Equal($"`git -C {repo} -c alias.hang=!sleep 600 hang` was cancelled and was killed", error.Message);
+        OperationCanceledException error = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run);
+
+        Assert.Equal($"`git -C {repo} -c {alias} hang` was cancelled and was killed", error.Message);
         Assert.Equal(cancel.Token, error.CancellationToken);
-        Assert.True(clock.Elapsed < grace, $"the call took {clock.Elapsed}, so the grandchild held the pipes until the grace ran out");
+        Fixture.WaitUntil(() => Fixture.IsReleased(held), "the killed alias to release its output file");
     }
 
     /// <summary>
