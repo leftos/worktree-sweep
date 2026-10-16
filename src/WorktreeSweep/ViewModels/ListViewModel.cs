@@ -2,7 +2,6 @@ using System.ComponentModel;
 using System.Globalization;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using WorktreeSweep.Discovery;
 using WorktreeSweep.Report;
 
 namespace WorktreeSweep.ViewModels;
@@ -28,6 +27,9 @@ public sealed partial class ListViewModel : ObservableObject
     /// <summary>Whether a command is setting many ticks, so the tick summaries are announced once after the loop.</summary>
     private bool settingTicks;
 
+    /// <summary>Whether the filters are being set together, so the shown rows are rebuilt once rather than once per filter.</summary>
+    private bool settingFilters;
+
     /// <summary>Initializes a new instance of the <see cref="ListViewModel"/> class, showing every row in table order.</summary>
     /// <param name="report">What the scan found: its candidates become the rows and its discovery errors the notice.</param>
     /// <param name="nowUnix">The time ages are measured from, in Unix seconds.</param>
@@ -50,9 +52,9 @@ public sealed partial class ListViewModel : ObservableObject
         OrphanCount = Rows.Count(row => row.RowKind == RowKind.Orphan);
         LinkCount = Rows.Count(row => row.RowKind == RowKind.Link);
         NothingLostCount = Rows.Count(row => row.LosesNothing);
-        DiscoveryErrors = [.. report.DiscoveryErrors.Select(error => DiscoveryErrorLine(error, report.Root))];
+        DiscoveryErrors = ReportTable.DiscoveryErrorLines(report);
         Shown = Rows;
-        Search = "";
+        SetFilters(KindFilter.All, nothingLost: false, search: "");
     }
 
     /// <summary>Gets every row, in table order; never re-ordered, since Review keys its answers on these indexes.</summary>
@@ -188,10 +190,6 @@ public sealed partial class ListViewModel : ObservableObject
     /// <summary>Gets how many rows are ticked, shown or not.</summary>
     private int TickedCount => Rows.Count(row => row.IsTicked);
 
-    /// <summary>Ticks every row, shown or not.</summary>
-    [RelayCommand]
-    private void TickAll() => SetTicks(Rows, true);
-
     /// <summary>Ticks the shown rows.</summary>
     [RelayCommand]
     private void TickShown() => SetTicks(Shown, true);
@@ -204,9 +202,27 @@ public sealed partial class ListViewModel : ObservableObject
     [RelayCommand]
     private void ClearFilters()
     {
-        KindFilter = KindFilter.All;
-        NothingLost = false;
-        Search = "";
+        SetFilters(KindFilter.All, nothingLost: false, search: "");
+        Rebuild();
+    }
+
+    /// <summary>Sets the three filters without rebuilding the shown rows for each; the caller rebuilds once if it needs to.</summary>
+    /// <param name="kind">The kind filter.</param>
+    /// <param name="nothingLost">Whether only rows that lose nothing are shown.</param>
+    /// <param name="search">The search.</param>
+    private void SetFilters(KindFilter kind, bool nothingLost, string search)
+    {
+        settingFilters = true;
+        try
+        {
+            KindFilter = kind;
+            NothingLost = nothingLost;
+            Search = search;
+        }
+        finally
+        {
+            settingFilters = false;
+        }
     }
 
     /// <summary>Sorts by <paramref name="key"/>: a new column starts ascending, then descending, then back to table order.</summary>
@@ -247,15 +263,24 @@ public sealed partial class ListViewModel : ObservableObject
 
     /// <summary>Rebuilds the shown rows when the kind filter changes.</summary>
     /// <param name="value">The new filter.</param>
-    partial void OnKindFilterChanged(KindFilter value) => Rebuild();
+    partial void OnKindFilterChanged(KindFilter value) => RebuildUnlessSettingFilters();
 
     /// <summary>Rebuilds the shown rows when Nothing lost changes.</summary>
     /// <param name="value">The new value.</param>
-    partial void OnNothingLostChanged(bool value) => Rebuild();
+    partial void OnNothingLostChanged(bool value) => RebuildUnlessSettingFilters();
 
     /// <summary>Rebuilds the shown rows when the search changes.</summary>
     /// <param name="value">The new search.</param>
-    partial void OnSearchChanged(string value) => Rebuild();
+    partial void OnSearchChanged(string value) => RebuildUnlessSettingFilters();
+
+    /// <summary>Rebuilds the shown rows after one filter changed, unless <see cref="SetFilters"/> is setting all three.</summary>
+    private void RebuildUnlessSettingFilters()
+    {
+        if (!settingFilters)
+        {
+            Rebuild();
+        }
+    }
 
     /// <summary>
     /// Filters and sorts the rows into <see cref="Shown"/>, keeps the selection while its row is shown and clears it otherwise, and
@@ -341,11 +366,4 @@ public sealed partial class ListViewModel : ObservableObject
         OnPropertyChanged(nameof(HiddenTickedText));
         OnPropertyChanged(nameof(AllShownTicked));
     }
-
-    /// <summary>A discovery error as <c>{path}: {message}</c>, the path relative to <paramref name="root"/> and the message on one line.</summary>
-    /// <param name="error">The error.</param>
-    /// <param name="root">The scanned root.</param>
-    /// <returns>The line.</returns>
-    private static string DiscoveryErrorLine(DiscoveryError error, string root) =>
-        $"{ReportTable.RelativePath(error.Path, root)}: {ReportTable.OneLine(error.Message)}";
 }

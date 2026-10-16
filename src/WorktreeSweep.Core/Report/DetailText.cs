@@ -11,6 +11,9 @@ public static class DetailText
     /// <summary>What the pane says when removing the candidate loses nothing.</summary>
     private const string NothingIsLost = "Nothing is lost.";
 
+    /// <summary>The index in <see cref="Labels"/> of the field that says what removing the candidate loses.</summary>
+    private const int LossField = 4;
+
     /// <summary>The fields' labels, in the order the pane shows them.</summary>
     private static readonly string[] Labels = ["What it is", "State", "Activity and size", "Marks", "Removing it loses", "Unreadable signals"];
 
@@ -47,7 +50,9 @@ public static class DetailText
             _ => throw new ArgumentException($"unknown candidate type {candidate.GetType().Name}", nameof(candidate)),
         };
         string[] texts = [.. detail.Text, LossText.For(candidate)?.Text ?? NothingIsLost, detail.Errors];
-        return [.. Labels.Zip(texts, (label, text) => new DetailField(label, text)).Where(field => field.Text.Length > 0)];
+        DetailField[] fields = [.. Labels.Zip(texts, (label, text) => new DetailField(label, text))];
+        fields[LossField] = fields[LossField] with { IsLoss = true };
+        return [.. fields.Where(field => field.Text.Length > 0)];
     }
 
     /// <summary>

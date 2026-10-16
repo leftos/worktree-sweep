@@ -105,7 +105,10 @@ public sealed class DetailTextTests
             new(
                 "Removing it loses",
                 "1 modified file, 2 commits not on main and 3 commits not pushed will be lost. It is git-locked: on a USB drive."
-            ),
+            )
+            {
+                IsLoss = true,
+            },
         ];
 
         Assert.Equal(expected, DetailText.Fields(candidate, Now, UtcZone));
@@ -291,6 +294,7 @@ public sealed class DetailTextTests
         IReadOnlyList<DetailField> fields = DetailText.Fields(Registered(@"yaat.wt\one", "one", new WorktreeSignals()), Now, UtcZone);
 
         Assert.Equal(["What it is", "Removing it loses"], fields.Select(field => field.Label));
+        Assert.Equal([false, true], fields.Select(field => field.IsLoss));
     }
 
     /// <summary>The text of the field labelled <paramref name="label"/>, failing when there is not exactly one.</summary>
