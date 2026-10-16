@@ -72,11 +72,17 @@ public static class Remover
         result switch
         {
             SweepResult.Removed => Removed(ActionOf(decision), decision.Candidate),
-            SweepResult.Locked locked => new Outcome.Failed($"locked ({locked.Error.FirstLockedFile ?? locked.Error.Path})"),
-            SweepResult.Failed failed => new Outcome.Failed(failed.Error.Message),
+            SweepResult.Locked locked => Failure(locked.Error),
+            SweepResult.Failed failed => Failure(failed.Error),
             SweepResult.Cancelled => new Outcome.Skipped("cancelled"),
             _ => throw new UnreachableException($"unknown sweep result {result}"),
         };
+
+    /// <summary>The outcome of a pick whose removal threw: <c>locked (&lt;file or path&gt;)</c> for a lock, the failure's message otherwise.</summary>
+    /// <param name="error">What removing the pick threw.</param>
+    /// <returns>Its outcome.</returns>
+    private static Outcome.Failed Failure(Exception error) =>
+        error is LockedException locked ? new Outcome.Failed($"locked ({locked.FirstLockedFile ?? locked.Path})") : new Outcome.Failed(error.Message);
 
     /// <summary>The outcome of a pick removed by <paramref name="action"/>; its unknown or negative size reports no size.</summary>
     /// <param name="action">How it was removed.</param>
@@ -157,7 +163,7 @@ public static class Remover
             }
             catch (Exception error) when (error is not OperationCanceledException)
             {
-                Report(new Progress.Done(decision));
+                Report(new Progress.Done(decision, Failure(error)));
                 throw;
             }
         }
@@ -172,7 +178,7 @@ public static class Remover
             }
             finally
             {
-                Report(new Progress.Done(runnable[index]));
+                Report(new Progress.Done(runnable[index], Removed(ActionOf(decision), decision.Candidate)));
             }
         }
 

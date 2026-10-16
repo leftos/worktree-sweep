@@ -168,10 +168,29 @@
     <!-- Removing -->
     <Grid Visibility="{Binding Screen, Converter={StaticResource ShownOn}, ConverterParameter=Removing}">
       <DockPanel DataContext="{Binding Removing}">
-        <TextBlock DockPanel.Dock="Top" Margin="0,0,0,6" FontSize="16" Text="{Binding Heading}" />
-        <StackPanel DockPanel.Dock="Bottom" Style="{StaticResource ButtonRow}">
-          <Button Content="Cancel" Command="{Binding CancelCommand}" />
-        </StackPanel>
+        <Grid DockPanel.Dock="Top" Margin="0,0,0,6">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <TextBlock Grid.Column="0" FontSize="16" Text="{Binding Heading}" />
+          <TextBlock
+            Grid.Column="1"
+            Margin="8,0,0,0"
+            VerticalAlignment="Bottom"
+            Style="{StaticResource HiddenWhenEmpty}"
+            Text="{Binding BytesLine}"
+          />
+        </Grid>
+        <ProgressBar DockPanel.Dock="Top" Height="6" Maximum="{Binding Total}" Value="{Binding Done}" />
+        <Grid DockPanel.Dock="Bottom" Margin="0,10,0,0">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="Stopping finishes the current item and skips the rest." />
+          <Button Grid.Column="1" Content="Stop after this item" Command="{Binding CancelCommand}" />
+        </Grid>
         <TextBlock DockPanel.Dock="Bottom" Style="{StaticResource HiddenWhenEmpty}" Text="{Binding Banner}" />
         <TextBlock DockPanel.Dock="Bottom" FontWeight="SemiBold" Style="{StaticResource HiddenWhenEmpty}" Text="{Binding Notice}" />
         <DataGrid
@@ -185,7 +204,8 @@
         >
           <DataGrid.Columns>
             <DataGridTextColumn Header="Path" Binding="{Binding Path, Mode=OneWay}" />
-            <DataGridTextColumn Header="Status" Binding="{Binding Status, Mode=OneWay}" />
+            <DataGridTextColumn Header="Status" Binding="{Binding ActionText, Mode=OneWay}" />
+            <DataGridTextColumn Header="Size" Binding="{Binding SizeText, Mode=OneWay}" />
           </DataGrid.Columns>
         </DataGrid>
       </DockPanel>
