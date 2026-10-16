@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>worktree-sweep — choose a folder</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+a{color:#005FB8}a:hover{color:#003D7A}
+button{font:inherit;color:inherit}
+button:focus-visible,input:focus-visible{outline:2px solid #005FB8;outline-offset:1px}
+.rec:hover{background:#F5F5F5}
+</style>
+</helmet>
+<div style="min-height: 100vh; box-sizing: border-box; display: flex; flex-direction: column; background: #F3F3F3; color: #1B1B1B; font-family: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif; font-size: 14px">
+
+<div style="display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 0 0 14px; background: #EEEEEE; border-bottom: 1px solid #E0E0E0; font-size: 12px; color: #3B3B3B">
+<svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#005FB8" stroke-width="1.4"><path d="M2 4.5h4l1.2 1.5H14v6.5H2z"></path><path d="M5 10h6"></path></svg>
+<span>worktree-sweep</span>
+<span style="flex: 1"></span>
+<span aria-hidden="true" style="display: flex; height: 36px">
+<span style="width: 46px; display: flex; align-items: center; justify-content: center">—</span>
+<span style="width: 46px; display: flex; align-items: center; justify-content: center">▢</span>
+<span style="width: 46px; display: flex; align-items: center; justify-content: center">✕</span>
+</span>
+</div>
+
+<div style="flex: 1; display: flex; align-items: flex-start; justify-content: center; padding: 72px 16px 40px">
+<div style="width: 100%; max-width: 640px; display: flex; flex-direction: column; gap: 28px">
+
+<div style="display: flex; flex-direction: column; gap: 8px">
+<h1 style="margin: 0; font-size: 28px; font-weight: 600; letter-spacing: -0.01em">Choose a folder to sweep</h1>
+<p style="margin: 0; color: #4A4A4A; line-height: 1.5">worktree-sweep looks at the folder's top-level repos and at their worktree folders (<span style="font-family: 'Cascadia Mono', Consolas, monospace; font-size: 13px">*.wt</span>, <span style="font-family: 'Cascadia Mono', Consolas, monospace; font-size: 13px">*-wt</span>, <span style="font-family: 'Cascadia Mono', Consolas, monospace; font-size: 13px">*worktrees</span>, <span style="font-family: 'Cascadia Mono', Consolas, monospace; font-size: 13px">.claude\worktrees</span>). The scan only reads; nothing is removed until you review and confirm.</p>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 8px; padding: 20px; background: #FFFFFF; border: 1px solid #E0E0E0; border-radius: 8px">
+<label for="root" style="font-size: 13px; font-weight: 600">Folder</label>
+<div style="display: flex; flex-wrap: wrap; gap: 8px">
+<div style="flex: 1 1 300px; display: flex; align-items: center; gap: 8px; height: 38px; box-sizing: border-box; padding: 0 10px; background: #FFFFFF; border: 1px solid #D1D1D1; border-bottom: 2px solid #005FB8; border-radius: 4px">
+<svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#5C5C5C" stroke-width="1.3"><path d="M1.5 3.5h4.5l1.5 1.5h7v8h-13z"></path></svg>
+<input id="root" value="X:\dev" style="flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; font-family: 'Cascadia Mono', Consolas, monospace; font-size: 13.5px; color: #1B1B1B">
+</div>
+<button type="button" style="height: 38px; padding: 0 16px; background: #FFFFFF; border: 1px solid #D1D1D1; border-bottom-color: #B5B5B5; border-radius: 4px">Browse…</button>
+<button type="button" style="height: 38px; padding: 0 22px; background: #005FB8; color: #FFFFFF; border: 1px solid #004A8F; border-radius: 4px; font-weight: 600">Scan</button>
+</div>
+<p style="margin: 2px 0 0; font-size: 12.5px; color: #5C5C5C">Starts in the folder you launched from. Passing a folder on the command line skips this step: <span style="font-family: 'Cascadia Mono', Consolas, monospace">worktree-sweep X:\dev</span></p>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 8px">
+<h2 style="margin: 0; font-size: 14px; font-weight: 600; color: #3B3B3B">Recent folders</h2>
+<ul style="list-style: none; margin: 0; padding: 0; background: #FFFFFF; border: 1px solid #E0E0E0; border-radius: 8px; overflow: hidden">
+<li style="border-bottom: 1px solid #F0F0F0">
+<button type="button" class="rec" style="all: unset; box-sizing: border-box; width: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; min-height: 52px; padding: 8px 16px; cursor: pointer">
+<span style="flex: 1 1 200px; font-family: 'Cascadia Mono', Consolas, monospace; font-size: 13.5px">X:\dev</span>
+<span style="font-size: 12.5px; color: #5C5C5C">yesterday · 14 candidates · 9.6 GB</span>
+</button>
+</li>
+<li style="border-bottom: 1px solid #F0F0F0">
+<button type="button" class="rec" style="all: unset; box-sizing: border-box; width: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; min-height: 52px; padding: 8px 16px; cursor: pointer">
+<span style="flex: 1 1 200px; font-family: 'Cascadia Mono', Consolas, monospace; font-size: 13.5px">X:\dev\yaat.wt</span>
+<span style="font-size: 12.5px; color: #5C5C5C">3 days ago · 6 candidates · 7.1 GB</span>
+</button>
+</li>
+<li>
+<button type="button" class="rec" style="all: unset; box-sizing: border-box; width: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; min-height: 52px; padding: 8px 16px; cursor: pointer">
+<span style="flex: 1 1 200px; font-family: 'Cascadia Mono', Consolas, monospace; font-size: 13.5px">C:\src</span>
+<span style="font-size: 12.5px; color: #5C5C5C">2 weeks ago · nothing found</span>
+</button>
+</li>
+</ul>
+</div>
+
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

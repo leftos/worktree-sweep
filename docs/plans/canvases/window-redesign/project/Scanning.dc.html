@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>worktree-sweep — scanning</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+a{color:#005FB8}a:hover{color:#003D7A}
+button{font:inherit;color:inherit}
+button:focus-visible,input:focus-visible{outline:2px solid #005FB8;outline-offset:1px}
+</style>
+</helmet>
+<div style="min-height: 100vh; box-sizing: border-box; display: flex; flex-direction: column; background: #F3F3F3; color: #1B1B1B; font-family: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif; font-size: 14px">
+
+<div style="display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 0 0 14px; background: #EEEEEE; border-bottom: 1px solid #E0E0E0; font-size: 12px; color: #3B3B3B">
+<svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#005FB8" stroke-width="1.4"><path d="M2 4.5h4l1.2 1.5H14v6.5H2z"></path><path d="M5 10h6"></path></svg>
+<span>worktree-sweep — X:\dev — scanning 71%</span>
+<span style="flex: 1"></span>
+<span aria-hidden="true" style="display: flex; height: 36px">
+<span style="width: 46px; display: flex; align-items: center; justify-content: center">—</span>
+<span style="width: 46px; display: flex; align-items: center; justify-content: center">▢</span>
+<span style="width: 46px; display: flex; align-items: center; justify-content: center">✕</span>
+</span>
+</div>
+
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 16px; background: #FAFAFA; border-bottom: 1px solid #E5E5E5">
+<label for="root" style="font-size: 13px; color: #555555; font-weight: 600">Folder</label>
+<div style="flex: 1 1 320px; max-width: 560px; display: flex; align-items: center; gap: 8px; height: 34px; box-sizing: border-box; padding: 0 10px; background: #F5F5F5; border: 1px solid #E0E0E0; border-radius: 4px; color: #6B6B6B">
+<svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#8A8A8A" stroke-width="1.3"><path d="M1.5 3.5h4.5l1.5 1.5h7v8h-13z"></path></svg>
+<input id="root" value="X:\dev" disabled style="flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; font-family: 'Cascadia Mono', Consolas, monospace; font-size: 13px; color: #6B6B6B">
+</div>
+<button type="button" disabled style="height: 34px; padding: 0 14px; background: #F5F5F5; color: #8A8A8A; border: 1px solid #E0E0E0; border-radius: 4px">Browse…</button>
+<button type="button" style="height: 34px; padding: 0 14px; background: #FFFFFF; border: 1px solid #D1D1D1; border-bottom-color: #B5B5B5; border-radius: 4px">Stop scan</button>
+</div>
+
+<div style="flex: 1; display: flex; justify-content: center; padding: 48px 16px 40px">
+<div style="width: 100%; max-width: 760px; display: flex; flex-direction: column; gap: 20px">
+
+<div style="display: flex; flex-direction: column; gap: 10px">
+<div style="display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px">
+<h1 style="margin: 0; font-size: 24px; font-weight: 600">Scanning <span style="font-family: 'Cascadia Mono', Consolas, monospace; font-size: 21px">X:\dev</span></h1>
+<span style="font-size: 13px; color: #4A4A4A; font-variant-numeric: tabular-nums">step 3 of 3 · 12 s</span>
+</div>
+<div role="progressbar" aria-label="Scan progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="71" style="height: 6px; background: #E0E0E0; border-radius: 3px; overflow: hidden">
+<div style="width: 71%; height: 100%; background: #005FB8; border-radius: 3px"></div>
+</div>
+<p style="margin: 0; font-size: 13px; color: #4A4A4A">Reading candidate 10 of 14. The scan only reads: nothing under X:\dev is written.</p>
+</div>
+
+<ol style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; background: #FFFFFF; border: 1px solid #E0E0E0; border-radius: 8px; overflow: hidden">
+<li style="display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 4px 12px; align-items: start; padding: 14px 16px; border-bottom: 1px solid #F0F0F0">
+<svg role="img" aria-label="Done" width="20" height="20" viewBox="0 0 20 20"><circle cx="10" cy="10" r="9" fill="#0E7A0D"></circle><path d="m6 10.2 2.7 2.7L14 7.6" fill="none" stroke="#FFFFFF" stroke-width="1.8"></path></svg>
+<div style="display: flex; flex-direction: column; gap: 2px">
+<span style="font-weight: 600">Find repos and worktree folders</span>
+<span style="font-size: 13px; color: #4A4A4A">14 repos, 6 worktree folders, 14 candidates: 9 worktrees, 4 orphans, 1 link</span>
+</div>
+<span style="font-size: 12.5px; color: #5C5C5C; font-variant-numeric: tabular-nums">1.1 s</span>
+</li>
+<li style="display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 4px 12px; align-items: start; padding: 14px 16px; border-bottom: 1px solid #F0F0F0">
+<svg role="img" aria-label="Done" width="20" height="20" viewBox="0 0 20 20"><circle cx="10" cy="10" r="9" fill="#0E7A0D"></circle><path d="m6 10.2 2.7 2.7L14 7.6" fill="none" stroke="#FFFFFF" stroke-width="1.8"></path></svg>
+<div style="display: flex; flex-direction: column; gap: 2px">
+<span style="font-weight: 600">Look up each repo's default branch</span>
+<span style="font-size: 13px; color: #4A4A4A">14 of 14 repos · 1 had a discovery error (gate: git worktree list failed)</span>
+</div>
+<span style="font-size: 12.5px; color: #5C5C5C; font-variant-numeric: tabular-nums">2.3 s</span>
+</li>
+<li style="display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 4px 12px; align-items: start; padding: 14px 16px; background: #F7FAFE">
+<svg role="img" aria-label="In progress" width="20" height="20" viewBox="0 0 20 20"><circle cx="10" cy="10" r="8.2" fill="none" stroke="#C7DDF3" stroke-width="2.4"></circle><path d="M10 1.8a8.2 8.2 0 0 1 8.2 8.2" fill="none" stroke="#005FB8" stroke-width="2.4" stroke-linecap="round"></path></svg>
+<div style="display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; flex-direction: column; gap: 2px">
+<span style="font-weight: 600">Read each candidate's state</span>
+<span style="font-size: 13px; color: #4A4A4A">Merge state against the default branch, uncommitted files, unpushed commits, last activity and size. Size walks every file, so the biggest folders take longest.</span>
+</div>
+<div style="display: flex; align-items: center; gap: 10px">
+<div role="progressbar" aria-label="Candidates read" aria-valuemin="0" aria-valuemax="14" aria-valuenow="10" style="flex: 1; height: 4px; background: #D6E6F6; border-radius: 2px; overflow: hidden"><div style="width: 71%; height: 100%; background: #005FB8"></div></div>
+<span style="font-size: 12.5px; color: #3B3B3B; font-variant-numeric: tabular-nums">10 of 14</span>
+</div>
+<div style="display: flex; flex-direction: column; gap: 0; border: 1px solid #E3ECF6; border-radius: 6px; background: #FFFFFF">
+<div style="padding: 6px 10px; font-size: 12px; font-weight: 600; color: #4A4A4A; border-bottom: 1px solid #EEF3F9">Working on now</div>
+<div style="display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; padding: 6px 10px; font-size: 12.5px">
+<span style="font-family: 'Cascadia Mono', Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">yaat.wt\eram-am\yaat</span><span style="color: #4A4A4A">measuring size · 41,207 files so far</span>
+<span style="font-family: 'Cascadia Mono', Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">yaat.wt\tmp-bisect</span><span style="color: #4A4A4A">measuring size · 30,211 files so far</span>
+<span style="font-family: 'Cascadia Mono', Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">gate.wt\slots-rework</span><span style="color: #4A4A4A">git merge-tree against origin/main</span>
+<span style="font-family: 'Cascadia Mono', Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">worktree-sweep.wt\handle-scan</span><span style="color: #4A4A4A">git status</span>
+</div>
+</div>
+</div>
+<span style="font-size: 12.5px; color: #5C5C5C; font-variant-numeric: tabular-nums">8.6 s</span>
+</li>
+</ol>
+
+<div style="display: flex; align-items: flex-start; gap: 10px; padding: 10px 14px; background: #FFF8E1; border: 1px solid #F1D98A; border-radius: 6px; font-size: 13px; color: #5A3E00">
+<svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#8A5A00" stroke-width="1.4" style="flex: none; margin-top: 1px"><path d="M8 1.8 15 14H1z"></path><path d="M8 6v3.6M8 11.5v.6"></path></svg>
+<span><strong>Volume Z: stalled.</strong> A git call there took over 60 s, so the scan stopped asking git on that volume. Its 2 candidates will show unknown state.</span>
+</div>
+
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

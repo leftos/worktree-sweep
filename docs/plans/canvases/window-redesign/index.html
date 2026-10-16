@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Worktree Sweep window redesign</title>
+<style>
+body { margin: 0; background: #e8e8e4; font: 14px/1.4 system-ui, sans-serif; color: #1e1e1c; }
+header { position: sticky; top: 0; z-index: 1; display: flex; gap: 12px; align-items: center; padding: 8px 16px; }
+header { background: #fafaf7; border-bottom: 1px solid #c8c8c2; }
+header h1 { font-size: 15px; margin: 0; flex: 1; }
+#stage { position: relative; margin: 16px; }
+#canvas { position: absolute; left: 0; top: 0; width: 5360px; height: 1380px; transform-origin: 0 0; }
+.board { position: absolute; }
+.board iframe { display: block; border: 0; background: #fff; box-shadow: 0 1px 4px rgba(0, 0, 0, .25); }
+.label { display: block; height: 40px; font-size: 24px; line-height: 40px; color: #1e1e1c; text-decoration: none; }
+.label:hover { text-decoration: underline; }
+.note { position: absolute; width: max-content; font-size: 32px; font-weight: 600; }
+</style>
+</head>
+<body>
+<header><h1>Worktree Sweep window redesign</h1><label>Zoom <select id="zoom"><option value="fit">Fit width</option><option value="0.5">50%</option>
+<option value="1">100%</option></select></label></header>
+<div id="stage"><div id="canvas">
+<div class="board" style="left:2720px;top:300px;width:1280px"><a class="label" href="project/Main.dc.html" title="Open on its own">3 · Pick: sort, filter, tick (interactive)</a><iframe src="project/Main.dc.html" title="3 · Pick: sort, filter, tick (interactive)" style="width:1280px;height:1080px" loading="lazy"></iframe></div>
+<div class="board" style="left:0px;top:300px;width:1280px"><a class="label" href="project/Start.dc.html" title="Open on its own">1 · Choose a folder (no ROOT argument)</a><iframe src="project/Start.dc.html" title="1 · Choose a folder (no ROOT argument)" style="width:1280px;height:800px" loading="lazy"></iframe></div>
+<div class="board" style="left:1360px;top:300px;width:1280px"><a class="label" href="project/Scanning.dc.html" title="Open on its own">2 · Scanning, with phases and progress</a><iframe src="project/Scanning.dc.html" title="2 · Scanning, with phases and progress" style="width:1280px;height:800px" loading="lazy"></iframe></div>
+<div class="board" style="left:4080px;top:300px;width:1280px"><a class="label" href="project/Removing.dc.html" title="Open on its own">4 · Removing, with progress</a><iframe src="project/Removing.dc.html" title="4 · Removing, with progress" style="width:1280px;height:800px" loading="lazy"></iframe></div>
+<div class="note" style="left:0px;top:0px;max-width:5360px">worktree-sweep — window redesign</div>
+</div></div>
+<script>
+const canvas = document.getElementById("canvas");
+const stage = document.getElementById("stage");
+const zoom = document.getElementById("zoom");
+function layout() {
+  const scale = zoom.value === "fit" ? Math.min(1, (window.innerWidth - 32) / 5360) : Number(zoom.value);
+  canvas.style.transform = "scale(" + scale + ")";
+  stage.style.width = 5360 * scale + "px";
+  stage.style.height = 1380 * scale + "px";
+}
+zoom.addEventListener("change", layout);
+window.addEventListener("resize", layout);
+layout();
+</script>
+</body>
+</html>
