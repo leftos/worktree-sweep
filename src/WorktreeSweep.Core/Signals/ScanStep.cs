@@ -1,4 +1,4 @@
-namespace WorktreeSweep.Scan;
+namespace WorktreeSweep.Signals;
 
 /// <summary>A step of reading one candidate, in the order a registered worktree's steps run.</summary>
 public enum ScanStep

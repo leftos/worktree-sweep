@@ -3,7 +3,6 @@ using System.Globalization;
 using System.Runtime.ExceptionServices;
 using WorktreeSweep.Discovery;
 using WorktreeSweep.Git;
-using WorktreeSweep.Scan;
 
 namespace WorktreeSweep.Signals;
 
@@ -90,19 +89,25 @@ public static partial class SignalReader
         }
         string dir = record.Path;
         var reads = new SignalReads(stalls, dir);
-        onStep(ScanStep.Merge, 0);
+        void Start(ScanStep step)
+        {
+            token.ThrowIfCancellationRequested();
+            onStep(step, 0);
+        }
+
+        Start(ScanStep.Merge);
         (MergeState State, string Against)? merge = reads.Read(() => ReadMergeState(dir, defaults, record, token));
-        onStep(ScanStep.Status, 0);
+        Start(ScanStep.Status);
         Dirty? dirty = reads.Read(() => ReadDirty(dir, token));
         Upstream? upstream = null;
         if (record.Branch is { } branch)
         {
-            onStep(ScanStep.Upstream, 0);
+            Start(ScanStep.Upstream);
             upstream = reads.Read(() => ReadUpstream(dir, branch, token));
         }
-        onStep(ScanStep.Activity, 0);
+        Start(ScanStep.Activity);
         long? lastActivity = reads.Read(() => LastActivity(dir, token));
-        onStep(ScanStep.Size, 0);
+        Start(ScanStep.Size);
         SizeInfo? size = ReadSize(reads, dir, files => onStep(ScanStep.Size, files), token);
         foreach (string error in reads.Errors)
         {
@@ -121,8 +126,8 @@ public static partial class SignalReader
     }
 
     /// <summary>
-    /// Walks a worktree's size through <paramref name="reads"/>, so a stalled volume skips it, while a failure of
-    /// <paramref name="onFiles"/> still propagates instead of being recorded as a failed signal.
+    /// Walks a worktree's size through <paramref name="reads"/>, so a stalled volume skips it and an unexpected failure of the walk
+    /// is recorded as the size's error, while a failure of <paramref name="onFiles"/> still propagates and fails the scan.
     /// </summary>
     private static SizeInfo? ReadSize(SignalReads reads, string dir, Action<long> onFiles, CancellationToken token)
     {
@@ -235,7 +240,8 @@ public static partial class SignalReader
     /// <param name="token">Stops starting new items once cancelled; an item already running finishes or throws first.</param>
     /// <returns>One result per item, in the order of <paramref name="items"/>.</returns>
     /// <exception cref="OperationCanceledException"><paramref name="token"/> is cancelled.</exception>
-    /// <exception cref="Exception">Whatever <paramref name="map"/> threw first, unwrapped, with its original stack trace.</exception>
+    /// <exception cref="Exception">Whatever <paramref name="map"/> threw first, unwrapped, with its original stack trace; a failure
+    /// other than a cancellation is preferred.</exception>
     public static IReadOnlyList<TResult> ParallelMap<TItem, TResult>(IReadOnlyList<TItem> items, Func<TItem, TResult> map, CancellationToken token)
     {
         ArgumentNullException.ThrowIfNull(items);
@@ -247,7 +253,9 @@ public static partial class SignalReader
         }
         catch (AggregateException error) when (error.InnerExceptions.Count > 0)
         {
-            ExceptionDispatchInfo.Capture(error.InnerExceptions[0]).Throw();
+            // A worker's real failure explains the run better than another worker's cancellation it caused.
+            Exception first = error.InnerExceptions.FirstOrDefault(inner => inner is not OperationCanceledException) ?? error.InnerExceptions[0];
+            ExceptionDispatchInfo.Capture(first).Throw();
             throw;
         }
     }
