@@ -4,16 +4,20 @@
 
 ## Window redesign
 
-- [ ] WTS-56 Report scan progress and let a scan be cancelled
+- [/] WTS-56 Report scan progress and let a scan be cancelled
 - [ ] WTS-57 Choose and rescan a folder from the window, with scan progress
-- [ ] WTS-58 Sort, filter and tick shown rows on the Pick screen
-- [ ] WTS-59 Show removal progress on the Removing screen
+- [!] WTS-58 Sort, filter and tick shown rows on the Pick screen
+- [!] WTS-59 Show removal progress on the Removing screen
 - [ ] WTS-60 Document the window redesign and ship feat/window-redesign
+- [ ] WTS-61 Show discovery errors on the window's Empty screen
+- [ ] WTS-64 Merge feat/window-redesign (#124)
 
 ## C# rewrite
 
-- [!] WTS-41 Find elevated lockers with the C# handle scan, not handle.exe's CSV
+- [ ] WTS-65 Re-check and close a locker's handles in one pass that keeps the process open
+- [ ] WTS-66 End the unlock session with something left when a folder's users cannot be listed
 
 ## Backlog
 
-- [ ] WTS-55 Retire D:\ paths: write repo paths as X:\dev
+- [ ] WTS-62 Say a worktree may lose work when its loss signals could not be read
+- [ ] WTS-63 Kill git calls through a job object so no child survives the kill
