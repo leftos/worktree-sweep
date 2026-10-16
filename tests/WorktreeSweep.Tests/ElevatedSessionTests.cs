@@ -593,7 +593,9 @@ public sealed class ElevatedSessionTests : IDisposable
 
         _ = session.Run([folder], null, null, null);
 
-        Assert.DoesNotContain("ghost.exe", output.ToString(), StringComparison.Ordinal);
+        string text = output.ToString();
+        Assert.DoesNotContain("ghost.exe", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("(2147483644)", text, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -619,6 +621,26 @@ public sealed class ElevatedSessionTests : IDisposable
         Assert.Equal(UnlockExit.SomeLeft, exit);
         Assert.Contains("System (4) uses D:\\a.wt\\x, but its handles cannot be read.\n", text, StringComparison.Ordinal);
         Assert.DoesNotContain(4, Assert.Single(scan.Scanned));
+    }
+
+    /// <summary>A folder picked twice, by the same full path in another case, is scanned and reported once.</summary>
+    [Fact]
+    public void FolderPickedTwiceIsReportedOnce()
+    {
+        StringWriter output = Writer();
+        ElevatedSession session = Session(
+            new StringReader(""),
+            output,
+            new UnreadablePerFolderScan(),
+            new FakeHandleExe(),
+            new ScriptedProcessControl(Running(("pwsh.exe", 642)))
+        );
+
+        _ = session.Run([Locked, Locked.ToUpperInvariant()], null, null, null);
+
+        string text = output.ToString();
+        Assert.Single(text.Split('\n'), line => line.Contains("but its handles cannot be read.", StringComparison.Ordinal));
+        Assert.Contains("pwsh.exe (642) uses D:\\a.wt\\x, but its handles cannot be read.\n", text, StringComparison.Ordinal);
     }
 
     /// <summary>With the production scan, a locked folder that is gone from a drive that exists is clear.</summary>
@@ -656,6 +678,7 @@ public sealed class ElevatedSessionTests : IDisposable
         string text = output.ToString();
         Assert.Equal(UnlockExit.SomeLeft, exit);
         Assert.Contains($"{folder} cannot be read here, so it is not known what holds it.\n", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("Nothing else holds files under those folders.", text, StringComparison.Ordinal);
         Assert.DoesNotContain("Nothing holds files under those folders.", text, StringComparison.Ordinal);
     }
 
@@ -737,6 +760,15 @@ public sealed class ElevatedSessionTests : IDisposable
             Rechecked.Add((pid, started, handle));
             return started is not null && !NoLongerHeld.Contains(handle);
         }
+    }
+
+    /// <summary>A scan that reports pwsh.exe, pid 642, using every folder it is given, its handles there unread.</summary>
+    private sealed class UnreadablePerFolderScan : ILockerScan
+    {
+        public LockerFindings Find(IReadOnlyList<string> lockedPaths, IReadOnlyCollection<int> pids) =>
+            new([], [.. lockedPaths.Select(path => new UnreadableUser("pwsh.exe", 642, path))], []);
+
+        public bool StillHolds(int pid, ulong? started, nint handle, IReadOnlyList<string> lockedPaths) => false;
     }
 
     /// <summary>A handle.exe that records what it closed.</summary>

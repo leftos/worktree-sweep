@@ -61,7 +61,10 @@ public sealed class ElevatedSession(TextReader input, TextWriter output, ILocker
             {
                 if (unknown)
                 {
-                    Say("Nothing else holds files under those folders.");
+                    if (found.Unreadable.Count > 0)
+                    {
+                        Say("Nothing else holds files under those folders.");
+                    }
                     return UnlockExit.SomeLeft;
                 }
                 Say("Nothing holds files under those folders.");
