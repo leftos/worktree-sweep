@@ -19,6 +19,13 @@ public interface ISweeper
     void Finish(int index);
 
     /// <summary>
+    /// Hears that item <paramref name="index"/> is skipped unattempted in the retry pass, the token having been cancelled before it.
+    /// A cancellation before the first pass reports nothing, as that item never started.
+    /// </summary>
+    /// <param name="index">The item's index.</param>
+    void Skipped(int index);
+
+    /// <summary>
     /// Offers, once, to clear the locks on <paramref name="paths"/>. Called synchronously on the sweeping thread, before any retry.
     /// </summary>
     /// <param name="paths">The locked items' paths, in index order.</param>

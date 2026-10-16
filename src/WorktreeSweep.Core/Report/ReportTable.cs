@@ -98,15 +98,34 @@ public static class ReportTable
         var lines = new StringBuilder(text);
         foreach (DiscoveryError error in report.DiscoveryErrors)
         {
-            lines
-                .Append("discovery error: ")
-                .Append(RelativePathToRootKey(error.Path, rootKey))
-                .Append(": ")
-                .Append(OneLine(error.Message))
-                .Append('\n');
+            lines.Append("discovery error: ").Append(DiscoveryErrorLine(error, rootKey)).Append('\n');
         }
         return lines.ToString();
     }
+
+    /// <summary>
+    /// Each of the report's discovery errors as <c>{path}: {message}</c>, the path relative to the scanned root and the message on
+    /// one line, in the order the report holds them; the line <see cref="Render"/> prints after <c>discovery error: </c>.
+    /// </summary>
+    /// <param name="report">The report.</param>
+    /// <returns>One line per discovery error.</returns>
+    public static IReadOnlyList<string> DiscoveryErrorLines(ScanReport report)
+    {
+        ArgumentNullException.ThrowIfNull(report);
+        if (report.DiscoveryErrors.Count == 0)
+        {
+            return [];
+        }
+        string rootKey = Discoverer.PathKey(PathResolver.Resolve(report.Root));
+        return [.. report.DiscoveryErrors.Select(error => DiscoveryErrorLine(error, rootKey))];
+    }
+
+    /// <summary>One discovery error as <c>{path}: {message}</c>, with the root's <see cref="Discoverer.PathKey"/> in hand.</summary>
+    /// <param name="error">The error.</param>
+    /// <param name="rootKey">The scanned root's resolved <see cref="Discoverer.PathKey"/>.</param>
+    /// <returns>The line.</returns>
+    private static string DiscoveryErrorLine(DiscoveryError error, string rootKey) =>
+        $"{RelativePathToRootKey(error.Path, rootKey)}: {OneLine(error.Message)}";
 
     /// <summary><paramref name="message"/> with its line breaks, <c>\r\n</c> then <c>\n</c>, replaced by <c>; </c>.</summary>
     /// <param name="message">The message.</param>
@@ -237,6 +256,9 @@ public static class ReportTable
             MergeRisk = MergeRiskOf(signals.MergeState),
             DirtyRisk = DirtyRiskOf(signals.Dirty),
             UpstreamRisk = UpstreamRiskOf(signals.Upstream),
+            RowKind = RowKind.Worktree,
+            ActiveUnix = signals.LastActivityUnix,
+            SizeBytes = signals.Size?.Bytes,
             Candidate = registered,
         };
     }
@@ -306,6 +328,9 @@ public static class ReportTable
             Active = candidate.Size.LastWriteUnix is long then ? Age(then, nowUnix) : "",
             Size = isLink ? "" : HumanBytes(candidate.Size.Bytes),
             Flags = string.Join(", ", flags),
+            RowKind = isLink ? RowKind.Link : RowKind.Orphan,
+            ActiveUnix = candidate.Size.LastWriteUnix,
+            SizeBytes = isLink ? null : candidate.Size.Bytes,
             Candidate = candidate,
         };
     }

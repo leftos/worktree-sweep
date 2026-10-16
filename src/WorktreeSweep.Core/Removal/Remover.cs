@@ -8,6 +8,9 @@ namespace WorktreeSweep.Removal;
 /// <summary>Removes every decided pick with the two-pass sweep and runs each one's follow-ups once it is gone.</summary>
 public static class Remover
 {
+    /// <summary>What a pick the cancelled token left alone reports, on its row and in the Results alike.</summary>
+    private static readonly Outcome.Skipped CancelledOutcome = new("cancelled");
+
     /// <summary>
     /// Removes and follows up every decided pick with <see cref="TwoPassSweep"/>. A <see cref="Plan.Skip"/> decision becomes
     /// <see cref="Outcome.Skipped"/> without touching the disk, reports no <see cref="Progress"/> and is never offered for unlocking.
@@ -72,11 +75,17 @@ public static class Remover
         result switch
         {
             SweepResult.Removed => Removed(ActionOf(decision), decision.Candidate),
-            SweepResult.Locked locked => new Outcome.Failed($"locked ({locked.Error.FirstLockedFile ?? locked.Error.Path})"),
-            SweepResult.Failed failed => new Outcome.Failed(failed.Error.Message),
-            SweepResult.Cancelled => new Outcome.Skipped("cancelled"),
+            SweepResult.Locked locked => Failure(locked.Error),
+            SweepResult.Failed failed => Failure(failed.Error),
+            SweepResult.Cancelled => CancelledOutcome,
             _ => throw new UnreachableException($"unknown sweep result {result}"),
         };
+
+    /// <summary>The outcome of a pick whose removal threw: <c>locked (&lt;file or path&gt;)</c> for a lock, the failure's message otherwise.</summary>
+    /// <param name="error">What removing the pick threw.</param>
+    /// <returns>Its outcome.</returns>
+    private static Outcome.Failed Failure(Exception error) =>
+        error is LockedException locked ? new Outcome.Failed($"locked ({locked.FirstLockedFile ?? locked.Path})") : new Outcome.Failed(error.Message);
 
     /// <summary>The outcome of a pick removed by <paramref name="action"/>; its unknown or negative size reports no size.</summary>
     /// <param name="action">How it was removed.</param>
@@ -157,7 +166,7 @@ public static class Remover
             }
             catch (Exception error) when (error is not OperationCanceledException)
             {
-                Report(new Progress.Done(decision));
+                Report(new Progress.Done(decision, Failure(error)));
                 throw;
             }
         }
@@ -172,9 +181,12 @@ public static class Remover
             }
             finally
             {
-                Report(new Progress.Done(runnable[index]));
+                Report(new Progress.Done(runnable[index], Removed(ActionOf(decision), decision.Candidate)));
             }
         }
+
+        /// <inheritdoc/>
+        public void Skipped(int index) => Report(new Progress.Done(runnable[index], CancelledOutcome));
 
         /// <inheritdoc/>
         public UnlockOutcome OfferUnlock(IReadOnlyList<string> paths) => offerUnlock(paths);

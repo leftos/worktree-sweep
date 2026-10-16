@@ -3,6 +3,8 @@ using System.Windows.Interop;
 using System.Windows.Threading;
 using WorktreeSweep.Recycle;
 using WorktreeSweep.Report;
+using WorktreeSweep.Signals;
+using WorktreeSweep.Tests.ViewModels;
 using WorktreeSweep.Unlock;
 using WorktreeSweep.ViewModels;
 using WorktreeSweep.Window;
@@ -94,6 +96,53 @@ public sealed class MainWindowTests
         Assert.NotNull(handle);
         Assert.NotEqual(ShellRecycler.NoOwner, owner);
         Assert.Equal(handle.Value, owner);
+    }
+
+    /// <summary>
+    /// The window takes the Removing screen with a populated view model, off screen, as the app takes it, and pumps the dispatcher at
+    /// context idle so that screen's bindings resolve against it: a read-only property bound two-way throws here rather than in the
+    /// shown window.
+    /// </summary>
+    [Fact]
+    public void MainWindowTakesTheRemovingScreenPopulated()
+    {
+        ExceptionDispatchInfo? failure = null;
+        int rows = 0;
+        string? heading = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                MainViewModel main = ViewModelSamples.Listed(ViewModelSamples.Worktree("a", MergeState.Ancestor, 10));
+                var window = new MainWindow(main, new WindowWorkers(main, IdleSeams()), @"C:\fixture");
+
+                ViewModelSamples.Reviewing(main, ViewModelSamples.Roomy).Answer(true);
+                main.Review?.ConfirmCommand.Execute(null);
+                Dispatcher.CurrentDispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+
+                rows = main.Removing?.Rows.Count ?? 0;
+                heading = main.Removing?.Heading;
+                window.Close();
+            }
+#pragma warning disable CA1031 // The failure is rethrown on the test's thread below.
+            catch (Exception error)
+#pragma warning restore CA1031
+            {
+                failure = ExceptionDispatchInfo.Capture(error);
+            }
+            finally
+            {
+                Dispatcher.CurrentDispatcher.InvokeShutdown();
+            }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+
+        thread.Start();
+        Assert.True(thread.Join(LoadTimeout), $"the window did not load within {LoadTimeout}");
+
+        failure?.Throw();
+        Assert.Equal(1, rows);
+        Assert.Equal("Removing 0 of 1", heading);
     }
 
     /// <summary>Seams that start no job and touch no disk: a scan that finds nothing, never run.</summary>

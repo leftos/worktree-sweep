@@ -11,5 +11,6 @@ public abstract record Progress
 
     /// <summary>Decision <paramref name="Index"/> is finished, removed or failed.</summary>
     /// <param name="Index">The decision's index, from zero.</param>
-    public sealed record Done(int Index) : Progress;
+    /// <param name="Outcome">What became of the decision.</param>
+    public sealed record Done(int Index, Outcome Outcome) : Progress;
 }

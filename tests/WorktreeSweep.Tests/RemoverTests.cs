@@ -35,7 +35,7 @@ public sealed class RemoverTests
         Assert.Equal(new Outcome.LinkRemoved(), swept[0].Outcome);
         Assert.False(Path.Exists(link), $"{link} still exists");
         Assert.True(File.Exists(kept), $"the link's target lost {kept}");
-        Assert.Equal([new Progress.Started(0), new Progress.Done(0)], run.Progress);
+        Assert.Equal([new Progress.Started(0), new Progress.Done(0, new Outcome.LinkRemoved())], run.Progress);
     }
 
     /// <summary>Removing a registered worktree prunes its registration and deletes its branch when the choice is delete.</summary>
@@ -199,7 +199,17 @@ public sealed class RemoverTests
         Assert.False(Directory.Exists(wt), $"{wt} still exists");
         Assert.Equal(1, run.Offers);
         Assert.True(Fixture.SamePath(Assert.Single(run.OfferedPaths), wt), $"offered: {string.Join(", ", run.OfferedPaths)}");
-        Assert.Equal([new Progress.Started(0), new Progress.Done(0), new Progress.Started(0), new Progress.Done(0)], run.Progress);
+        Progress.Done[] finished = [.. run.Progress.OfType<Progress.Done>()];
+        Assert.StartsWith("locked (", Assert.IsType<Outcome.Failed>(finished[0].Outcome).Reason, StringComparison.Ordinal);
+        Assert.Equal(
+            [
+                new Progress.Started(0),
+                new Progress.Done(0, finished[0].Outcome),
+                new Progress.Started(0),
+                new Progress.Done(0, new Outcome.Permanent(registered.KnownSize)),
+            ],
+            run.Progress
+        );
         Assert.DoesNotContain("repo.wt/feat", Fixture.Git(repo, ["worktree", "list", "--porcelain"]), StringComparison.Ordinal);
     }
 
@@ -227,7 +237,7 @@ public sealed class RemoverTests
         Assert.Contains("held.txt", failed.Reason, StringComparison.Ordinal);
         Assert.Empty(swept[0].Notes);
         Assert.Equal(1, run.Offers);
-        Assert.Equal([new Progress.Started(0), new Progress.Done(0)], run.Progress);
+        Assert.Equal([new Progress.Started(0), new Progress.Done(0, failed)], run.Progress);
         Assert.Contains("locked keep me", Fixture.Git(repo, ["worktree", "list", "--porcelain"]), StringComparison.Ordinal);
     }
 
@@ -254,7 +264,7 @@ public sealed class RemoverTests
         Assert.Contains("became a link since the scan; left in place", failed.Reason, StringComparison.Ordinal);
         Assert.True(new DirectoryInfo(folder).Attributes.HasFlag(FileAttributes.ReparsePoint), $"{folder} is no longer the junction");
         Assert.True(File.Exists(kept), $"the junction's target lost {kept}");
-        Assert.Equal([new Progress.Started(0), new Progress.Done(0)], run.Progress);
+        Assert.Equal([new Progress.Started(0), new Progress.Done(0, failed)], run.Progress);
     }
 
     /// <summary>A pick whose size the scan could not read is removed and reports no bytes at all.</summary>
@@ -275,6 +285,54 @@ public sealed class RemoverTests
         );
 
         Assert.Equal(new Outcome.Permanent(null), swept[0].Outcome);
+    }
+
+    /// <summary>The progress a removed pick reports carries the pick's own outcome.</summary>
+    [Fact]
+    public void RemovedPickReportsItsOutcome()
+    {
+        using var fx = new Fixture();
+        string folder = fx.PathTo(@"x.wt\stray");
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "file.txt"), "gone");
+        Candidate candidate = CandidateAt(fx, folder);
+        var run = new Recorder();
+
+        IReadOnlyList<Swept> swept = run.Remove([PermanentDecision(candidate, new BranchChoice.NotOffered())], TestContext.Current.CancellationToken);
+
+        Assert.IsType<Outcome.Permanent>(swept[0].Outcome);
+        Assert.Equal([new Progress.Started(0), new Progress.Done(0, swept[0].Outcome)], run.Progress);
+    }
+
+    /// <summary>A retry pass the token stops before it runs reports the pick it skips as skipped, as Results does.</summary>
+    [Fact]
+    public void CancelledRetryPassReportsTheSkippedOutcome()
+    {
+        using var fx = new Fixture();
+        (_, string wt, string held) = GitLockedWorktree(fx);
+        RegisteredCandidate registered = Assert.IsType<RegisteredCandidate>(CandidateAt(fx, wt));
+        using var source = new CancellationTokenSource();
+        var run = new Recorder
+        {
+            Answer = () =>
+            {
+                source.Cancel();
+                return UnlockOutcome.Unlocked;
+            },
+        };
+
+        IReadOnlyList<Swept> swept;
+        using (new FileStream(held, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            swept = run.Remove([PermanentDecision(registered, new BranchChoice.NotOffered())], source.Token);
+        }
+
+        Assert.True(Directory.Exists(wt), $"{wt} was removed after the token was cancelled");
+        Assert.Equal(new Outcome.Skipped("cancelled"), swept[0].Outcome);
+        Assert.Equal(3, run.Progress.Count);
+        Assert.Equal(new Progress.Started(0), run.Progress[0]);
+        Assert.IsType<Outcome.Failed>(Assert.IsType<Progress.Done>(run.Progress[1]).Outcome);
+        Assert.Equal(new Progress.Done(0, new Outcome.Skipped("cancelled")), run.Progress[2]);
     }
 
     /// <summary>A worktree on <c>feat</c> at <c>repo.wt\feat</c>, git-locked with the reason <c>keep me</c>, holding <c>held.txt</c>.</summary>

@@ -5,11 +5,17 @@ using WorktreeSweep.Signals;
 
 namespace WorktreeSweep.Report;
 
-/// <summary>The seven lines the picker's detail pane shows for the highlighted candidate, as plain text.</summary>
+/// <summary>The labelled fields the picker's detail pane shows for the highlighted candidate, as plain text.</summary>
 public static class DetailText
 {
     /// <summary>What the pane says when removing the candidate loses nothing.</summary>
     private const string NothingIsLost = "Nothing is lost.";
+
+    /// <summary>The index in <see cref="Labels"/> of the field that says what removing the candidate loses.</summary>
+    private const int LossField = 4;
+
+    /// <summary>The fields' labels, in the order the pane shows them.</summary>
+    private static readonly string[] Labels = ["What it is", "State", "Activity and size", "Marks", "Removing it loses", "Unreadable signals"];
 
     /// <summary>Seconds in a day.</summary>
     private const long DaySeconds = 86_400;
@@ -24,26 +30,29 @@ public static class DetailText
     private const int YearWidth = 4;
 
     /// <summary>
-    /// The seven lines for <paramref name="candidate"/>: its path, what it is, its state or notes, its last activity or write and
-    /// size, its marks, what removing it loses, and any signals that could not be read. Every date is local to
-    /// <paramref name="utcOffset"/> and its age is measured from <paramref name="nowUnix"/>.
+    /// The fields for <paramref name="candidate"/>, each left out when it has no text: What it is, State (its state or notes),
+    /// Activity and size (its last activity or write and size), Marks, Removing it loses (always present), and Unreadable signals.
+    /// Every date is local to <paramref name="utcOffset"/> and its age is measured from <paramref name="nowUnix"/>.
     /// </summary>
     /// <param name="candidate">The candidate.</param>
     /// <param name="nowUnix">The time ages are measured from, in Unix seconds.</param>
     /// <param name="utcOffset">The local time zone's offset from UTC at a Unix time.</param>
-    /// <returns>The seven lines, in order.</returns>
-    public static IReadOnlyList<string> Lines(Candidate candidate, long nowUnix, Func<long, TimeSpan> utcOffset)
+    /// <returns>The fields with text, in order.</returns>
+    public static IReadOnlyList<DetailField> Fields(Candidate candidate, long nowUnix, Func<long, TimeSpan> utcOffset)
     {
         ArgumentNullException.ThrowIfNull(candidate);
         ArgumentNullException.ThrowIfNull(utcOffset);
         string Date(long unix) => FormatLocal(unix, utcOffset(unix), nowUnix);
         (IReadOnlyList<string> Text, string Errors) detail = candidate switch
         {
-            RegisteredCandidate registered => (RegisteredLines(registered, Date), ErrorsLine(registered.Signals.Errors)),
-            OrphanCandidate orphan => (OrphanLines(orphan, Date), ""),
+            RegisteredCandidate registered => (RegisteredTexts(registered, Date), ErrorsLine(registered.Signals.Errors)),
+            OrphanCandidate orphan => (OrphanTexts(orphan, Date), ""),
             _ => throw new ArgumentException($"unknown candidate type {candidate.GetType().Name}", nameof(candidate)),
         };
-        return [.. detail.Text, LossText.For(candidate)?.Text ?? NothingIsLost, detail.Errors];
+        string[] texts = [.. detail.Text, LossText.For(candidate)?.Text ?? NothingIsLost, detail.Errors];
+        DetailField[] fields = [.. Labels.Zip(texts, (label, text) => new DetailField(label, text))];
+        fields[LossField] = fields[LossField] with { IsLoss = true };
+        return [.. fields.Where(field => field.Text.Length > 0)];
     }
 
     /// <summary>
@@ -67,13 +76,12 @@ public static class DetailText
         return $"{day} {time} ({age} ago)";
     }
 
-    /// <summary>The five lines a registered worktree's detail holds, before the loss and error lines.</summary>
+    /// <summary>The four texts a registered worktree's detail holds before the loss and errors: what it is, state, activity, marks.</summary>
     /// <param name="registered">The worktree.</param>
     /// <param name="date">A Unix time formatted as <see cref="FormatLocal"/> does.</param>
-    /// <returns>The five lines.</returns>
-    private static IReadOnlyList<string> RegisteredLines(RegisteredCandidate registered, Func<long, string> date) =>
+    /// <returns>The four texts.</returns>
+    private static IReadOnlyList<string> RegisteredTexts(RegisteredCandidate registered, Func<long, string> date) =>
         [
-            registered.Path,
             string.Create(CultureInfo.InvariantCulture, $"repo {registered.Repo}; {Branch(registered.Record)}"),
             StateLine(registered.Signals),
             ActivityLine(registered.Signals, date),
@@ -155,11 +163,11 @@ public static class DetailText
     /// <returns>The phrase.</returns>
     private static string LockedWord(string reason) => reason.Length == 0 ? "git-locked" : $"git-locked: {reason}";
 
-    /// <summary>The five lines an orphan's detail holds, before the loss and error lines.</summary>
+    /// <summary>The four texts an orphan's detail holds before the loss and errors: what it is, notes, activity, and no marks.</summary>
     /// <param name="candidate">The orphan.</param>
     /// <param name="date">A Unix time formatted as <see cref="FormatLocal"/> does.</param>
-    /// <returns>The five lines.</returns>
-    private static IReadOnlyList<string> OrphanLines(OrphanCandidate candidate, Func<long, string> date)
+    /// <returns>The four texts.</returns>
+    private static IReadOnlyList<string> OrphanTexts(OrphanCandidate candidate, Func<long, string> date)
     {
         Orphan orphan = candidate.Orphan;
         bool isLink = orphan.Kind == OrphanKind.Link;
@@ -187,7 +195,6 @@ public static class DetailText
         }
         return
         [
-            orphan.Path,
             string.Create(CultureInfo.InvariantCulture, $"container {orphan.Container}; {(isLink ? "link" : "folder")}"),
             string.Join("; ", notes),
             string.Join("; ", activity),

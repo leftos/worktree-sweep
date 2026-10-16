@@ -42,6 +42,15 @@ public sealed record ReportRow
     /// <summary>Gets the risk of the UPSTREAM cell.</summary>
     public CellRisk UpstreamRisk { get; init; }
 
+    /// <summary>Gets what the row is, the KIND cell as a value.</summary>
+    public required RowKind RowKind { get; init; }
+
+    /// <summary>Gets the last activity or write the ACTIVE cell ages, in Unix seconds; <see langword="null"/> when unknown.</summary>
+    public long? ActiveUnix { get; init; }
+
+    /// <summary>Gets the bytes the SIZE cell shows; <see langword="null"/> when the cell is empty.</summary>
+    public long? SizeBytes { get; init; }
+
     /// <summary>Gets the candidate the row was built from.</summary>
     public required Candidate Candidate { get; init; }
 }

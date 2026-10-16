@@ -16,7 +16,7 @@ public sealed class ReviewViewModelTests
     {
         RegisteredCandidate folder = ViewModelSamples.Worktree("a", MergeState.Ancestor, 10);
         MainViewModel main = ViewModelSamples.Listed(folder, ViewModelSamples.Link("link"));
-        ViewModelSamples.ListOf(main).TickAllCommand.Execute(null);
+        ViewModelSamples.ListOf(main).TickShownCommand.Execute(null);
 
         ViewModelSamples.ListOf(main).ReviewCommand.Execute(null);
 
@@ -49,7 +49,7 @@ public sealed class ReviewViewModelTests
     {
         MainViewModel main = ViewModelSamples.Listed(ViewModelSamples.Worktree("a", MergeState.Ancestor, 10));
         ListViewModel list = ViewModelSamples.ListOf(main);
-        list.TickAllCommand.Execute(null);
+        list.TickShownCommand.Execute(null);
         list.ReviewCommand.Execute(null);
         ReviewViewModel? review = main.Review;
         Assert.NotNull(review);
@@ -190,7 +190,7 @@ public sealed class ReviewViewModelTests
         Assert.NotNull(removing);
         Assert.IsType<Plan.Skip>(Assert.Single(removing.Decisions).Plan);
         Assert.Empty(removing.Rows);
-        Assert.Equal("Removing 0/0", removing.Heading);
+        Assert.Equal("Removing 0 of 0", removing.Heading);
     }
 
     /// <summary>Cancel on the final confirmation goes back to the List with the ticks kept.</summary>
