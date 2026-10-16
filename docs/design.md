@@ -4,7 +4,7 @@ How the tool finds and cleans up stale git worktrees, and the rulings that gover
 
 ## Context
 
-A drive that holds many repos and their worktrees collects worktrees nobody uses any more. On the owner's `D:\` that meant registered worktrees across several parent repos, empty leftover folders, a 29 GB folder with a broken `.git` directory, a 16 GB build-output folder, and an old Claude agent worktree under a repo's `.claude/worktrees`.
+A drive that holds many repos and their worktrees collects worktrees nobody uses any more. On the owner's `X:\dev` that meant registered worktrees across several parent repos, empty leftover folders, a 29 GB folder with a broken `.git` directory, a 16 GB build-output folder, and an old Claude agent worktree under a repo's `.claude/worktrees`.
 
 Deleting these on Windows often fails because files are locked: a shell whose current folder is inside, an IDE, or a language server. The tool:
 

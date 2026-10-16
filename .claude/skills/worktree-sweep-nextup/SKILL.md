@@ -31,11 +31,11 @@ linear: worktree-sweep
 
 ## Rulings every brief carries
 
-- **Read-only against the real D:\.** A run against D:\ uses `--list` or `--json` only. The window and any removal run only against test fixtures under `%TEMP%` or folders under `.tmp\`. Real cleanup of D:\ happens with the user at the keyboard.
+- **Read-only against the real X:\dev.** A run against X:\dev uses `--list` or `--json` only. The window and any removal run only against test fixtures under `%TEMP%` or folders under `.tmp\`. Real cleanup of X:\dev happens with the user at the keyboard.
 - **One elevation per run**: removal is two passes (`TwoPassSweep`); locked picks go to a single `UnlockOffer`, one `sudo` session, one unfiltered `handle.exe` dump filtered by every locked path, a loop until clear or Done, then one retry pass.
-- **Junctions are links, never trees**: remove with `PermanentDelete.RemoveLink` after re-checking it is still a link; never size, walk, recycle or recursively delete through one (`D:\yaat-server.wt\yaat` → `X:\dev\yaat` is real).
+- **Junctions are links, never trees**: remove with `PermanentDelete.RemoveLink` after re-checking it is still a link; never size, walk, recycle or recursively delete through one (a junction in a `.wt` folder that points at a main checkout under `X:\dev` is the case to keep in mind).
 - **The scan writes nothing**: every git call goes through `GitRunner`, which clears `GitRunner.RepoLocalEnvVars` and runs with `GIT_OPTIONAL_LOCKS=0`, `core.fsmonitor=false`; `merge-tree` writes to a scratch object folder.
-- **Recycle Bin capacity is checked before recycling** (`RecycleDecider`, `BinCapacity`; D:'s cap measured at 14844 MB); an item over it asks for a permanent delete instead of letting the Shell nuke it silently.
+- **Recycle Bin capacity is checked before recycling** (`RecycleDecider`, `BinCapacity`; X:'s cap measured at 14844 MB); an item over it asks for a permanent delete instead of letting the Shell nuke it silently.
 - Warnings are errors (`Directory.Build.props`: `TreatWarningsAsErrors`, `EnforceCodeStyleInBuild`, `AnalysisLevel` latest-recommended), and the format gates run at info severity.
 
 ## Agents and gates
@@ -48,7 +48,7 @@ linear: worktree-sweep
   - `dotnet test WorktreeSweep.slnx -c Release --no-build` (runs under Microsoft.Testing.Platform through the root `global.json`)
   - `dotnet csharpier check .`
   - `dotnet format style WorktreeSweep.slnx --verify-no-changes --severity info` and the same with `analyzers`
-- Needs the user: anything that runs elevated. `handle.exe` sees nothing unelevated, and a UAC prompt needs a person. Ask the user to run the command with `!`, quoting a Windows path in single quotes (`'D:\x\y'`): bash eats unquoted backslashes, and `handle.exe` matches only backslash paths.
+- Needs the user: anything that runs elevated. `handle.exe` sees nothing unelevated, and a UAC prompt needs a person. Ask the user to run the command with `!`, quoting a Windows path in single quotes (`'X:\dev\x\y'`): bash eats unquoted backslashes, and `handle.exe` matches only backslash paths.
 - Parent-side gate: `git status --short` in the repo.
 
 ## Traps
@@ -59,11 +59,11 @@ linear: worktree-sweep
 - **A bare class name filters to zero tests.** `dotnet test … --filter-class SweepProcessTests` runs nothing and exits 8 with "Zero tests ran", no error; the filter takes a fully qualified name or a wildcard (`--filter-class *SweepProcessTests`). A brief that scopes a run names the wildcard form, and an exit of 8 is never a pass.
 - **`prek run --all-files` sees only tracked files**, so a C# hook shows "(no files to check)" on a branch whose files are still untracked; run `prek run <hook> --files <path>` to exercise it.
 - **`git worktree list` can drop a worktree and still exit 0.** A linked worktree whose `.git\worktrees\<id>\gitdir` is unreadable or empty is left out of the list with no error, and a repo whose list fails is dropped by discovery; either way the live worktree comes back as an orphan "registered elsewhere". `Trace` output never reaches xUnit, so a `Discover`-based assertion names the discovered repos, the discovery errors and the orphans in its message.
-- **D:\ changes under you.** Other sessions add and remove worktrees there all the time; a brief never hard-codes counts from D:\, only paths that must or must not appear.
+- **X:\dev changes under you.** Other sessions add and remove worktrees there all the time; a brief never hard-codes counts from X:\dev, only paths that must or must not appear.
 - **The window needs a desktop**: window code sits at the edge; logic is tested through the view models and the Core types with explicit choices.
 - **A Shell call can put a dialog on the user's desktop.** A test or probe that reaches `IFileOperation` runs it on a thread with a timeout, so a dialog fails the test rather than hanging it. Never run such a test red on purpose while the user is at the machine.
-- **No volume here is a Dev Drive.** `D:` is `subst` of `X:\dev`, and X: and C: are both NTFS; comments that call the repo's `.tmp\` "the Dev Drive" predate that. On C: (`%TEMP%`), a freshly written, unlocked tree can fail a rename or recycle for 1–3 s while a scanner holds it. A test there that expects success can flake; a test that expects `Locked` cannot.
-- **X: (so D: too) has NukeOnDelete=1**, so nothing recycled there reaches the Recycle Bin; C: (`%TEMP%`) recycles. Window fixtures for a by-eye check go in `%TEMP%`.
+- **No volume here is a Dev Drive.** X: and C: are both NTFS; comments that call the repo's `.tmp\` "the Dev Drive" predate that. On C: (`%TEMP%`), a freshly written, unlocked tree can fail a rename or recycle for 1–3 s while a scanner holds it. A test there that expects success can flake; a test that expects `Locked` cannot.
+- **X: has NukeOnDelete=1**, so nothing recycled there reaches the Recycle Bin; C: (`%TEMP%`) recycles. Window fixtures for a by-eye check go in `%TEMP%`.
 - **Unelevated `handle.exe` is slow (about 141 s for a dump) and sees only some of the caller's own processes.** Elevated, it takes 1.4 s. Never judge the unlock flow's speed from an unelevated run.
 
 ## Concurrency
