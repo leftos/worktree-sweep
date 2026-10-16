@@ -111,7 +111,7 @@ public static class ReportTable
     /// <summary><paramref name="message"/> with its line breaks, <c>\r\n</c> then <c>\n</c>, replaced by <c>; </c>.</summary>
     /// <param name="message">The message.</param>
     /// <returns>The message on one line.</returns>
-    internal static string OneLine(string message) =>
+    public static string OneLine(string message) =>
         message.Replace("\r\n", "; ", StringComparison.Ordinal).Replace("\n", "; ", StringComparison.Ordinal);
 
     /// <summary>
@@ -237,6 +237,9 @@ public static class ReportTable
             MergeRisk = MergeRiskOf(signals.MergeState),
             DirtyRisk = DirtyRiskOf(signals.Dirty),
             UpstreamRisk = UpstreamRiskOf(signals.Upstream),
+            RowKind = RowKind.Worktree,
+            ActiveUnix = signals.LastActivityUnix,
+            SizeBytes = signals.Size?.Bytes,
             Candidate = registered,
         };
     }
@@ -306,6 +309,9 @@ public static class ReportTable
             Active = candidate.Size.LastWriteUnix is long then ? Age(then, nowUnix) : "",
             Size = isLink ? "" : HumanBytes(candidate.Size.Bytes),
             Flags = string.Join(", ", flags),
+            RowKind = isLink ? RowKind.Link : RowKind.Orphan,
+            ActiveUnix = candidate.Size.LastWriteUnix,
+            SizeBytes = isLink ? null : candidate.Size.Bytes,
             Candidate = candidate,
         };
     }

@@ -1,5 +1,6 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using WorktreeSweep.Report;
+using WorktreeSweep.Review;
 
 namespace WorktreeSweep.ViewModels;
 
@@ -16,6 +17,7 @@ public sealed partial class CandidateRowViewModel : ObservableObject
         ArgumentNullException.ThrowIfNull(row);
         this.row = row;
         IsTicked = row.Candidate is RegisteredCandidate { Released: not null };
+        LosesNothing = LossText.For(row.Candidate) is null;
     }
 
     /// <summary>Gets the PATH cell, relative to the scanned root.</summary>
@@ -53,6 +55,21 @@ public sealed partial class CandidateRowViewModel : ObservableObject
 
     /// <summary>Gets the risk of the UPSTREAM cell.</summary>
     public CellRisk UpstreamRisk => row.UpstreamRisk;
+
+    /// <summary>Gets what the row is.</summary>
+    public RowKind RowKind => row.RowKind;
+
+    /// <summary>Gets the last activity or write the ACTIVE cell ages, in Unix seconds; <see langword="null"/> when unknown.</summary>
+    public long? ActiveUnix => row.ActiveUnix;
+
+    /// <summary>Gets the bytes the SIZE cell shows; <see langword="null"/> when the cell is empty.</summary>
+    public long? SizeBytes => row.SizeBytes;
+
+    /// <summary>Gets the full branch name, which the BRANCH cell may cut short; empty when there is none.</summary>
+    public string FullBranch => row.Candidate is RegisteredCandidate { Record.Branch: { } branch } ? branch : "";
+
+    /// <summary>Gets a value indicating whether removing the candidate loses nothing.</summary>
+    public bool LosesNothing { get; }
 
     /// <summary>Gets the candidate the row shows.</summary>
     public Candidate Candidate => row.Candidate;
