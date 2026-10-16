@@ -123,7 +123,7 @@ public static class HolderFinder
             census.MarkUnopened(pid);
         }
         var unnamed = new SortedSet<int>();
-        foreach ((int Pid, string? Name) handle in findings.Names)
+        foreach (NamedHandle handle in findings.Names)
         {
             if (handle.Name is null)
             {

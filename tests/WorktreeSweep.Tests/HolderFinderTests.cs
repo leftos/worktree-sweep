@@ -137,7 +137,7 @@ public sealed class HolderFinderTests : IDisposable
             (pids, _) =>
             {
                 inspected = [.. pids];
-                return new HandleFindings([(child.Id, Verbatim + file)], [], []);
+                return new HandleFindings([new NamedHandle(child.Id, Verbatim + file, 0x54)], [], []);
             }
         );
 
@@ -152,7 +152,11 @@ public sealed class HolderFinderTests : IDisposable
         using var child = ReadyChild.Start(Side, Ready("twice"));
         string file = HeldFile();
 
-        HolderReport report = HolderFinder.Find(Scanned, [], (_, _) => new HandleFindings([(child.Id, file), (child.Id, file)], [], []));
+        HolderReport report = HolderFinder.Find(
+            Scanned,
+            [],
+            (_, _) => new HandleFindings([new NamedHandle(child.Id, file, 0x54), new NamedHandle(child.Id, file, 0x58)], [], [])
+        );
 
         Assert.Equal<Hold>([new Hold.OpenHandle(file)], RequiredHolder(report, child.Id).Holds);
     }
@@ -163,7 +167,7 @@ public sealed class HolderFinderTests : IDisposable
     {
         using var child = ReadyChild.Start(Side, Ready("unnamed"));
 
-        HolderReport report = HolderFinder.Find(Scanned, [], (_, _) => new HandleFindings([(child.Id, null)], [], []));
+        HolderReport report = HolderFinder.Find(Scanned, [], (_, _) => new HandleFindings([new NamedHandle(child.Id, null, 0)], [], []));
 
         Assert.Null(FindHolder(report, child.Id));
         Assert.Contains(new MayHold(child.Id, "pwsh.exe", MayHoldWhy.UnnamedHandle), report.MayHold);
@@ -176,7 +180,7 @@ public sealed class HolderFinderTests : IDisposable
         using var child = ReadyChild.Start(Side, Ready("failed-using"));
         var named = new NamedHandles([], new HashSet<int> { child.Id });
 
-        HolderReport report = HolderFinder.Find(Scanned, [], (_, _) => OpenHandles.Findings(named, [], [child.Id]));
+        HolderReport report = HolderFinder.Find(Scanned, [], (_, _) => OpenHandles.Findings(named, [], [new RootUser(child.Id, Scanned)]));
 
         Assert.Null(FindHolder(report, child.Id));
         Assert.Contains(new MayHold(child.Id, "pwsh.exe", MayHoldWhy.UnnamedHandle), report.MayHold);
@@ -201,7 +205,7 @@ public sealed class HolderFinderTests : IDisposable
     {
         using var child = ReadyChild.Start(Side, Ready("unlisted"));
 
-        HolderReport report = HolderFinder.Find(Scanned, [], (_, _) => new HandleFindings([], [child.Id], [child.Id]));
+        HolderReport report = HolderFinder.Find(Scanned, [], (_, _) => new HandleFindings([], [child.Id], [new RootUser(child.Id, Scanned)]));
 
         Assert.Contains(new MayHold(child.Id, "pwsh.exe", MayHoldWhy.CannotOpen), report.MayHold);
     }
@@ -212,7 +216,7 @@ public sealed class HolderFinderTests : IDisposable
     {
         using ReadyChild child = CwdChild();
 
-        HolderReport report = HolderFinder.Find(Scanned, [], (_, _) => new HandleFindings([], [child.Id], [child.Id]));
+        HolderReport report = HolderFinder.Find(Scanned, [], (_, _) => new HandleFindings([], [child.Id], [new RootUser(child.Id, Scanned)]));
 
         Assert.True(HoldsCurrentFolder(report, child.Id), $"pid {child.Id} not listed with its current folder: {Describe(report)}");
         Assert.DoesNotContain(report.MayHold, may => may.Pid == child.Id);
@@ -228,7 +232,11 @@ public sealed class HolderFinderTests : IDisposable
         int own = Environment.ProcessId;
         string file = HeldFile();
 
-        HolderReport report = HolderFinder.Find(Scanned, [own], (_, _) => new HandleFindings([(own, file)], [own], [own]));
+        HolderReport report = HolderFinder.Find(
+            Scanned,
+            [own],
+            (_, _) => new HandleFindings([new NamedHandle(own, file, 0x54)], [own], [new RootUser(own, Scanned)])
+        );
 
         Assert.Null(FindHolder(report, own));
         Assert.DoesNotContain(report.MayHold, may => may.Pid == own);

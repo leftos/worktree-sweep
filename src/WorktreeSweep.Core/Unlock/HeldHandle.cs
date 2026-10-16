@@ -1,7 +1,6 @@
 namespace WorktreeSweep.Unlock;
 
-/// <summary>One handle a <see cref="Locker"/> holds.</summary>
-/// <param name="Handle">The handle value.</param>
-/// <param name="Kind">The handle type, such as <c>File</c> or <c>Section</c>.</param>
-/// <param name="Name">The object the handle refers to.</param>
-public sealed record HeldHandle(ulong Handle, string Kind, string Name);
+/// <summary>One file handle a <see cref="Locker"/> holds.</summary>
+/// <param name="Handle">The handle value, meaningful only with its locker's PID and start time.</param>
+/// <param name="Name">The file the handle refers to, without a verbatim drive prefix.</param>
+public sealed record HeldHandle(nint Handle, string Name);

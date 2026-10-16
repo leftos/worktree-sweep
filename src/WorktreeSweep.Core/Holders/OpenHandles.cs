@@ -49,12 +49,12 @@ internal static class OpenHandles
     private const int QueryAttempts = 8;
 
     /// <summary>
-    /// Lists and names the open disk handles of <paramref name="pids"/>, and finds the processes using the folder; this is the
+    /// Lists and names the open disk handles of <paramref name="pids"/>, and finds the processes using each root; this is the
     /// production <see cref="HandleScanner"/>. A process that cannot be opened or listed is unlisted; a failure to find the
-    /// processes using the folder is traced and leaves that list empty.
+    /// processes using a root is traced and adds no users of it.
     /// </summary>
     /// <param name="pids">The inspected processes.</param>
-    /// <param name="roots">Every spelling of the folder, the fully resolved one first.</param>
+    /// <param name="roots">Every spelling of the folders, each folder's fully resolved one first.</param>
     /// <returns>What the handles showed.</returns>
     /// <exception cref="IOException">This program's own file or handles cannot be read to learn the File type index.</exception>
     internal static HandleFindings Scan(IReadOnlyCollection<int> pids, IReadOnlyList<string> roots)
@@ -88,7 +88,7 @@ internal static class OpenHandles
                 HandleNaming.DefaultTimeout,
                 HandleNaming.CancelLookup
             );
-            return Findings(named, unlisted, UsingOrNone(roots[0]));
+            return Findings(named, unlisted, [.. roots.Distinct(StringComparer.Ordinal).SelectMany(UsersOf)]);
         }
         finally
         {
@@ -103,14 +103,18 @@ internal static class OpenHandles
     /// </summary>
     /// <param name="named">What naming the handles found.</param>
     /// <param name="unlisted">Processes whose handles could not be listed.</param>
-    /// <param name="usingPids">Processes the file system reports as using the folder.</param>
+    /// <param name="users">Processes the file system reports as using a root, with that root.</param>
     /// <returns>The findings.</returns>
-    internal static HandleFindings Findings(NamedHandles named, IReadOnlyCollection<int> unlisted, IReadOnlyList<int> usingPids)
+    internal static HandleFindings Findings(NamedHandles named, IReadOnlyCollection<int> unlisted, IReadOnlyList<RootUser> users)
     {
         ArgumentNullException.ThrowIfNull(named);
-        ArgumentNullException.ThrowIfNull(usingPids);
-        IEnumerable<(int Pid, string? Name)> failedUsing = usingPids.Where(named.Failed.Contains).Distinct().Select(pid => (pid, (string?)null));
-        return new HandleFindings([.. named.Names, .. failedUsing], unlisted, usingPids);
+        ArgumentNullException.ThrowIfNull(users);
+        IEnumerable<NamedHandle> failedUsing = users
+            .Select(user => user.Pid)
+            .Where(named.Failed.Contains)
+            .Distinct()
+            .Select(pid => new NamedHandle(pid, null, 0));
+        return new HandleFindings([.. named.Names, .. failedUsing], unlisted, users);
     }
 
     /// <summary>
@@ -225,7 +229,7 @@ internal static class OpenHandles
                 Trace.WriteLine($"cannot name handle 0x{handle.Value:X} of pid {handle.Pid}: {new Win32Exception(lookupError).Message}");
                 return CheckedHandle.Failed;
             }
-            return CheckedHandle.Disk(name);
+            return CheckedHandle.Disk(name, (nint)handle.Value);
         }
         finally
         {
@@ -274,11 +278,11 @@ internal static class OpenHandles
     }
 
     /// <summary>The processes using <paramref name="root"/>, or none when they cannot be listed, which is traced.</summary>
-    private static IReadOnlyList<int> UsingOrNone(string root)
+    private static IReadOnlyList<RootUser> UsersOf(string root)
     {
         try
         {
-            return PidsUsing(root);
+            return [.. PidsUsing(root).Select(pid => new RootUser(pid, root))];
         }
         catch (IOException error)
         {
