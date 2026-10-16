@@ -128,6 +128,51 @@ public sealed class GitRunnerTests
     }
 
     /// <summary>
+    /// A cancel that arrives after the timeout has killed git ends the call as a cancel, without waiting out the grace for the
+    /// output pipes. The alias first detaches a sleep that outlives the kill and holds the pipes, then opens a file and loops; the
+    /// test waits for the file to be released, which is the kill, cancels, and waits for the call to end under a hang guard the
+    /// detached sleep outlives. When the timeout fires before the alias has detached its sleep, the case cannot be exercised and is
+    /// skipped.
+    /// </summary>
+    /// <returns>A task that completes when the test ends.</returns>
+    [Fact]
+    public async Task CancelAfterTimeoutEndsWithoutWaitingOutTheGrace()
+    {
+        using var fx = new Fixture();
+        string repo = fx.Repo("repo");
+        string held = fx.PathTo("held");
+        string alias = $"alias.hang=!(cd / && sleep 300 &); exec 3> '{held.Replace('\\', '/')}'; while :; do sleep 1; done";
+        using var cancel = new CancellationTokenSource();
+
+        Task<GitStatus> run = Task.Run(
+            () =>
+                GitRunner.RunStatusWithEnv(
+                    repo,
+                    ["-c", alias, "hang"],
+                    new Dictionary<string, string>(),
+                    TimeSpan.FromSeconds(2),
+                    TimeSpan.FromMinutes(10),
+                    cancel.Token
+                ),
+            TestContext.Current.CancellationToken
+        );
+        Fixture.WaitUntil(() => File.Exists(held) || run.IsCompleted, "the alias to start sleeping");
+        if (run.IsCompleted)
+        {
+            Assert.Skip("the timeout killed git before the alias had detached its sleep, so no cancel can arrive after the timeout");
+        }
+        Fixture.WaitUntil(() => Fixture.IsReleased(held) || run.IsCompleted, "the timeout to kill the alias");
+        Assert.False(run.IsCompleted, "the call ended before it was cancelled");
+        await cancel.CancelAsync();
+
+        Fixture.WaitUntil(() => run.IsCompleted, "the cancelled call to end");
+        OperationCanceledException error = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run);
+
+        Assert.Equal($"`git -C {repo} -c {alias} hang` was cancelled and was killed", error.Message);
+        Assert.Equal(cancel.Token, error.CancellationToken);
+    }
+
+    /// <summary>
     /// A git that exits while a process it started still holds its output open is reported once the grace runs out, instead of
     /// waiting for that process to end.
     /// </summary>
