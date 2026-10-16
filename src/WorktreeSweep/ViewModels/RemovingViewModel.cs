@@ -3,17 +3,18 @@ using System.Globalization;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using WorktreeSweep.Removal;
+using WorktreeSweep.Report;
 using WorktreeSweep.Unlock;
 
 namespace WorktreeSweep.ViewModels;
 
 /// <summary>
-/// The Removing screen: a row per runnable decision moving from pending through removing… to done, a heading counting them, Cancel,
-/// and the unlock hand-off's notice and banner. It owns the cancellation the removal watches.
+/// The Removing screen: a row per runnable decision moving from pending through removing… to done, a progress bar and its byte line,
+/// a heading counting them, Stop, and the unlock hand-off's notice and banner. It owns the cancellation the removal watches.
 /// </summary>
 public sealed partial class RemovingViewModel : ObservableObject, IDisposable
 {
-    /// <summary>What the heading gains once Cancel is pressed.</summary>
+    /// <summary>What the heading gains once Stop is pressed.</summary>
     private const string StoppingSuffix = "  stopping after the current item…";
 
     /// <summary>Cancelled by <see cref="CancelCommand"/>; its token stops the removal after the current item.</summary>
@@ -22,7 +23,7 @@ public sealed partial class RemovingViewModel : ObservableObject, IDisposable
     /// <summary>Shows the Results.</summary>
     private readonly Action<IReadOnlyList<Swept>> finished;
 
-    /// <summary>Whether Cancel was pressed.</summary>
+    /// <summary>Whether Stop was pressed.</summary>
     private bool stopping;
 
     /// <summary>Whether the unlock hand-off is under way.</summary>
@@ -52,7 +53,7 @@ public sealed partial class RemovingViewModel : ObservableObject, IDisposable
             .. decisions
                 .Select((decision, index) => (Decision: decision, Index: index))
                 .Where(entry => entry.Decision.Plan is Plan.Run)
-                .Select(entry => new RemovalRowViewModel(entry.Index, paths[entry.Index])),
+                .Select(entry => new RemovalRowViewModel(entry.Index, paths[entry.Index], entry.Decision)),
         ];
         Heading = HeadingText();
     }
@@ -66,7 +67,36 @@ public sealed partial class RemovingViewModel : ObservableObject, IDisposable
     /// <summary>Gets the token to pass to <see cref="Remover.RemovePicks"/>; <see cref="CancelCommand"/> cancels it.</summary>
     public CancellationToken Token => cancellation.Token;
 
-    /// <summary>Gets the heading: <c>Removing {done}/{runnable}</c>, and after Cancel that the removal stops after the current item.</summary>
+    /// <summary>Gets how many picks the progress bar counts: the runnable decisions.</summary>
+    public int Total => Rows.Count;
+
+    /// <summary>Gets how many of them are finished, removed or failed.</summary>
+    public int Done => Rows.Count(row => row.Status == RemovalRowViewModel.Done);
+
+    /// <summary>Gets the size of every runnable pick; a size the scan did not read counts as no bytes at all.</summary>
+    public long BytesTotal => Rows.Sum(row => row.Size ?? 0);
+
+    /// <summary>Gets the size of the runnable picks removed so far; a failed pick and an unknown size add nothing.</summary>
+    public long BytesDone => Rows.Where(row => row.Succeeded).Sum(row => row.Size ?? 0);
+
+    /// <summary>Gets the line under the bar: the bytes done of the bytes total and where they went; empty when no size is known.</summary>
+    public string BytesLine
+    {
+        get
+        {
+            if (BytesTotal == 0)
+            {
+                return "";
+            }
+            string where = EveryPickRecycles ? "moved to the Recycle Bin" : "removed";
+            return string.Create(
+                CultureInfo.InvariantCulture,
+                $"{ReportTable.HumanBytes(BytesDone)} of {ReportTable.HumanBytes(BytesTotal)} {where}"
+            );
+        }
+    }
+
+    /// <summary>Gets the heading: <c>Removing {done} of {total}</c>, and after Stop that the removal stops after the current item.</summary>
     [ObservableProperty]
     public partial string Heading { get; private set; }
 
@@ -78,26 +108,39 @@ public sealed partial class RemovingViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     public partial string? Banner { get; private set; }
 
+    /// <summary>Whether every runnable pick is a recycle, which is what puts its bytes in the Recycle Bin.</summary>
+    private bool EveryPickRecycles => Rows.All(row => row.Action is RemoveAction.Delete { Method: DeleteMethod.Recycle });
+
     /// <summary>Moves the row of the decision <paramref name="progress"/> names; progress for a decision with no row is ignored.</summary>
-    /// <param name="progress">Which decision started or finished.</param>
+    /// <param name="progress">Which decision started or finished, with what became of it.</param>
     public void OnProgress(Progress progress)
     {
         ArgumentNullException.ThrowIfNull(progress);
-        (int Index, string Status) step = progress switch
+        (int Index, Outcome? Result) step = progress switch
         {
-            Progress.Started started => (started.Index, RemovalRowViewModel.Removing),
-            Progress.Done finishedOne => (finishedOne.Index, RemovalRowViewModel.Done),
+            Progress.Started started => (started.Index, null),
+            Progress.Done finishedOne => (finishedOne.Index, finishedOne.Outcome),
             _ => throw new UnreachableException($"unknown progress {progress}"),
         };
         if (Rows.FirstOrDefault(row => row.Index == step.Index) is not { } moved)
         {
             return;
         }
-        moved.Status = step.Status;
+        if (step.Result is { } result)
+        {
+            moved.Removed(result);
+        }
+        else
+        {
+            moved.Started();
+        }
         Heading = HeadingText();
+        OnPropertyChanged(nameof(Done));
+        OnPropertyChanged(nameof(BytesDone));
+        OnPropertyChanged(nameof(BytesLine));
     }
 
-    /// <summary>Shows that <paramref name="pickCount"/> picks are locked and the unlock step runs in the terminal; disables Cancel.</summary>
+    /// <summary>Shows that <paramref name="pickCount"/> picks are locked and the unlock step runs in the terminal; disables Stop.</summary>
     /// <param name="pickCount">How many picks are locked.</param>
     public void UnlockStarted(int pickCount)
     {
@@ -109,7 +152,7 @@ public sealed partial class RemovingViewModel : ObservableObject, IDisposable
         CancelCommand.NotifyCanExecuteChanged();
     }
 
-    /// <summary>Shows the unlock step's outcome as the banner, clears the notice and enables Cancel again.</summary>
+    /// <summary>Shows the unlock step's outcome as the banner, clears the notice and enables Stop again.</summary>
     /// <param name="outcome">What the unlock step did.</param>
     public void UnlockDone(UnlockOutcome outcome)
     {
@@ -159,7 +202,7 @@ public sealed partial class RemovingViewModel : ObservableObject, IDisposable
         CancelCommand.NotifyCanExecuteChanged();
     }
 
-    /// <summary>Whether Cancel can be pressed: not yet pressed, no unlock hand-off under way, and the removal not finished.</summary>
+    /// <summary>Whether Stop can be pressed: not yet pressed, no unlock hand-off under way, and the removal not finished.</summary>
     /// <returns><see langword="true"/> when it can.</returns>
     private bool CanCancel() => !stopping && !unlocking && !done;
 
@@ -167,8 +210,7 @@ public sealed partial class RemovingViewModel : ObservableObject, IDisposable
     /// <returns>The heading.</returns>
     private string HeadingText()
     {
-        int finishedRows = Rows.Count(row => row.Status == RemovalRowViewModel.Done);
-        string heading = string.Create(CultureInfo.InvariantCulture, $"Removing {finishedRows}/{Rows.Count}");
+        string heading = string.Create(CultureInfo.InvariantCulture, $"Removing {Done} of {Total}");
         return stopping ? heading + StoppingSuffix : heading;
     }
 }
