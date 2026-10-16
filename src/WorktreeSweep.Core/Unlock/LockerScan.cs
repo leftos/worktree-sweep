@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using Microsoft.Win32.SafeHandles;
+using Windows.Win32.Foundation;
 using WorktreeSweep.Holders;
 using WorktreeSweep.Processes;
 
@@ -36,24 +37,24 @@ public sealed class LockerScan : ILockerScan
     }
 
     /// <inheritdoc/>
-    /// <exception cref="IOException">A locked folder that still exists cannot be resolved, or this program's own handles cannot be
-    /// read to learn which handles are files.</exception>
+    /// <exception cref="IOException">This program's own handles cannot be read to learn which handles are files.</exception>
     /// <exception cref="Win32Exception">The process table cannot be read.</exception>
     public LockerFindings Find(IReadOnlyList<string> lockedPaths, IReadOnlyCollection<int> pids)
     {
         ArgumentNullException.ThrowIfNull(lockedPaths);
         ArgumentNullException.ThrowIfNull(pids);
-        IReadOnlyList<LockedFolder> folders = ExistingFolders(lockedPaths);
+        FolderSurvey survey = Survey(lockedPaths);
+        IReadOnlyList<LockedFolder> folders = survey.Folders;
         if (folders.Count == 0)
         {
-            return new LockerFindings([], []);
+            return new LockerFindings([], [], survey.Unreachable);
         }
         IReadOnlyDictionary<int, ProcessEntry> table = ProcessTable.Snapshot();
         // Read before the handles are listed: a PID reused after this reading has a start time that no longer matches, so it is
         // never acted on; one read after the listing could pair the old process's handles with the new process.
         var started = pids.Distinct().ToDictionary(pid => pid, HolderFinder.StartedAt);
-        HandleFindings findings = OpenHandles.Scan(pids, [.. folders.SelectMany(folder => folder.Forms)]);
-        return new LockerFindings(Lockers(findings, folders, table, started), Unreadable(findings, folders, table));
+        HandleFindings findings = OpenHandles.Scan(pids, [.. folders.Select(folder => folder.Forms[0])]);
+        return new LockerFindings(Lockers(findings, folders, table, started), Unreadable(findings, folders, table), survey.Unreachable);
     }
 
     /// <inheritdoc/>
@@ -64,7 +65,7 @@ public sealed class LockerScan : ILockerScan
         {
             return false;
         }
-        IReadOnlyList<string> roots = [.. ExistingFolders(lockedPaths).SelectMany(folder => folder.Forms)];
+        IReadOnlyList<string> roots = [.. Survey(lockedPaths).Folders.SelectMany(folder => folder.Forms)];
         using SafeFileHandle? source = OpenHandles.OpenSource(pid);
         if (source is null || ProcessQuery.CreationTime(source) != expected)
         {
@@ -81,28 +82,45 @@ public sealed class LockerScan : ILockerScan
     }
 
     /// <summary>
-    /// Each locked folder that still exists, with every spelling a handle name may use. A folder that no longer exists is clear, and
-    /// is traced and left out.
+    /// Each locked folder that opens, with every spelling a handle name may use, and each that does not open. A folder that is gone
+    /// from a drive that exists is clear, and is traced and left out of both.
     /// </summary>
     /// <param name="lockedPaths">The locked folders.</param>
     /// <returns>The folders.</returns>
-    /// <exception cref="IOException">A folder that still exists cannot be resolved.</exception>
-    private static List<LockedFolder> ExistingFolders(IReadOnlyList<string> lockedPaths)
+    private static FolderSurvey Survey(IReadOnlyList<string> lockedPaths)
     {
         var folders = new List<LockedFolder>();
+        var unreachable = new List<string>();
         foreach (string path in lockedPaths)
         {
             try
             {
                 folders.Add(new LockedFolder(path, HolderFinder.FolderForms(path)));
             }
-            catch (IOException error) when (!Path.Exists(path))
+            catch (IOException error) when (IsGone(path, error))
             {
                 Trace.WriteLine($"{path} no longer exists, so nothing holds it: {error.Message}");
             }
+            catch (IOException error)
+            {
+                Trace.TraceWarning($"cannot open {path}, so what holds it is not known: {error.Message}");
+                unreachable.Add(path);
+            }
         }
-        return folders;
+        return new FolderSurvey(folders, unreachable);
     }
+
+    /// <summary>
+    /// Whether a failure to open <paramref name="path"/> shows that the folder is gone: the file system found no such file or path,
+    /// on a drive whose root exists. A drive this process cannot see, such as one mapped by an unelevated token, fails the same way
+    /// and is not gone.
+    /// </summary>
+    /// <param name="path">The folder.</param>
+    /// <param name="error">The failure from <see cref="HolderFinder.FolderForms"/>, which carries the Win32 error.</param>
+    /// <returns><see langword="true"/> when the folder is gone.</returns>
+    private static bool IsGone(string path, IOException error) =>
+        error.InnerException is Win32Exception { NativeErrorCode: (int)WIN32_ERROR.ERROR_FILE_NOT_FOUND or (int)WIN32_ERROR.ERROR_PATH_NOT_FOUND }
+        && Directory.Exists(Path.GetPathRoot(Path.GetFullPath(path)));
 
     /// <summary>The processes with a named handle under a locked folder, sorted by PID, each with its handles there.</summary>
     /// <param name="findings">What the scan found.</param>
@@ -187,4 +205,9 @@ public sealed class LockerScan : ILockerScan
     /// <param name="Path">The folder, as the user picked it.</param>
     /// <param name="Forms">Its spellings, from <see cref="HolderFinder.FolderForms"/>, the fully resolved one first.</param>
     private sealed record LockedFolder(string Path, IReadOnlyList<string> Forms);
+
+    /// <summary>The locked folders sorted by whether they open.</summary>
+    /// <param name="Folders">The folders that open, with their spellings.</param>
+    /// <param name="Unreachable">The folders, as the user picked them, that do not open and are not gone.</param>
+    private sealed record FolderSurvey(IReadOnlyList<LockedFolder> Folders, IReadOnlyList<string> Unreachable);
 }

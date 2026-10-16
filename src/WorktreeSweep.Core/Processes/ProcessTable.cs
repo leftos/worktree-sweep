@@ -11,6 +11,9 @@ namespace WorktreeSweep.Processes;
 /// <summary>The running processes by PID, and the PIDs the unlock flow must never stop.</summary>
 public static class ProcessTable
 {
+    /// <summary>Gets the idle and System processes, which are never opened to read their handles or current folder.</summary>
+    internal static IReadOnlyList<int> SystemPids { get; } = [0, 4];
+
     /// <summary>Every running process's parent and image name, by PID.</summary>
     /// <returns>The table; a PID seen twice keeps its last entry.</returns>
     /// <exception cref="Win32Exception">

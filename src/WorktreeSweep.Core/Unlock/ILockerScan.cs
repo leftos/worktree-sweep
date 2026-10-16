@@ -5,11 +5,13 @@ public interface ILockerScan
 {
     /// <summary>
     /// Lists and names the file handles of <paramref name="pids"/> and keeps those under a locked folder, and asks the file system
-    /// which processes use each folder. A locked folder that no longer exists is clear: it is skipped, with a trace line.
+    /// which processes use each folder. A locked folder that is gone from a drive that exists is clear: it is skipped, with a trace
+    /// line. A folder that cannot be opened for any other reason, a drive this process cannot see included, is unreachable.
     /// </summary>
     /// <param name="lockedPaths">The locked folders, as the user picked them.</param>
     /// <param name="pids">The processes to open; no other process is opened.</param>
-    /// <returns>The lockers, and the processes the file system reports using a folder whose handles there could not be read.</returns>
+    /// <returns>The lockers, the processes the file system reports using a folder whose handles there could not be read, and the
+    /// folders that could not be opened.</returns>
     LockerFindings Find(IReadOnlyList<string> lockedPaths, IReadOnlyCollection<int> pids);
 
     /// <summary>
@@ -29,7 +31,8 @@ public interface ILockerScan
 /// <param name="Lockers">The processes holding files under the locked folders, sorted by PID.</param>
 /// <param name="Unreadable">The processes the file system reports using a locked folder for which the scan named no handle there:
 /// the process could not be opened, or its handles had no name.</param>
-public sealed record LockerFindings(IReadOnlyList<Locker> Lockers, IReadOnlyList<UnreadableUser> Unreadable);
+/// <param name="Unreachable">The locked folders, as the user picked them, that could not be opened, so what holds them is not known.</param>
+public sealed record LockerFindings(IReadOnlyList<Locker> Lockers, IReadOnlyList<UnreadableUser> Unreadable, IReadOnlyList<string> Unreachable);
 
 /// <summary>A process the file system reports using a locked folder, whose handles there could not be read.</summary>
 /// <param name="Process">The image name of the process, or <c>unknown</c> when it was not in the process table.</param>

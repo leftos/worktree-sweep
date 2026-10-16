@@ -54,7 +54,7 @@ internal static class OpenHandles
     /// processes using a root is traced and adds no users of it.
     /// </summary>
     /// <param name="pids">The inspected processes.</param>
-    /// <param name="roots">Every spelling of the folders, each folder's fully resolved one first.</param>
+    /// <param name="roots">Each folder once, fully resolved; the file system is asked once per folder.</param>
     /// <returns>What the handles showed.</returns>
     /// <exception cref="IOException">This program's own file or handles cannot be read to learn the File type index.</exception>
     internal static HandleFindings Scan(IReadOnlyCollection<int> pids, IReadOnlyList<string> roots)

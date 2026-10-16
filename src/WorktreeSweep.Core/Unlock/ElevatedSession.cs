@@ -16,9 +16,6 @@ namespace WorktreeSweep.Unlock;
 /// <param name="processes">The process table and the stop operation.</param>
 public sealed class ElevatedSession(TextReader input, TextWriter output, ILockerScan scan, IHandleExe handleExe, IProcessControl processes)
 {
-    /// <summary>The idle and System processes, which are never scanned.</summary>
-    private static readonly int[] SystemPids = [0, 4];
-
     /// <summary>How many of a locker's handles the description shows before it says how many it left out.</summary>
     private const int ShownHandles = 5;
 
@@ -31,10 +28,11 @@ public sealed class ElevatedSession(TextReader input, TextWriter output, ILocker
     /// <summary>
     /// Runs the session, scanning, offering and acting until nothing holds the files or the user ends it. Each scan opens every
     /// running process but the idle and System processes, this one and the excluded ones. A process the file system reports using a
-    /// folder, whose handles there the scan could not read, is reported after each scan and never lets the session report clear: it
-    /// ends the session at <see cref="UnlockExit.SomeLeft"/>, so the sweep retries every locked pick.
+    /// folder, whose handles there the scan could not read, System included, and a folder that cannot be opened here, are reported
+    /// after each scan and never let the session report clear: they end the session at <see cref="UnlockExit.SomeLeft"/>, so the
+    /// sweep retries every locked pick.
     /// </summary>
-    /// <param name="paths">The folders whose open handles are cleared.</param>
+    /// <param name="paths">The folders whose open handles are cleared; a folder named twice, by full path in any case, counts once.</param>
     /// <param name="callerPid">The process that started the unelevated run, usually the user's shell, whose stopping is not the
     /// default; <see langword="null"/> when it is not known.</param>
     /// <param name="callerStarted">That process's creation time, which proves a PID match is still it; <see langword="null"/>
@@ -42,29 +40,26 @@ public sealed class ElevatedSession(TextReader input, TextWriter output, ILocker
     /// <param name="sweepPid">The unelevated worktree-sweep, which with its children is never offered; <see langword="null"/>
     /// when it is not known.</param>
     /// <returns><see cref="UnlockExit.AllClear"/> when nothing holds the files and every process using them could be read;
-    /// <see cref="UnlockExit.SomeLeft"/> when something still holds them after an action, or when a process using them could not
-    /// be read; otherwise <see cref="UnlockExit.NothingDone"/>.</returns>
-    /// <exception cref="IOException">A locked folder that still exists cannot be resolved, or the scan cannot learn which handles
-    /// are files.</exception>
+    /// <see cref="UnlockExit.SomeLeft"/> when something still holds them after an action, or when a process using them or a
+    /// folder could not be read; otherwise <see cref="UnlockExit.NothingDone"/>.</returns>
+    /// <exception cref="IOException">The scan cannot learn which handles are files.</exception>
     /// <exception cref="Win32Exception">The process table cannot be read.</exception>
     public int Run(IReadOnlyList<string> paths, int? callerPid, ulong? callerStarted, int? sweepPid)
     {
         ArgumentNullException.ThrowIfNull(paths);
+        IReadOnlyList<string> folders = [.. paths.DistinctBy(Path.GetFullPath, StringComparer.OrdinalIgnoreCase)];
         IReadOnlySet<int> excluded = ProcessTable.ExcludedPids(Environment.ProcessId, sweepPid, processes.Snapshot(), processes.StartedAt);
         bool acted = false;
         bool finished = false;
         while (true)
         {
             Say("Scanning open handles…");
-            LockerFindings found = Scan(paths, excluded);
-            foreach (UnreadableUser user in found.Unreadable)
-            {
-                Say($"{user.Process} ({user.Pid}) uses {user.Path}, but its handles cannot be read.");
-            }
+            LockerFindings found = Scan(folders, excluded);
+            bool unknown = ReportUnknown(found);
             IReadOnlyList<Locker> lockers = found.Lockers;
             if (lockers.Count == 0)
             {
-                if (found.Unreadable.Count > 0)
+                if (unknown)
                 {
                     Say("Nothing else holds files under those folders.");
                     return UnlockExit.SomeLeft;
@@ -77,25 +72,42 @@ public sealed class ElevatedSession(TextReader input, TextWriter output, ILocker
                 Say($"{lockers.Count} process(es) still hold files under those folders.");
                 return UnlockExit.For(false, acted);
             }
-            Round round = OfferRound(lockers, callerPid, callerStarted, paths);
+            Round round = OfferRound(lockers, callerPid, callerStarted, folders);
             acted |= round.Acted;
             finished = round.Done || !round.Acted;
         }
     }
 
     /// <summary>
-    /// Scans every running process but the idle and System processes, this one and <paramref name="excluded"/>, and drops those
-    /// same processes from the ones reported using a folder unread, so the tool's own chain is never opened or offered.
+    /// Scans every running process but the idle and System processes, this one and <paramref name="excluded"/>, and drops this one
+    /// and <paramref name="excluded"/> from the ones reported using a folder unread, so the tool's own chain is never opened or
+    /// offered. System stays among those reported: kernel handles under a folder hold it as surely as any process's.
     /// </summary>
     /// <param name="paths">The folders whose open handles are cleared.</param>
     /// <param name="excluded">This process's chain, the unelevated worktree-sweep and its children.</param>
     /// <returns>What the scan found.</returns>
     private LockerFindings Scan(IReadOnlyList<string> paths, IReadOnlySet<int> excluded)
     {
-        bool Skipped(int pid) => SystemPids.Contains(pid) || pid == Environment.ProcessId || excluded.Contains(pid);
-        IReadOnlyList<int> pids = [.. processes.Snapshot().Keys.Where(pid => !Skipped(pid)).Order()];
+        bool Ours(int pid) => pid == Environment.ProcessId || excluded.Contains(pid);
+        IReadOnlyList<int> pids = [.. processes.Snapshot().Keys.Where(pid => !Ours(pid) && !ProcessTable.SystemPids.Contains(pid)).Order()];
         LockerFindings found = scan.Find(paths, pids);
-        return found with { Unreadable = [.. found.Unreadable.Where(user => !Skipped(user.Pid))] };
+        return found with { Unreadable = [.. found.Unreadable.Where(user => !Ours(user.Pid))] };
+    }
+
+    /// <summary>Prints each process using a folder whose handles there could not be read, and each folder that could not be opened.</summary>
+    /// <param name="found">What the scan found.</param>
+    /// <returns><see langword="true"/> when anything was printed, so what holds the folders is not fully known.</returns>
+    private bool ReportUnknown(LockerFindings found)
+    {
+        foreach (UnreadableUser user in found.Unreadable)
+        {
+            Say($"{user.Process} ({user.Pid}) uses {user.Path}, but its handles cannot be read.");
+        }
+        foreach (string path in found.Unreachable)
+        {
+            Say($"{path} cannot be read here, so it is not known what holds it.");
+        }
+        return found.Unreadable.Count > 0 || found.Unreachable.Count > 0;
     }
 
     /// <summary>Offers every locker in turn and applies the answer.</summary>

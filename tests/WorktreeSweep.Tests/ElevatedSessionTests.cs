@@ -288,7 +288,7 @@ public sealed class ElevatedSessionTests : IDisposable
         processes.StartedTimes[900] = 10;
         processes.StartedTimes[901] = 20;
         var unreadable = new UnreadableUser("worktree-sweep.exe", 900, Locked);
-        var scan = new FakeScan(new LockerFindings([LockerOf("code.exe", 800, 1000)], [unreadable]), Found());
+        var scan = new FakeScan(new LockerFindings([LockerOf("code.exe", 800, 1000)], [unreadable], []), Found());
         ElevatedSession session = Session(new StringReader("\n"), output, scan, new FakeHandleExe(), processes);
 
         int exit = session.Run([Locked], callerPid: null, callerStarted: null, sweepPid: 900);
@@ -539,7 +539,7 @@ public sealed class ElevatedSessionTests : IDisposable
     public void ProcessUsingAFolderUnreadIsReportedAndEndsSomeLeft()
     {
         StringWriter output = Writer();
-        var scan = new FakeScan(new LockerFindings([], [new UnreadableUser("pwsh.exe", 642, Locked)]));
+        var scan = new FakeScan(new LockerFindings([], [new UnreadableUser("pwsh.exe", 642, Locked)], []));
         ElevatedSession session = Session(
             new StringReader(""),
             output,
@@ -578,11 +578,11 @@ public sealed class ElevatedSessionTests : IDisposable
     }
 
     /// <summary>
-    /// With the production scan, a process that cannot be opened, and that the file system does not report using the folder, does
-    /// not block a clear.
+    /// With the production scan, a process that cannot be opened, and that the file system does not report using the folder, is not
+    /// reported. Only that is asserted: an antivirus or indexer may open the fresh folder during the query.
     /// </summary>
     [Fact]
-    public void UnopenedProcessNotUsingTheFolderDoesNotBlockAClear()
+    public void UnopenedProcessNotUsingTheFolderIsNotReported()
     {
         StringWriter output = Writer();
         string folder = fx.PathTo("unused");
@@ -591,10 +591,72 @@ public sealed class ElevatedSessionTests : IDisposable
         var processes = new ScriptedProcessControl(Running(("ghost.exe", 0x7FFFFFFC)));
         ElevatedSession session = Session(new StringReader(""), output, new LockerScan(), new FakeHandleExe(), processes);
 
+        _ = session.Run([folder], null, null, null);
+
+        Assert.DoesNotContain("ghost.exe", output.ToString(), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A folder the file system reports System using, whose kernel handles cannot be read, is reported and never lets the session
+    /// report clear, though System itself is never scanned.
+    /// </summary>
+    [Fact]
+    public void SystemUsingAFolderIsReportedAndEndsSomeLeft()
+    {
+        StringWriter output = Writer();
+        var scan = new FakeScan(new LockerFindings([], [new UnreadableUser("System", 4, Locked)], []));
+        ElevatedSession session = Session(
+            new StringReader(""),
+            output,
+            scan,
+            new FakeHandleExe(),
+            new ScriptedProcessControl(Running(("System", 4), ("pwsh.exe", 642)))
+        );
+
+        int exit = session.Run([Locked], null, null, null);
+
+        string text = output.ToString();
+        Assert.Equal(UnlockExit.SomeLeft, exit);
+        Assert.Contains("System (4) uses D:\\a.wt\\x, but its handles cannot be read.\n", text, StringComparison.Ordinal);
+        Assert.DoesNotContain(4, Assert.Single(scan.Scanned));
+    }
+
+    /// <summary>With the production scan, a locked folder that is gone from a drive that exists is clear.</summary>
+    [Fact]
+    public void MissingFolderOnAnExistingDriveIsClearWithTheRealScan()
+    {
+        StringWriter output = Writer();
+        string folder = fx.PathTo("gone");
+        ElevatedSession session = Session(new StringReader(""), output, new LockerScan(), new FakeHandleExe(), new ScriptedProcessControl(Running()));
+
         int exit = session.Run([folder], null, null, null);
 
         Assert.Equal(UnlockExit.AllClear, exit);
         Assert.Contains("Nothing holds files under those folders.\n", output.ToString(), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// With the production scan, a locked folder on a drive this process cannot see, as an elevated token cannot see a drive mapped
+    /// unelevated, is reported as unreadable and ends the session with something left.
+    /// </summary>
+    [Fact]
+    public void FolderOnAMissingDriveIsNotClearWithTheRealScan()
+    {
+        char? letter = UnmountedDriveLetter();
+        if (letter is null)
+        {
+            Assert.Skip("every drive letter from D to Z is in use");
+        }
+        StringWriter output = Writer();
+        string folder = $@"{letter}:\worktree-sweep\gone";
+        ElevatedSession session = Session(new StringReader(""), output, new LockerScan(), new FakeHandleExe(), new ScriptedProcessControl(Running()));
+
+        int exit = session.Run([folder], null, null, null);
+
+        string text = output.ToString();
+        Assert.Equal(UnlockExit.SomeLeft, exit);
+        Assert.Contains($"{folder} cannot be read here, so it is not known what holds it.\n", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("Nothing holds files under those folders.", text, StringComparison.Ordinal);
     }
 
     /// <inheritdoc/>
@@ -603,6 +665,19 @@ public sealed class ElevatedSessionTests : IDisposable
     /// <summary>An elevated session driven through the given seams.</summary>
     private static ElevatedSession Session(TextReader input, TextWriter output, ILockerScan scan, IHandleExe handleExe, IProcessControl processes) =>
         new(input, output, scan, handleExe, processes);
+
+    /// <summary>A drive letter from Z down to D whose root does not exist, or <see langword="null"/> when every one does.</summary>
+    private static char? UnmountedDriveLetter()
+    {
+        for (char letter = 'Z'; letter >= 'D'; letter--)
+        {
+            if (!Directory.Exists($@"{letter}:\"))
+            {
+                return letter;
+            }
+        }
+        return null;
+    }
 
     /// <summary>A <c>StringWriter</c> that ends its lines with <c>\n</c>.</summary>
     private static StringWriter Writer() => new() { NewLine = "\n" };
@@ -619,7 +694,7 @@ public sealed class ElevatedSessionTests : IDisposable
     }
 
     /// <summary>A scan that found these lockers and no process it could not read.</summary>
-    private static LockerFindings Found(params Locker[] lockers) => new(lockers, []);
+    private static LockerFindings Found(params Locker[] lockers) => new(lockers, [], []);
 
     /// <summary>A locker holding one file under the locked folder.</summary>
     private static Locker LockerOf(string process, int pid, ulong? started) =>

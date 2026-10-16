@@ -15,9 +15,6 @@ public static class HolderFinder
 {
     private const string Verbatim = @"\\?\";
 
-    /// <summary>The idle and System processes, which are never inspected.</summary>
-    private static readonly int[] SystemPids = [0, 4];
-
     /// <summary>
     /// Lists the current user's processes, other than this process and the processes in <paramref name="exclude"/>, whose current
     /// folder is <paramref name="folder"/> or lies under it, or that have a file or folder under it open. A process whose disk handle
@@ -111,13 +108,13 @@ public static class HolderFinder
         var census = new Census();
         foreach (KeyValuePair<int, ProcessEntry> pair in table)
         {
-            if (SystemPids.Contains(pair.Key) || pair.Key == ownPid || exclude.Contains(pair.Key))
+            if (ProcessTable.SystemPids.Contains(pair.Key) || pair.Key == ownPid || exclude.Contains(pair.Key))
             {
                 continue;
             }
             census.Inspect(pair.Key, pair.Value.Exe, ownUser, roots);
         }
-        HandleFindings findings = handles?.Invoke(census.CandidatePids, roots) ?? HandleFindings.None;
+        HandleFindings findings = handles?.Invoke(census.CandidatePids, [roots[0]]) ?? HandleFindings.None;
         foreach (int pid in findings.Unlisted)
         {
             census.MarkUnopened(pid);
