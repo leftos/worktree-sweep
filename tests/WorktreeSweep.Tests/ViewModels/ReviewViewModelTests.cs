@@ -190,7 +190,7 @@ public sealed class ReviewViewModelTests
         Assert.NotNull(removing);
         Assert.IsType<Plan.Skip>(Assert.Single(removing.Decisions).Plan);
         Assert.Empty(removing.Rows);
-        Assert.Equal("Removing 0/0", removing.Heading);
+        Assert.Equal("Removing 0 of 0", removing.Heading);
     }
 
     /// <summary>Cancel on the final confirmation goes back to the List with the ticks kept.</summary>
