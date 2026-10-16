@@ -11,7 +11,7 @@ Deleting these on Windows often fails because files are locked: a shell whose cu
 1. Finds every non-main worktree plus orphan folders under a root.
 2. Shows the signals needed to decide what to remove.
 3. Deletes the picks recoverably.
-4. When deletion hits a lock, offers to escalate with `sudo` to run `handle.exe`, show the locking processes, and stop them or (opt-in) force-close the handles.
+4. When deletion hits a lock, offers to escalate with `sudo` to scan open handles, show the locking processes, and stop them or (opt-in) force-close the handles with `handle.exe`.
 5. Offers agents a non-interactive `remove <PATH> --json` for their own worktrees.
 
 Rulings:
@@ -36,9 +36,7 @@ Rulings:
 - **Shell failures** are `COPYENGINE_E_*` codes (`0x8027xxxx`), never Win32 codes: `SHARING_VIOLATION_SRC` (`0x80270027`, a process's current folder is the folder), `SHARING_VIOLATION_DEST` (`0x80270028`, a file held open or a current folder in a subfolder) and `ACCESS_DENIED_SRC` (`0x80270021`) all mean locked. `0x80270000` is the user's Cancel or No.
 - **Lock retries:** on `C:`, where `%TEMP%` is, a scanner can hold a freshly written tree for a second or two, so a lock is retried after 250, 500 and 1000 ms before it counts.
 - **The Shell moves the folder in one step or not at all;** it was never seen to recycle part of a locked tree.
-- **handle.exe:** Sysinternals v5.0 on PATH. `-nobanner -v` gives CSV output, and `-c <handle> -p <pid> -y` closes one handle. With a name argument the CSV has 5 columns (`Process,PID,Type,Handle,Name`).
-
-  With none, it dumps every handle on the system in 7 columns (`Process,PID,User,Handle,Type,Share Flags,Name`), both `File` and `Section` rows. Names carry a trailing space and are unquoted. An elevated unfiltered dump takes about 1.4 s (about 19,500 rows); unelevated it takes about 141 s and sees only the caller's own processes.
+- **handle.exe:** Sysinternals v5.0 on PATH. The unlock session uses it only to close one handle, `-c <handle> -p <pid> -y`; lockers are found by the C# handle scan.
 - **sudo:** Windows `sudo.exe` must be in **Inline** mode, so an elevated child shares the console and can prompt the user directly.
 
 ## Design
@@ -134,16 +132,17 @@ A link loses only the link: a junction or symbolic link is removed with a direct
 
 - **One elevation per run.** Removal is two passes. Every pick that hits a lock is collected, and one unlock offer is made for all of them. On an unlocked or partly unlocked outcome, each locked pick is retried once.
 - **Parent side:** lists the locked folders, asks, then runs `sudo <self> unlock --caller-pid <shell> --sweep-pid <self> <paths>` and waits. If sudo is missing, disabled or not in Inline mode, or the program runs under `dotnet.exe`, it prints the elevated command to run by hand and skips.
-- **Elevated side:** makes one unfiltered `handle.exe -nobanner -accepteula -v` dump per round. It keeps the rows whose Name is a locked path or lies under one, compared case-insensitively on backslash paths.
-  - It never lists its own process chain up to `sudo.exe`, the unelevated worktree-sweep, or that process's children.
-  - Results are grouped by process: name, PID, and the handles with their type.
+- **Elevated side:** enables SeDebugPrivilege (without it the session ends with `error: cannot get SeDebugPrivilege (…); the unlock session must run elevated`, exit 1) and makes one C# handle scan per round over every process, naming handles in UTF-16. It keeps the File handles whose name is a locked path or lies under one, compared case-insensitively on backslash paths.
+  - It never scans or lists pids 0 and 4, its own process chain up to `sudo.exe`, the unelevated worktree-sweep, or that process's children.
+  - Results are grouped by process: name, PID, and the handles by name.
+  - A process the file system reports using a locked folder whose handles there cannot be read (`{process} ({pid}) uses {path}, but its handles cannot be read.`, also `System (4) …`), and a locked folder that cannot be opened (`{path} cannot be read here, so it is not known what holds it.`), are printed. With no locker found, the session then says `Nothing else holds files under those folders.` and exits 3, never 0, so the sweep retries every locked pick.
+  - A locked folder that is gone from a drive that exists is clear; one named twice is scanned once.
   - The process that launched the tool (for example the pwsh you are typing in) is flagged, because stopping it would close your own shell. Skip is its default.
-  - Prompt per process: **stop process** (`TerminateProcess`), **close its handles** (warned that the app may crash; runs `handle -c <h> -p <pid> -y` for each handle), **skip**, **done**.
-  - Before acting, it checks that the PID still belongs to the same process (same start time and image), since Windows reuses a PID once its process exits. Before closing a handle it re-dumps that process and closes only handles that still name a locked file.
-  - It re-dumps and re-offers until nothing is left, the user picks Done, or a round acts on nothing.
-  - A path with characters outside the ANSI, OEM and console code pages never shows up in a `handle.exe` dump; the session warns about each before the first dump, and one that then finds no locker exits 3, never 0, so the sweep retries every locked pick.
+  - Prompt per process: **stop process** (`TerminateProcess`), **close its handles** (warned that the app may crash; runs `handle -c <h> -p <pid> -y` for each handle, `handle.exe`'s only use), **skip**, **done**.
+  - Before acting, it checks that the PID still belongs to the same process (same start time and image), since Windows reuses a PID once its process exits. Before every close (`StillHolds`) it re-checks the PID's start time and names the handle again, and closes it only while it still names a locked file.
+  - It re-scans and re-offers until nothing is left, the user picks Done, or a round acts on nothing.
   - Exit code: 0 when all clear, 3 when locks remain after acting, 4 when nothing was acted on, 1 on error. The parent maps these to unlocked, partly unlocked and still locked; any other exit, a declined UAC prompt included, skips.
-- **handle.exe CSV** is parsed by a pure parser, tested against both recorded layouts (`tests/fixtures/handle-sample.csv`, `tests/fixtures/handle-dump-sample.csv`). Column positions come from the header line, and the Name is everything after the last fixed column, so a comma in a path survives.
+- **Why the C# scan finds lockers, not handle.exe:** measured elevated over 722 processes, the scan took 1011 ms against handle.exe's 3542 ms in the same run; neither saw a lock held only by a Section (a memory-mapped file with no File handle). handle.exe's output passes through the ANSI, OEM and console code pages, so it cannot name a path outside them; the scan names every path intact.
 
 ### Agent removal
 
@@ -161,7 +160,7 @@ A link loses only the link: a junction or symbolic link is removed with a direct
 - **Recycle Bin capacity is read before recycling;** an item over it asks for a permanent delete.
 - **Recycling goes through `IFileOperation`** on an STA thread with the flags above; locked HRESULTs count as a lock only from `PerformOperations`, and the retries are 250, 500 and 1000 ms.
 - **Handle naming:** a lookup that fails at once (a volume handle, a file pending delete) counts against its process only when the file system lists that process as using the folder; a timed-out lookup is cancelled with `CancelSynchronousIo` and its worker kept if it then returns; and the 200 ms budget starts when the worker begins the lookup, not when the handle is posted.
-- **One elevation per run:** the locked picks go to a single unlock offer, one `sudo`, one `handle.exe` dump filtered by every locked path, then one retry pass.
+- **One elevation per run:** the locked picks go to a single unlock offer, one `sudo`, one handle scan per round for every locked path, then one retry pass.
 - **The released marker keeps its file shape** (`worktree-sweep-released.json` in the worktree's `.git/worktrees/{id}` folder: `released_at` in Unix seconds, `reason`, `holders`).
 - **Output:** see "Output encoding" under Report.
 - **The table's columns and order are fixed;** the scan JSON and the agent report are the two machine-readable contracts.
@@ -173,7 +172,7 @@ Integration tests build throwaway repos with real `git` in folders under the rep
 - **Merge states:** a merged branch gives `Ancestor`; a cherry-picked branch `PatchesApplied`; a squash-merged branch `ContentContained`; a divergent branch `Unmerged { commits: n }`; a detached HEAD `Detached`.
 - **Dirty and unpushed:** untracked and modified files are counted; a deleted upstream is reported as gone.
 - **Discovery:** a registered worktree nested two levels deep inside a container; an empty orphan; an orphan whose `.git` file points to a missing gitdir; a prunable registration; the main worktree is never a candidate; link and gitdir edge cases.
-- **Parsers and helpers:** the `handle.exe` CSV against the recorded fixtures, plus empty output and malformed lines; the Recycle Bin fit decision for size under the cap, over the cap, and with `NukeOnDelete` set (a pure function; the registry read is kept at the edge).
+- **Parsers and helpers:** the Recycle Bin fit decision for size under the cap, over the cap, and with `NukeOnDelete` set (a pure function; the registry read is kept at the edge).
 - **Removal:** permanent delete clears read-only files and never enters a junction; a locked file (the test holds it open with no sharing) produces a locked error rather than a generic failure.
 - **Not automated:** the sudo and handle path, which needs UAC, and the real Shell recycle; both are checked by hand.
 
