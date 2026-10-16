@@ -112,15 +112,17 @@ public sealed class LockerScan : ILockerScan
 
     /// <summary>
     /// Whether a failure to open <paramref name="path"/> shows that the folder is gone: the file system found no such file or path,
-    /// on a drive whose root exists. A drive this process cannot see, such as one mapped by an unelevated token, fails the same way
-    /// and is not gone.
+    /// on a drive whose root exists, and the path does not exist. A drive this process cannot see, such as one mapped by an unelevated
+    /// token, fails the same way and is not gone; so is a folder that opens but whose resolved name cannot be read, such as one on a
+    /// mount point onto a volume with no drive letter.
     /// </summary>
     /// <param name="path">The folder.</param>
     /// <param name="error">The failure from <see cref="HolderFinder.FolderForms"/>, which carries the Win32 error.</param>
     /// <returns><see langword="true"/> when the folder is gone.</returns>
     private static bool IsGone(string path, IOException error) =>
         error.InnerException is Win32Exception { NativeErrorCode: (int)WIN32_ERROR.ERROR_FILE_NOT_FOUND or (int)WIN32_ERROR.ERROR_PATH_NOT_FOUND }
-        && Directory.Exists(Path.GetPathRoot(Path.GetFullPath(path)));
+        && Directory.Exists(Path.GetPathRoot(Path.GetFullPath(path)))
+        && !Path.Exists(path);
 
     /// <summary>The processes with a named handle under a locked folder, sorted by PID, each with its handles there.</summary>
     /// <param name="findings">What the scan found.</param>
