@@ -43,7 +43,7 @@ linear: worktree-sweep
 - Explore: `Explore`. C# design second opinion: `oracle`.
 - Implementer: tier 1 and tier 2 briefs go to DeepSeek through `dispatch`, as `plan-execution` routes them; its mid-run `QUESTION` channel takes the small API-shape calls a brief leaves open, answered with `dispatch answer`. The Opus `implementer` through `Agent` takes tier 3 briefs and any brief whose open design call the orchestrator cannot settle before dispatch. The message announcing a dispatch names each brief's route.
 - Reviewers: `code-review` for every item.
-- Gates, each through `pwsh -NoProfile -File tools/gate.ps1 -Log .tmp/<name>.log -TimeoutSeconds 600 -Slot heavy -- <command>` from the repo root:
+- Gates, each through `gate run --log .tmp/<name>.log --timeout 600 --slot heavy -- <command>` from the repo root, or with `--cd <worktree root>` for a worktree's command (a machine without `gate` installs it from `X:\dev\gate` with `pwsh tools/install.ps1`; `gate --help` prints the options):
   - `dotnet build WorktreeSweep.slnx -c Release` (warnings are errors)
   - `dotnet test WorktreeSweep.slnx -c Release --no-build` (runs under Microsoft.Testing.Platform through the root `global.json`)
   - `dotnet csharpier check .`
@@ -70,7 +70,7 @@ linear: worktree-sweep
 
 - Ceiling: **three** implementers. Items in different `src/WorktreeSweep.Core/` folders run side by side. Shared files that serialize two items: `tests/WorktreeSweep.Tests/Fixture.cs`, `src/WorktreeSweep.Core/Git/GitRunner.cs` and the csproj files.
 - Branch: each implementer gets its own worktree, `git worktree add ../worktree-sweep.wt/<slug> -b <slug> <base>`, per the user-level `nextup` §3 (an item under a feature marker is cut from `feat/<name>` instead). The main checkout hosts at most one implementer, and none while a gate runs there. Record `branch.<slug>.base` and `branch.<slug>.landOn` as §3 **Base and target** says (`main` and `main` by default).
-- Gates in concurrent trees go through `tools/gate.ps1`: a heavy run waits for one of the machine-wide heavy slots, so three trees' builds and tests queue rather than oversubscribe the machine.
+- Gates in concurrent trees go through `gate run`: a heavy run waits for one of the machine-wide heavy slots, so three trees' builds and tests queue rather than oversubscribe the machine.
 - Context: read the status bar's figure at every landing (`bash ~/.claude/tools/context-usage/context-usage.sh`); past 40% stop refilling, per the user-level `nextup`.
 
 ## Docs map
