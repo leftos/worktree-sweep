@@ -73,7 +73,7 @@ public sealed partial class MainViewModel : ObservableObject
             Screen = Screen.Empty;
             return;
         }
-        List = new ListViewModel(ReportTable.Rows(report, nowUnix), nowUnix, utcOffset, EnterReview);
+        List = new ListViewModel(report, nowUnix, utcOffset, EnterReview);
         Screen = Screen.List;
     }
 

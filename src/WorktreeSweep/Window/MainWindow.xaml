@@ -3,6 +3,7 @@
   xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
   xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
   xmlns:local="clr-namespace:WorktreeSweep.Window"
+  xmlns:vm="clr-namespace:WorktreeSweep.ViewModels"
   Width="1100"
   Height="700"
   WindowStartupLocation="CenterScreen"
@@ -10,6 +11,8 @@
   <Window.Resources>
     <local:EnumVisibilityConverter x:Key="ShownOn" />
     <local:RiskBrushConverter x:Key="RiskBrush" />
+    <local:EnumMatchConverter x:Key="Is" />
+    <BooleanToVisibilityConverter x:Key="ShownWhenTrue" />
 
     <Style TargetType="Button">
       <Setter Property="MinWidth" Value="90" />
@@ -35,14 +38,83 @@
       <Setter Property="Margin" Value="0,10,0,0" />
     </Style>
 
-    <Style x:Key="MergeCell" TargetType="TextBlock">
-      <Setter Property="Foreground" Value="{Binding MergeRisk, Converter={StaticResource RiskBrush}}" />
+    <!-- A risk cell's text sits in a rounded pill tinted by its risk. -->
+    <Style x:Key="Pill" TargetType="Border">
+      <Setter Property="CornerRadius" Value="9" />
+      <Setter Property="Padding" Value="8,1" />
+      <Setter Property="HorizontalAlignment" Value="Left" />
+      <Setter Property="VerticalAlignment" Value="Center" />
     </Style>
-    <Style x:Key="DirtyCell" TargetType="TextBlock">
-      <Setter Property="Foreground" Value="{Binding DirtyRisk, Converter={StaticResource RiskBrush}}" />
+
+    <Style x:Key="RightCell" TargetType="TextBlock">
+      <Setter Property="HorizontalAlignment" Value="Right" />
     </Style>
-    <Style x:Key="UpstreamCell" TargetType="TextBlock">
-      <Setter Property="Foreground" Value="{Binding UpstreamRisk, Converter={StaticResource RiskBrush}}" />
+
+    <!-- The kind filter: one radio group drawn as toggle buttons. -->
+    <Style x:Key="KindButton" TargetType="RadioButton" BasedOn="{StaticResource {x:Type ToggleButton}}">
+      <Setter Property="GroupName" Value="Kind" />
+      <Setter Property="Padding" Value="12,4" />
+      <Setter Property="Margin" Value="0,0,2,0" />
+    </Style>
+
+    <Style x:Key="DiscoveryNotice" TargetType="Border">
+      <Style.Triggers>
+        <DataTrigger Binding="{Binding DiscoveryErrorsTitle}" Value="{x:Null}">
+          <Setter Property="Visibility" Value="Collapsed" />
+        </DataTrigger>
+      </Style.Triggers>
+    </Style>
+
+    <Style x:Key="HiddenTickedPill" TargetType="Border">
+      <Style.Triggers>
+        <DataTrigger Binding="{Binding HiddenTickedText}" Value="{x:Null}">
+          <Setter Property="Visibility" Value="Collapsed" />
+        </DataTrigger>
+      </Style.Triggers>
+    </Style>
+
+    <Style x:Key="SearchHint" TargetType="TextBlock">
+      <Setter Property="Visibility" Value="Collapsed" />
+      <Style.Triggers>
+        <DataTrigger Binding="{Binding Search}" Value="">
+          <Setter Property="Visibility" Value="Visible" />
+        </DataTrigger>
+      </Style.Triggers>
+    </Style>
+
+    <Style x:Key="ShownWithoutSelection" TargetType="TextBlock">
+      <Setter Property="Visibility" Value="Collapsed" />
+      <Style.Triggers>
+        <DataTrigger Binding="{Binding Selected}" Value="{x:Null}">
+          <Setter Property="Visibility" Value="Visible" />
+        </DataTrigger>
+      </Style.Triggers>
+    </Style>
+
+    <Style x:Key="HiddenWithoutSelection" TargetType="StackPanel">
+      <Style.Triggers>
+        <DataTrigger Binding="{Binding Selected}" Value="{x:Null}">
+          <Setter Property="Visibility" Value="Collapsed" />
+        </DataTrigger>
+      </Style.Triggers>
+    </Style>
+
+    <!-- What removing the selected row loses stands out: green when nothing is, red otherwise. -->
+    <Style x:Key="DetailValue" TargetType="TextBlock">
+      <Setter Property="TextWrapping" Value="Wrap" />
+      <Style.Triggers>
+        <DataTrigger Binding="{Binding Label}" Value="Removing it loses">
+          <Setter Property="FontWeight" Value="SemiBold" />
+          <Setter Property="Foreground" Value="Firebrick" />
+        </DataTrigger>
+        <MultiDataTrigger>
+          <MultiDataTrigger.Conditions>
+            <Condition Binding="{Binding Label}" Value="Removing it loses" />
+            <Condition Binding="{Binding DataContext.SelectedLosesNothing, RelativeSource={RelativeSource AncestorType=ItemsControl}}" Value="True" />
+          </MultiDataTrigger.Conditions>
+          <Setter Property="Foreground" Value="ForestGreen" />
+        </MultiDataTrigger>
+      </Style.Triggers>
     </Style>
 
     <!-- The answer the question defaults to is the button Enter presses. -->
@@ -88,50 +160,245 @@
     <!-- List -->
     <Grid Visibility="{Binding Screen, Converter={StaticResource ShownOn}, ConverterParameter=List}">
       <DockPanel DataContext="{Binding List}">
-        <TextBlock DockPanel.Dock="Top" Margin="0,0,0,6" Text="{Binding Header}" />
-        <StackPanel DockPanel.Dock="Bottom" Style="{StaticResource ButtonRow}">
-          <Button Content="Tick all" Command="{Binding TickAllCommand}" />
-          <Button Content="Tick none" Command="{Binding TickNoneCommand}" />
-          <Button Content="Review" Command="{Binding ReviewCommand}" IsDefault="True" />
-        </StackPanel>
-        <TextBlock DockPanel.Dock="Bottom" Style="{StaticResource HiddenWhenEmpty}" Text="{Binding Message}" />
-        <Border DockPanel.Dock="Bottom" Margin="0,8,0,0" Padding="6" BorderBrush="LightGray" BorderThickness="1">
-          <ItemsControl FontFamily="Consolas" ItemsSource="{Binding Detail}" />
-        </Border>
-        <DataGrid
-          AutoGenerateColumns="False"
-          CanUserAddRows="False"
-          CanUserDeleteRows="False"
-          CanUserSortColumns="False"
-          HeadersVisibility="Column"
-          IsReadOnly="True"
-          ItemsSource="{Binding Rows}"
-          SelectedItem="{Binding Selected}"
-          SelectionMode="Single"
+        <!-- Discovery errors -->
+        <Border
+          DockPanel.Dock="Top"
+          Margin="0,0,0,10"
+          Padding="12,9"
+          Background="#FFF8E1"
+          BorderBrush="#F1D98A"
+          BorderThickness="1"
+          CornerRadius="6"
+          Style="{StaticResource DiscoveryNotice}"
         >
-          <DataGrid.Columns>
-            <DataGridTemplateColumn>
-              <DataGridTemplateColumn.CellTemplate>
-                <DataTemplate>
+          <StackPanel TextElement.Foreground="#5A3E00">
+            <TextBlock FontWeight="SemiBold" Text="{Binding DiscoveryErrorsTitle}" />
+            <ItemsControl Margin="0,4,0,0" FontFamily="Cascadia Mono, Consolas" ItemsSource="{Binding DiscoveryErrors}" />
+            <TextBlock Margin="0,4,0,0" Text="{Binding DiscoveryErrorsNote}" TextWrapping="Wrap" />
+          </StackPanel>
+        </Border>
+
+        <!-- Filters and tick buttons -->
+        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10" LastChildFill="False">
+          <Button DockPanel.Dock="Right" Margin="0" Content="Untick all" Command="{Binding UntickAllCommand}" />
+          <Button DockPanel.Dock="Right" Content="Tick shown" Command="{Binding TickShownCommand}" />
+          <Border Padding="2" Background="#E9E9E9" CornerRadius="6" AutomationProperties.Name="Kind">
+            <StackPanel Orientation="Horizontal">
+              <RadioButton
+                Style="{StaticResource KindButton}"
+                IsChecked="{Binding KindFilter, Converter={StaticResource Is}, ConverterParameter={x:Static vm:KindFilter.All}}"
+              >
+                <TextBlock>
+                  <Run Text="All" />
+                  <Run Foreground="#5C5C5C" Text="{Binding AllCount, Mode=OneWay}" />
+                </TextBlock>
+              </RadioButton>
+              <RadioButton
+                Style="{StaticResource KindButton}"
+                IsChecked="{Binding KindFilter, Converter={StaticResource Is}, ConverterParameter={x:Static vm:KindFilter.Worktree}}"
+              >
+                <TextBlock>
+                  <Run Text="Worktrees" />
+                  <Run Foreground="#5C5C5C" Text="{Binding WorktreeCount, Mode=OneWay}" />
+                </TextBlock>
+              </RadioButton>
+              <RadioButton
+                Style="{StaticResource KindButton}"
+                IsChecked="{Binding KindFilter, Converter={StaticResource Is}, ConverterParameter={x:Static vm:KindFilter.Orphan}}"
+              >
+                <TextBlock>
+                  <Run Text="Orphans" />
+                  <Run Foreground="#5C5C5C" Text="{Binding OrphanCount, Mode=OneWay}" />
+                </TextBlock>
+              </RadioButton>
+              <RadioButton
+                Style="{StaticResource KindButton}"
+                IsChecked="{Binding KindFilter, Converter={StaticResource Is}, ConverterParameter={x:Static vm:KindFilter.Link}}"
+              >
+                <TextBlock>
+                  <Run Text="Links" />
+                  <Run Foreground="#5C5C5C" Text="{Binding LinkCount, Mode=OneWay}" />
+                </TextBlock>
+              </RadioButton>
+            </StackPanel>
+          </Border>
+          <ToggleButton Margin="10,0,0,0" Padding="12,4" IsChecked="{Binding NothingLost}">
+            <TextBlock>
+              <Run Text="✓ Nothing lost" />
+              <Run Foreground="#5C5C5C" Text="{Binding NothingLostCount, Mode=OneWay}" />
+            </TextBlock>
+          </ToggleButton>
+          <Grid Width="260" Margin="10,0,0,0">
+            <TextBox
+              Padding="4,3"
+              VerticalContentAlignment="Center"
+              AutomationProperties.Name="Filter by path or branch"
+              Text="{Binding Search, UpdateSourceTrigger=PropertyChanged}"
+            />
+            <TextBlock
+              Margin="8,0,0,0"
+              VerticalAlignment="Center"
+              Foreground="#767676"
+              IsHitTestVisible="False"
+              Style="{StaticResource SearchHint}"
+              Text="Filter by path or branch"
+            />
+          </Grid>
+        </DockPanel>
+
+        <!-- Summary and Review -->
+        <DockPanel DockPanel.Dock="Bottom" Margin="0,10,0,0">
+          <Button DockPanel.Dock="Right" Margin="0" Content="{Binding ReviewLabel}" Command="{Binding ReviewCommand}" IsDefault="True" />
+          <StackPanel VerticalAlignment="Center" Orientation="Horizontal">
+            <TextBlock VerticalAlignment="Center" Text="{Binding Header}" />
+            <Border Margin="12,0,0,0" Padding="10,3" Background="#FFF1C7" CornerRadius="10" Style="{StaticResource HiddenTickedPill}">
+              <TextBlock Foreground="#6B4400">
+                <Run Text="{Binding HiddenTickedText, Mode=OneWay}" />
+                <Hyperlink Command="{Binding ClearFiltersCommand}">Show them</Hyperlink>
+              </TextBlock>
+            </Border>
+          </StackPanel>
+        </DockPanel>
+        <TextBlock DockPanel.Dock="Bottom" Style="{StaticResource HiddenWhenEmpty}" Text="{Binding Message}" />
+
+        <!-- Selected row -->
+        <Border
+          DockPanel.Dock="Bottom"
+          Margin="0,10,0,0"
+          Padding="14,12"
+          Background="White"
+          BorderBrush="#E0E0E0"
+          BorderThickness="1"
+          CornerRadius="6"
+        >
+          <Grid>
+            <TextBlock
+              Foreground="#5C5C5C"
+              Style="{StaticResource ShownWithoutSelection}"
+              Text="Select a row to see what it is and what removing it loses."
+            />
+            <StackPanel Style="{StaticResource HiddenWithoutSelection}">
+              <StackPanel Margin="0,0,0,10" Orientation="Horizontal">
+                <TextBlock FontFamily="Cascadia Mono, Consolas" FontWeight="SemiBold" Text="{Binding Selected.Candidate.Path}" />
+                <Border Margin="12,0,0,0" Background="#E8F1FB" Style="{StaticResource Pill}">
+                  <TextBlock Foreground="#0F4C81" Text="{Binding Selected.Kind}" />
+                </Border>
+              </StackPanel>
+              <ItemsControl ItemsSource="{Binding Detail}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Grid Margin="0,0,0,6">
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="150" />
+                        <ColumnDefinition Width="*" />
+                      </Grid.ColumnDefinitions>
+                      <TextBlock Foreground="#5C5C5C" Text="{Binding Label}" />
+                      <TextBlock Grid.Column="1" Style="{StaticResource DetailValue}" Text="{Binding Text}" />
+                    </Grid>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </StackPanel>
+          </Grid>
+        </Border>
+
+        <!-- Candidates -->
+        <Grid>
+          <DataGrid
+            AutoGenerateColumns="False"
+            CanUserAddRows="False"
+            CanUserDeleteRows="False"
+            CanUserSortColumns="True"
+            HeadersVisibility="Column"
+            IsReadOnly="True"
+            ItemsSource="{Binding Shown, NotifyOnTargetUpdated=True}"
+            SelectedItem="{Binding Selected}"
+            SelectionMode="Single"
+            Sorting="OnListSorting"
+            TargetUpdated="OnListShownChanged"
+          >
+            <DataGrid.Columns>
+              <DataGridTemplateColumn CanUserSort="False">
+                <DataGridTemplateColumn.Header>
                   <CheckBox
-                    HorizontalAlignment="Center"
-                    VerticalAlignment="Center"
-                    IsChecked="{Binding IsTicked, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                    AutomationProperties.Name="Tick every shown row"
+                    IsChecked="{Binding DataContext.AllShownTicked, RelativeSource={RelativeSource AncestorType=DataGrid}, Mode=TwoWay}"
                   />
-                </DataTemplate>
-              </DataGridTemplateColumn.CellTemplate>
-            </DataGridTemplateColumn>
-            <DataGridTextColumn Header="Path" Binding="{Binding Path, Mode=OneWay}" />
-            <DataGridTextColumn Header="Kind" Binding="{Binding Kind, Mode=OneWay}" />
-            <DataGridTextColumn Header="Branch" Binding="{Binding Branch, Mode=OneWay}" />
-            <DataGridTextColumn Header="Merge" Binding="{Binding Merge, Mode=OneWay}" ElementStyle="{StaticResource MergeCell}" />
-            <DataGridTextColumn Header="Dirty" Binding="{Binding Dirty, Mode=OneWay}" ElementStyle="{StaticResource DirtyCell}" />
-            <DataGridTextColumn Header="Upstream" Binding="{Binding Upstream, Mode=OneWay}" ElementStyle="{StaticResource UpstreamCell}" />
-            <DataGridTextColumn Header="Active" Binding="{Binding Active, Mode=OneWay}" />
-            <DataGridTextColumn Header="Size" Binding="{Binding Size, Mode=OneWay}" />
-            <DataGridTextColumn Header="Flags" Binding="{Binding Flags, Mode=OneWay}" />
-          </DataGrid.Columns>
-        </DataGrid>
+                </DataGridTemplateColumn.Header>
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <CheckBox
+                      HorizontalAlignment="Center"
+                      VerticalAlignment="Center"
+                      IsChecked="{Binding IsTicked, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                    />
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+              <DataGridTextColumn Header="Path" FontFamily="Cascadia Mono, Consolas" SortMemberPath="Path" Binding="{Binding Path, Mode=OneWay}" />
+              <DataGridTextColumn Header="Kind" SortMemberPath="Kind" Binding="{Binding Kind, Mode=OneWay}" />
+              <DataGridTextColumn Header="Branch" SortMemberPath="Branch" Binding="{Binding Branch, Mode=OneWay}" />
+              <DataGridTemplateColumn Header="Merge" SortMemberPath="Merge">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <Border
+                      Background="{Binding MergeRisk, Converter={StaticResource RiskBrush}, ConverterParameter=Background}"
+                      Style="{StaticResource Pill}"
+                    >
+                      <TextBlock Foreground="{Binding MergeRisk, Converter={StaticResource RiskBrush}}" Text="{Binding Merge}" />
+                    </Border>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+              <DataGridTemplateColumn Header="Dirty" SortMemberPath="Dirty">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <Border
+                      Background="{Binding DirtyRisk, Converter={StaticResource RiskBrush}, ConverterParameter=Background}"
+                      Style="{StaticResource Pill}"
+                    >
+                      <TextBlock Foreground="{Binding DirtyRisk, Converter={StaticResource RiskBrush}}" Text="{Binding Dirty}" />
+                    </Border>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+              <DataGridTemplateColumn Header="Upstream" SortMemberPath="Upstream">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <Border
+                      Background="{Binding UpstreamRisk, Converter={StaticResource RiskBrush}, ConverterParameter=Background}"
+                      Style="{StaticResource Pill}"
+                    >
+                      <TextBlock Foreground="{Binding UpstreamRisk, Converter={StaticResource RiskBrush}}" Text="{Binding Upstream}" />
+                    </Border>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+              <DataGridTextColumn
+                Header="Active"
+                SortMemberPath="Active"
+                Binding="{Binding Active, Mode=OneWay}"
+                ElementStyle="{StaticResource RightCell}"
+              />
+              <DataGridTextColumn
+                Header="Size"
+                SortMemberPath="Size"
+                Binding="{Binding Size, Mode=OneWay}"
+                ElementStyle="{StaticResource RightCell}"
+              />
+              <DataGridTextColumn Header="Flags" SortMemberPath="Flags" Binding="{Binding Flags, Mode=OneWay}" />
+            </DataGrid.Columns>
+          </DataGrid>
+          <TextBlock
+            Margin="0,60,0,0"
+            HorizontalAlignment="Center"
+            VerticalAlignment="Top"
+            Foreground="#5C5C5C"
+            Visibility="{Binding NoMatch, Converter={StaticResource ShownWhenTrue}}"
+          >
+            No candidate matches this filter. <Hyperlink Command="{Binding ClearFiltersCommand}">Clear the filter</Hyperlink>
+          </TextBlock>
+        </Grid>
       </DockPanel>
     </Grid>
 
