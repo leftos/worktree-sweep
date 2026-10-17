@@ -47,7 +47,7 @@ linear: worktree-sweep
   - `dotnet build WorktreeSweep.slnx -c Release` (warnings are errors)
   - `dotnet test WorktreeSweep.slnx -c Release --no-build` (runs under Microsoft.Testing.Platform through the root `global.json`)
   - `dotnet csharpier check .`
-  - `dotnet format style WorktreeSweep.slnx --verify-no-changes --severity info` and the same with `analyzers`
+  - `dotnet format style WorktreeSweep.slnx --verify-no-changes --severity info` and the same with `analyzers`; in an implementer's brief both end with `--include <changed files>`, paths relative to the worktree root (absolute paths match nothing and pass on an empty set), per `language-conventions` (C#/.NET); the orchestrator's landing gate runs them on the whole solution
 - Needs the user: anything that runs elevated. `handle.exe` sees nothing unelevated, and a UAC prompt needs a person. Ask the user to run the command with `!`, quoting a Windows path in single quotes (`'X:\dev\x\y'`): bash eats unquoted backslashes, and `handle.exe` matches only backslash paths.
 - Parent-side gate: `git status --short` in the repo.
 
