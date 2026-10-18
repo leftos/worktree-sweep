@@ -55,9 +55,11 @@ internal static class OpenHandles
     /// </summary>
     /// <param name="pids">The inspected processes.</param>
     /// <param name="roots">Each folder once, fully resolved; the file system is asked once per folder.</param>
+    /// <param name="account">Records each name lookup given up on while it runs.</param>
     /// <returns>What the handles showed.</returns>
     /// <exception cref="IOException">This program's own file or handles cannot be read to learn the File type index.</exception>
-    internal static HandleFindings Scan(IReadOnlyCollection<int> pids, IReadOnlyList<string> roots) => Scan(pids, roots, PidsUsing);
+    internal static HandleFindings Scan(IReadOnlyCollection<int> pids, IReadOnlyList<string> roots, LookupAccount account) =>
+        Scan(pids, roots, PidsUsing, account);
 
     /// <summary>
     /// Lists and names the open disk handles of <paramref name="pids"/>, and finds the processes using each root through
@@ -68,13 +70,20 @@ internal static class OpenHandles
     /// <param name="pids">The inspected processes.</param>
     /// <param name="roots">Each folder once, fully resolved; the file system is asked once per folder.</param>
     /// <param name="pidsUsing">Lists the processes using a root; <see cref="PidsUsing"/> outside tests.</param>
+    /// <param name="account">Records each name lookup given up on while it runs.</param>
     /// <returns>What the handles showed.</returns>
     /// <exception cref="IOException">This program's own file or handles cannot be read to learn the File type index.</exception>
-    internal static HandleFindings Scan(IReadOnlyCollection<int> pids, IReadOnlyList<string> roots, Func<string, IReadOnlyList<int>> pidsUsing)
+    internal static HandleFindings Scan(
+        IReadOnlyCollection<int> pids,
+        IReadOnlyList<string> roots,
+        Func<string, IReadOnlyList<int>> pidsUsing,
+        LookupAccount account
+    )
     {
         ArgumentNullException.ThrowIfNull(pids);
         ArgumentNullException.ThrowIfNull(roots);
         ArgumentNullException.ThrowIfNull(pidsUsing);
+        ArgumentNullException.ThrowIfNull(account);
         uint fileType = FileTypeIndex();
         var sources = new List<SafeFileHandle>();
         try
@@ -98,9 +107,9 @@ internal static class OpenHandles
             NamedHandles named = HandleNaming.Name(
                 handles,
                 Check,
-                HandleNaming.DefaultWorkers,
-                HandleNaming.DefaultTimeout,
-                HandleNaming.CancelLookup
+                new NamingOptions(HandleNaming.DefaultWorkers, HandleNaming.DefaultTimeout, HandleNaming.DefaultStartTimeout),
+                HandleNaming.CancelLookup,
+                account
             );
             var users = new List<RootUser>();
             var rootsWithoutUsers = new List<string>();
@@ -127,7 +136,8 @@ internal static class OpenHandles
     /// <summary>
     /// The findings of a scan: the names, plus an unnamed handle for each process whose check failed at once and that the file system
     /// reports as using the folder. A failed check on any other process adds nothing: volume handles and the like fail at once, so a
-    /// failure alone does not show that the process holds the folder.
+    /// failure alone does not show that the process holds the folder. The processes with a timed-out lookup are those the naming gave
+    /// a handle without a name; the unnamed handles added for failed checks are not among them.
     /// </summary>
     /// <param name="named">What naming the handles found.</param>
     /// <param name="unlisted">Processes whose handles could not be listed.</param>
@@ -142,7 +152,8 @@ internal static class OpenHandles
             .Where(named.Failed.Contains)
             .Distinct()
             .Select(pid => new NamedHandle(pid, null, 0));
-        return new HandleFindings([.. named.Names, .. failedUsing], unlisted, users);
+        var timedOut = named.Names.Where(handle => handle.Name is null).Select(handle => handle.Pid).ToHashSet();
+        return new HandleFindings([.. named.Names, .. failedUsing], unlisted, users) { TimedOut = timedOut };
     }
 
     /// <summary>

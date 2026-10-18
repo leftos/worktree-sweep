@@ -50,7 +50,9 @@ A volume whose Recycle Bin is set to delete permanently (`NukeOnDelete`) never r
 | Module list / mapped views | exe, DLL | 1.6–2 s |
 | System handle table (`SystemExtendedHandleInformation`) | same as per-process handles | 4.5 s; kernel addresses are zeroed unelevated |
 
-**Hang risk:** `GetFinalPathNameByHandleW` and `NtQueryObject` block on a handle with synchronous I/O pending (a pipe read, a synchronous `ReadDirectoryChangesW`), and `CancelSynchronousIo` rarely frees them. `GetFileType` returns immediately on both. A stuck worker thread is abandoned; the process still exits normally.
+**Hang risk:** `GetFinalPathNameByHandleW` and `NtQueryObject` block on a handle with synchronous I/O pending (a pipe read, a synchronous `ReadDirectoryChangesW`), and `CancelSynchronousIo` rarely frees them. Reading the type with `GetFileType` can hang as well (a synchronous file waits for its owner's pending I/O), so it runs inside the same cancellable lookup.
+
+A stuck worker thread is abandoned; on the unelevated agent path, the only one measured, the process still exits normally. The elevated session does not rely on that: it waits up to 1 s for its own unsettled lookups and exits 3 if any are left.
 
 **Real processes, read-only:** idle MSBuild nodes and VBCSCompiler held nothing on D: (their cwd is in the SDK folder). `rust-analyzer` and its proc-macro server had their cwd at the repo plus ~18 folder handles under it. A Claude plugin's Roslyn LSP had its cwd at its project.
 

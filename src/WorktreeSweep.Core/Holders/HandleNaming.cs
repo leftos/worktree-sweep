@@ -65,12 +65,36 @@ internal sealed record NamedHandles(IReadOnlyList<NamedHandle> Names, IReadOnlyS
 /// <returns>What the check found.</returns>
 internal delegate CheckedHandle HandleCheck<in T>(T handle, Action lookupStarting, Action lookupEnded);
 
+/// <summary>How many workers name handles, and how long a check may take to start its lookup and to finish it.</summary>
+/// <param name="Workers">Workers checking handles at once; at least 1.</param>
+/// <param name="Timeout">How long one lookup may take from its start, and how long a cancelled lookup may take to return.</param>
+/// <param name="StartTimeout">
+/// How long a worker may take to start a lookup, which covers its thread being scheduled and the handle being duplicated; past it,
+/// the handle is treated as a timed-out lookup.
+/// </param>
+internal sealed record NamingOptions(int Workers, TimeSpan Timeout, TimeSpan StartTimeout)
+{
+    /// <summary>Gets what each worker calls on its own thread before it claims a handle; <see langword="null"/> outside tests.</summary>
+    internal Action? BeforeClaim { get; init; }
+
+    /// <summary>Gets what each worker calls on its own thread once it has tried to claim a handle, with whether it did;
+    /// <see langword="null"/> outside tests.</summary>
+    internal Action<bool>? AfterClaim { get; init; }
+
+    /// <summary>Gets a test seam: what each driver calls on its own thread once it has tried to cancel a timed-out lookup, with
+    /// whether a cancel was sent; <see langword="null"/> outside tests.</summary>
+    internal Action<bool>? AfterCancelAttempt { get; init; }
+}
+
 /// <summary>
 /// Names handles on abandonable workers: a name lookup can hang forever (on a pipe or a network file), so each check runs on a
 /// dedicated thread that is given one handle at a time. Once the check says its lookup is starting, the lookup is given a limited
-/// time; when that runs out, the handle counts as unnamed and the lookup, if it has not ended, is cancelled. A worker whose check
-/// returns after the cancel is kept; one that still does not return is abandoned and a fresh worker takes its place. Workers are
-/// threads rather than tasks, so a hung lookup never holds a thread-pool thread.
+/// time; when that runs out, the lookup, if it is running, is cancelled. A worker whose check returns after the cancel is kept, and
+/// the handle keeps a disk name the check returned, while a failure or a skip after a cancel counts as a timed-out, unnamed handle;
+/// a check that still does not return is abandoned, recorded in the caller's <see cref="LookupAccount"/> until it returns, and a
+/// fresh worker takes its place. A handle the worker has not claimed within its start timeout is withdrawn, so it is never checked,
+/// and its worker is replaced as an abandoned one is. Workers are threads rather than tasks, so a hung lookup never holds a
+/// thread-pool thread.
 /// </summary>
 internal static class HandleNaming
 {
@@ -84,32 +108,38 @@ internal static class HandleNaming
     /// Gets how long a worker may take to start a lookup, which covers its thread being scheduled and the handle being duplicated;
     /// past it, the handle is treated as a timed-out lookup.
     /// </summary>
-    internal static TimeSpan StartTimeout { get; } = TimeSpan.FromSeconds(5);
+    internal static TimeSpan DefaultStartTimeout { get; } = TimeSpan.FromSeconds(5);
 
     /// <summary>
-    /// Checks every handle on <paramref name="workers"/> workers and returns the disk files' names by process. A skipped handle adds
-    /// nothing; a failed one adds its process to the failed ones; a lookup that times out gives a <see langword="null"/> name, even
-    /// when its check throws once cancelled. Once a check throws otherwise, no driver takes another handle and this rethrows. Every
-    /// worker has finished or been abandoned when this returns or throws.
+    /// Checks every handle on <see cref="NamingOptions.Workers"/> workers and returns the disk files' names by process. A skipped
+    /// handle adds nothing; a failed one adds its process to the failed ones; a lookup that times out gives a <see langword="null"/>
+    /// name, unless its check, once cancelled, returns a disk name, which is kept; a failure, a skip or a throw after a cancel stays a
+    /// <see langword="null"/> name, while a late result with no cancel sent, the lookup not running, is recorded as it is. A handle
+    /// its worker had not claimed when its driver gave up on it is never checked, and that worker is replaced; one whose check was
+    /// claimed and did not return after its cancel is recorded in <paramref name="account"/> until it returns, and its worker is
+    /// replaced too. Once a check throws otherwise, no driver takes another handle and this rethrows. Every worker has finished or
+    /// been abandoned when this returns or throws.
     /// </summary>
     /// <typeparam name="T">What identifies a handle to <paramref name="check"/>.</typeparam>
     /// <param name="handles">Each handle with its process.</param>
     /// <param name="check">Checks one handle; it runs on a worker thread.</param>
-    /// <param name="workers">Workers checking handles at once.</param>
-    /// <param name="timeout">How long one lookup may take from its start, and how long a cancelled lookup may take to return.</param>
+    /// <param name="options">The workers and the time limits.</param>
     /// <param name="cancel">Cancels a timed-out lookup, given the worker's thread; <see cref="CancelLookup"/> outside tests.</param>
+    /// <param name="account">Records each check given up on while it runs; the caller's, read before it decides a folder is free.</param>
     /// <returns>The disk files' names by process, in no particular order, and the processes with a failed check.</returns>
-    /// <exception cref="ArgumentOutOfRangeException"><paramref name="workers"/> is less than 1.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><see cref="NamingOptions.Workers"/> is less than 1.</exception>
     internal static NamedHandles Name<T>(
         IReadOnlyList<(int Pid, T Handle)> handles,
         HandleCheck<T> check,
-        int workers,
-        TimeSpan timeout,
-        Action<SafeHandle> cancel
+        NamingOptions options,
+        Action<SafeHandle> cancel,
+        LookupAccount account
     )
     {
         ArgumentNullException.ThrowIfNull(handles);
-        ArgumentOutOfRangeException.ThrowIfLessThan(workers, 1);
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(account);
+        ArgumentOutOfRangeException.ThrowIfLessThan(options.Workers, 1);
         if (handles.Count == 0)
         {
             return new NamedHandles([], new HashSet<int>());
@@ -117,9 +147,9 @@ internal static class HandleNaming
         var queue = new ConcurrentQueue<(int Pid, T Handle)>(handles);
         var stop = new StopSignal();
         var drivers = new List<Driver<T>>();
-        for (int index = 0; index < workers; index++)
+        for (int index = 0; index < options.Workers; index++)
         {
-            drivers.Add(Driver<T>.Start(queue, check, timeout, cancel, stop));
+            drivers.Add(Driver<T>.Start(queue, new DriverSetup<T>(check, options, cancel, account), stop));
         }
         drivers.ForEach(driver => driver.Join());
         drivers.Find(driver => driver.Failure is not null)?.Failure?.Throw();
@@ -127,8 +157,9 @@ internal static class HandleNaming
     }
 
     /// <summary>
-    /// Cancels the synchronous I/O pending on a worker's thread; a failure is traced, never thrown. <c>ERROR_NOT_FOUND</c> means the
-    /// lookup ended before the cancel reached it, so it is not a failure.
+    /// Cancels the synchronous I/O pending on a worker's thread; a failure is traced, never thrown. <c>ERROR_NOT_FOUND</c> means no
+    /// synchronous I/O was pending on the thread: the lookup ended before the cancel reached it, or the worker is blocked before it
+    /// issued a request of its own, which a cancel cannot reach. It is traced as such, not as a failure to cancel.
     /// </summary>
     /// <param name="thread">The worker's thread, open with <c>THREAD_TERMINATE</c> access.</param>
     internal static void CancelLookup(SafeHandle thread)
@@ -138,10 +169,12 @@ internal static class HandleNaming
             return;
         }
         int error = Marshal.GetLastPInvokeError();
-        if (error != (int)WIN32_ERROR.ERROR_NOT_FOUND)
+        if (error == (int)WIN32_ERROR.ERROR_NOT_FOUND)
         {
-            Trace.WriteLine($"cannot cancel a timed-out name lookup: {new Win32Exception(error).Message}");
+            Trace.WriteLine("no pending I/O to cancel on a timed-out name lookup's thread: it ended, or it is blocked before its request");
+            return;
         }
+        Trace.WriteLine($"cannot cancel a timed-out name lookup: {new Win32Exception(error).Message}");
     }
 
     /// <summary>Set once a driver fails, so the other drivers take no more handles.</summary>
@@ -155,11 +188,29 @@ internal static class HandleNaming
         internal void Request() => requested = true;
     }
 
-    /// <summary>One handle given to a worker: whether its lookup has started, and its result.</summary>
+    /// <summary>What every driver of one <see cref="Name{T}"/> call works with.</summary>
+    /// <typeparam name="T">What identifies a handle to <paramref name="Check"/>.</typeparam>
+    /// <param name="Check">Checks one handle.</param>
+    /// <param name="Options">The workers and the time limits.</param>
+    /// <param name="Cancel">Cancels a timed-out lookup.</param>
+    /// <param name="Account">Records each check given up on while it runs.</param>
+    private sealed record DriverSetup<T>(HandleCheck<T> Check, NamingOptions Options, Action<SafeHandle> Cancel, LookupAccount Account);
+
+    /// <summary>
+    /// One handle given to a worker: where it is in its life, whether its lookup has started, and its result. It is posted, then
+    /// either claimed by the worker, which then checks it and completes <see cref="ReturnedTask"/>, or withdrawn by its driver before
+    /// the worker claims it, so it is never checked.
+    /// </summary>
     private sealed class Pending
     {
+        private const int Posted = 0;
+        private const int Claimed = 1;
+        private const int Withdrawn = 2;
+
         private readonly TaskCompletionSource started = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource<CheckedHandle> done = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource returned = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int state = Posted;
 
         /// <summary>Gets a task that completes once the check's lookup starts.</summary>
         internal Task Started => started.Task;
@@ -167,11 +218,30 @@ internal static class HandleNaming
         /// <summary>Gets the check's result; a check that throws faults it.</summary>
         internal Task<CheckedHandle> Done => done.Task;
 
+        /// <summary>Gets a task that completes once the check returns or throws; it never faults.</summary>
+        internal Task ReturnedTask => returned.Task;
+
+        /// <summary>Claims the handle for the worker, unless its driver has withdrawn it.</summary>
+        /// <returns><see langword="true"/> when the worker is to check it.</returns>
+        internal bool TryClaim() => Interlocked.CompareExchange(ref state, Claimed, Posted) == Posted;
+
+        /// <summary>Withdraws the handle, unless the worker has claimed it.</summary>
+        /// <returns><see langword="true"/> when the check will never run.</returns>
+        internal bool TryWithdraw() => Interlocked.CompareExchange(ref state, Withdrawn, Posted) == Posted;
+
         internal void MarkStarted() => started.TrySetResult();
 
-        internal void Finish(CheckedHandle found) => done.TrySetResult(found);
+        internal void Finish(CheckedHandle found)
+        {
+            _ = done.TrySetResult(found);
+            _ = returned.TrySetResult();
+        }
 
-        internal void Fail(Exception error) => done.TrySetException(error);
+        internal void Fail(Exception error)
+        {
+            _ = done.TrySetException(error);
+            _ = returned.TrySetResult();
+        }
     }
 
     /// <summary>
@@ -181,23 +251,21 @@ internal static class HandleNaming
     private sealed class Driver<T>
     {
         private readonly ConcurrentQueue<(int Pid, T Handle)> queue;
-        private readonly HandleCheck<T> check;
-        private readonly TimeSpan timeout;
-        private readonly Action<SafeHandle> cancel;
+        private readonly DriverSetup<T> setup;
         private readonly StopSignal stop;
         private readonly List<NamedHandle> names = [];
         private readonly HashSet<int> failed = [];
         private readonly Thread thread;
 
-        private Driver(ConcurrentQueue<(int Pid, T Handle)> queue, HandleCheck<T> check, TimeSpan timeout, Action<SafeHandle> cancel, StopSignal stop)
+        private Driver(ConcurrentQueue<(int Pid, T Handle)> queue, DriverSetup<T> setup, StopSignal stop)
         {
             this.queue = queue;
-            this.check = check;
-            this.timeout = timeout;
-            this.cancel = cancel;
+            this.setup = setup;
             this.stop = stop;
             thread = new Thread(Drive) { IsBackground = true, Name = "handle-naming driver" };
         }
+
+        private TimeSpan Timeout => setup.Options.Timeout;
 
         /// <summary>Gets the names this driver found.</summary>
         internal IReadOnlyList<NamedHandle> Names => names;
@@ -210,20 +278,12 @@ internal static class HandleNaming
 
         /// <summary>Starts a driver.</summary>
         /// <param name="queue">The handles still to check, shared by every driver.</param>
-        /// <param name="check">Checks one handle.</param>
-        /// <param name="timeout">How long one lookup may take.</param>
-        /// <param name="cancel">Cancels a timed-out lookup.</param>
+        /// <param name="setup">The check, the limits, the cancel and the account.</param>
         /// <param name="stop">Shared by every driver; set by the first that fails.</param>
         /// <returns>The running driver.</returns>
-        internal static Driver<T> Start(
-            ConcurrentQueue<(int Pid, T Handle)> queue,
-            HandleCheck<T> check,
-            TimeSpan timeout,
-            Action<SafeHandle> cancel,
-            StopSignal stop
-        )
+        internal static Driver<T> Start(ConcurrentQueue<(int Pid, T Handle)> queue, DriverSetup<T> setup, StopSignal stop)
         {
-            var driver = new Driver<T>(queue, check, timeout, cancel, stop);
+            var driver = new Driver<T>(queue, setup, stop);
             driver.thread.Start();
             return driver;
         }
@@ -237,7 +297,7 @@ internal static class HandleNaming
             // Every exception is carried to Name, since one escaping this thread would end the process.
             try
             {
-                worker = new Worker<T>(check);
+                worker = NewWorker();
                 while (!stop.Requested && queue.TryDequeue(out (int Pid, T Handle) next))
                 {
                     Pending pending = worker.Post(next.Handle);
@@ -246,13 +306,24 @@ internal static class HandleNaming
                         Record(next.Pid, pending.Done.GetAwaiter().GetResult());
                         continue;
                     }
-                    names.Add(new NamedHandle(next.Pid, null, 0));
-                    if (!CancelledInTime(worker, pending, next.Pid))
+                    // A handle the worker has not claimed yet is never checked, so no duplicate of it is ever made; a worker that has
+                    // not claimed in time is replaced, so it costs one start timeout, not one per handle left.
+                    if (pending.TryWithdraw())
                     {
-                        Trace.WriteLine($"naming a handle of pid {next.Pid} timed out and did not stop; abandoning its worker");
-                        worker.Abandon();
-                        worker = new Worker<T>(check);
+                        names.Add(new NamedHandle(next.Pid, null, 0));
+                        Trace.WriteLine($"a worker did not start naming a handle of pid {next.Pid} in time; replacing it");
+                        worker = Replace(worker);
+                        continue;
                     }
+                    if (!CancelledInTime(worker, pending, next.Pid, out bool cancelSent))
+                    {
+                        names.Add(new NamedHandle(next.Pid, null, 0));
+                        Trace.WriteLine($"naming a handle of pid {next.Pid} timed out and did not stop; abandoning its worker");
+                        setup.Account.AddUnsettled(pending.ReturnedTask);
+                        worker = Replace(worker);
+                        continue;
+                    }
+                    RecordLate(next.Pid, pending, cancelSent);
                 }
             }
             catch (Exception error)
@@ -264,6 +335,31 @@ internal static class HandleNaming
             {
                 worker?.Abandon();
             }
+        }
+
+        private Worker<T> NewWorker() => new(setup.Check, setup.Options);
+
+        /// <summary>Abandons <paramref name="worker"/> and starts a fresh one in its place.</summary>
+        private Worker<T> Replace(Worker<T> worker)
+        {
+            worker.Abandon();
+            return NewWorker();
+        }
+
+        /// <summary>
+        /// Keeps what a check that returned only after its timeout, but within the wait that followed, found. When no cancel was sent,
+        /// its result is genuine and is recorded as any other. After a cancel, a disk file's name is kept, as the check did read it,
+        /// while a failure or a skip, which the cancel itself may have caused, leaves the handle unnamed, a timed-out lookup. A check
+        /// that threw leaves it unnamed either way.
+        /// </summary>
+        private void RecordLate(int pid, Pending pending, bool cancelSent)
+        {
+            if (pending.Done.IsCompletedSuccessfully && (!cancelSent || pending.Done.Result.Outcome == CheckOutcome.Disk))
+            {
+                Record(pid, pending.Done.Result);
+                return;
+            }
+            names.Add(new NamedHandle(pid, null, 0));
         }
 
         /// <summary>Keeps what a check that returned in time found: a disk file's name, or its process as failed.</summary>
@@ -280,21 +376,28 @@ internal static class HandleNaming
         }
 
         /// <summary>
-        /// Waits for the check to start its lookup, at most <see cref="StartTimeout"/>, then for its result, at most the timeout.
+        /// Waits for the check to start its lookup, at most <see cref="NamingOptions.StartTimeout"/>, then for its result, at most the
+        /// timeout.
         /// </summary>
         /// <returns><see langword="true"/> when the check returned or threw in time.</returns>
         private bool Settled(Pending pending) =>
-            Task.WaitAny([pending.Started, pending.Done], StartTimeout) >= 0 && Task.WaitAny([pending.Done], timeout) >= 0;
+            Task.WaitAny([pending.Started, pending.Done], setup.Options.StartTimeout) >= 0 && Task.WaitAny([pending.Done], Timeout) >= 0;
 
         /// <summary>
         /// Cancels the worker's timed-out lookup, if it has not ended, and waits, at most the timeout, for its check to return. A check
-        /// that throws after the cancel, as an aborted lookup may, is traced rather than rethrown: its handle already counts as unnamed.
+        /// that throws after the cancel, as an aborted lookup may, is traced rather than rethrown: its handle counts as unnamed.
         /// </summary>
+        /// <param name="worker">The worker running the check.</param>
+        /// <param name="pending">The handle given to it.</param>
+        /// <param name="pid">The handle's process.</param>
+        /// <param name="cancelSent">Set to whether a cancel was sent: none is when no lookup was running, as it had ended or not yet
+        /// begun.</param>
         /// <returns><see langword="true"/> when the check returned or threw, so the worker can be kept.</returns>
-        private bool CancelledInTime(Worker<T> worker, Pending pending, int pid)
+        private bool CancelledInTime(Worker<T> worker, Pending pending, int pid, out bool cancelSent)
         {
-            worker.CancelRunningLookup(cancel);
-            if (Task.WaitAny([pending.Done], timeout) < 0)
+            cancelSent = worker.CancelRunningLookup(setup.Cancel);
+            NoteCancelAttempt(cancelSent);
+            if (Task.WaitAny([pending.Done], Timeout) < 0)
             {
                 return false;
             }
@@ -304,23 +407,41 @@ internal static class HandleNaming
             }
             return true;
         }
+
+        /// <summary>Tells the test seam <see cref="NamingOptions.AfterCancelAttempt"/>, if any, whether a cancel was sent; a throw from it
+        /// is traced and never escapes this thread.</summary>
+        private void NoteCancelAttempt(bool sent)
+        {
+            try
+            {
+                setup.Options.AfterCancelAttempt?.Invoke(sent);
+            }
+            catch (Exception error)
+            {
+                Trace.WriteLine($"the cancel-attempt hook failed: {error.Message}");
+            }
+        }
     }
 
     /// <summary>
     /// A background thread checking handles one at a time, so it holds at most one duplicate open. Once abandoned it ends after its
-    /// current check returns, if that ever happens; until then the duplicate it is naming stays open, at worst until this process exits.
+    /// current check returns, if that ever happens; until then the duplicate it is naming stays open, at worst until this process exits,
+    /// and the check counts as unsettled in the caller's account. A handle its driver withdrew before the worker claimed it is passed
+    /// over without being checked.
     /// </summary>
     private sealed class Worker<T>
     {
         private readonly BlockingCollection<(T Handle, Pending Pending)> inbox = [];
         private readonly HandleCheck<T> check;
+        private readonly NamingOptions options;
         private readonly Lock lookupLock = new();
         private volatile SafeFileHandle? nativeThread;
         private bool lookupRunning;
 
-        internal Worker(HandleCheck<T> check)
+        internal Worker(HandleCheck<T> check, NamingOptions options)
         {
             this.check = check;
+            this.options = options;
             new Thread(Run) { IsBackground = true, Name = "handle-naming worker" }.Start();
         }
 
@@ -340,14 +461,17 @@ internal static class HandleNaming
         /// worker does after the lookup.
         /// </summary>
         /// <param name="cancel">Cancels the synchronous I/O pending on a thread.</param>
-        internal void CancelRunningLookup(Action<SafeHandle> cancel)
+        /// <returns><see langword="true"/> when <paramref name="cancel"/> was called.</returns>
+        internal bool CancelRunningLookup(Action<SafeHandle> cancel)
         {
             lock (lookupLock)
             {
                 if (lookupRunning && nativeThread is { } native)
                 {
                     cancel(native);
+                    return true;
                 }
+                return false;
             }
         }
 
@@ -361,12 +485,44 @@ internal static class HandleNaming
             {
                 foreach ((T handle, Pending pending) in inbox.GetConsumingEnumerable())
                 {
-                    CheckOne(handle, pending);
+                    if (Claim(pending))
+                    {
+                        CheckOne(handle, pending);
+                    }
                 }
             }
             finally
             {
                 nativeThread?.Dispose();
+            }
+        }
+
+        /// <summary>
+        /// Claims the handle unless its driver withdrew it, calling the test hooks around the claim. A hook that throws fails the handle
+        /// as a throwing check would, unless the driver withdrew it first; the exception never escapes this thread.
+        /// </summary>
+        /// <returns><see langword="true"/> when the worker is to check the handle.</returns>
+        private bool Claim(Pending pending)
+        {
+            bool claimed = false;
+            try
+            {
+                options.BeforeClaim?.Invoke();
+                claimed = pending.TryClaim();
+                options.AfterClaim?.Invoke(claimed);
+                return claimed;
+            }
+            catch (Exception error)
+            {
+                if (claimed || pending.TryClaim())
+                {
+                    pending.Fail(error);
+                }
+                else
+                {
+                    Trace.WriteLine($"a claim hook failed on a withdrawn handle: {error.Message}");
+                }
+                return false;
             }
         }
 

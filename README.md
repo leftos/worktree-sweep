@@ -75,7 +75,9 @@ Windows refuses to move a folder while a process holds a file in it or has it as
 
 1. It finishes every other pick, and collects the locked ones.
 2. It asks once, then runs itself elevated through `sudo` for all of them together. That is one UAC prompt per run.
-3. The elevated step scans every process's open handles and lists each process holding a file inside a locked folder, by name and PID. A process that uses a folder but whose handles cannot be read, and a folder that cannot be opened or whose users cannot be listed, are printed as such, and the step then ends as "some left" (exit 3) even when nothing else is offered or you skip every locker. For each one you choose: **stop process** (the default), **close its handles** (the app may crash), **skip**, or **done**. The shell you started the tool from is marked, and skip is its default.
+3. The elevated step scans every process's open handles and lists each process holding a file inside a locked folder, by name and PID. A process that uses a folder but whose handles cannot be read, a process with a handle whose name could not be read in time, and a folder that cannot be opened or whose users cannot be listed, are printed as such, and the step then ends as "some left" (exit 3) even when nothing else is offered or you skip every locker. For each locker you choose: **stop process** (the default), **close its handles** (the app may crash), **skip**, or **done**. The shell you started the tool from is marked, and skip is its default.
+
+   The step also ends as "some left" when a handle lookup of the tool's own had not returned after a 1 s wait, since the tool may itself still hold a file there.
 4. It repeats until nothing holds the folders or you pick done, then retries each locked pick once. If the elevated session has reported its result but its process has not exited 10 s later, the tool prints that and goes on without waiting for it; it never stops that process.
 
 ## Removing one worktree from an agent
@@ -137,7 +139,7 @@ A usage error exits 2. Any other failure, an unexpected exception included, exit
 - On a `removed` report `holders` and `may_hold` are empty, even when a locked recycle listed holders before its retry went through: nothing holds a folder that is gone.
 - `stopped` lists the build servers `--stop-build-servers` stopped. A stopped process appears under `stopped` only, never under `holders` or in the marker.
 - `released` is an object, `{ "released_at", "reason", "holders" }`, when the run wrote a marker, else `null`. The marker file on disk holds the same fields with `released_at` in Unix seconds.
-- `notes` explains anything kept or skipped, such as a branch that was not deleted.
+- `notes` explains anything kept or skipped, such as a branch that was not deleted. On a locked retry it also says `a handle lookup of this run had not returned, so worktree-sweep itself may still hold a file in it` when one of the run's own handle lookups had not returned; the `reason` is unchanged.
 
 ## JSON report
 

@@ -22,6 +22,9 @@ public sealed class LockerScan : ILockerScan
     /// <summary>Re-checks one handle of a locker before it is closed.</summary>
     private readonly HandleRecheck recheck;
 
+    /// <summary>Every name lookup this scan gave up on while it ran, from its scans and its re-checks alike.</summary>
+    private readonly LookupAccount lookups = new();
+
     /// <summary>Initializes a new instance of the <see cref="LockerScan"/> class without SeDebugPrivilege, so it opens only the
     /// processes this user may; <see cref="Elevated"/> outside tests.</summary>
     internal LockerScan()
@@ -52,8 +55,9 @@ public sealed class LockerScan : ILockerScan
     /// <param name="pid">The locker's PID.</param>
     /// <param name="held">The handle the scan saw.</param>
     /// <param name="roots">Every spelling of every locked folder, resolved for this pass.</param>
+    /// <param name="account">The scan's record of name lookups given up on while they ran.</param>
     /// <returns><see langword="true"/> only when the handle still names a file under a locked folder.</returns>
-    internal delegate bool HandleRecheck(SafeFileHandle source, int pid, HeldHandle held, IReadOnlyList<string> roots);
+    internal delegate bool HandleRecheck(SafeFileHandle source, int pid, HeldHandle held, IReadOnlyList<string> roots, LookupAccount account);
 
     /// <summary>Enables SeDebugPrivilege for this process and returns the scan; it never scans without it.</summary>
     /// <returns>The scan.</returns>
@@ -88,14 +92,16 @@ public sealed class LockerScan : ILockerScan
         // Read before the handles are listed: a PID reused after this reading has a start time that no longer matches, so it is
         // never acted on; one read after the listing could pair the old process's handles with the new process.
         var started = pids.Distinct().ToDictionary(pid => pid, HolderFinder.StartedAt);
-        HandleFindings findings = OpenHandles.Scan(pids, [.. folders.Select(folder => folder.Forms[0])], pidsUsing);
+        HandleFindings findings = OpenHandles.Scan(pids, [.. folders.Select(folder => folder.Forms[0])], pidsUsing, lookups);
         // A folder that opened but whose users could not be listed is as unknown as one that did not open.
         IReadOnlyList<string> unreachable =
         [
             .. survey.Unreachable,
             .. folders.Where(folder => findings.RootsWithoutUsers.Contains(folder.Forms[0], StringComparer.Ordinal)).Select(folder => folder.Path),
         ];
-        return new LockerFindings(Lockers(findings, folders, table, started), Unreadable(findings, folders, table), unreachable);
+        List<Locker> lockers = Lockers(findings, folders, table, started);
+        List<UnreadableUser> unreadable = Unreadable(findings, folders, table);
+        return new LockerFindings(lockers, unreadable, unreachable) { TimedOut = TimedOutLookups(findings.TimedOut, unreadable, lockers, table) };
     }
 
     /// <inheritdoc/>
@@ -132,6 +138,9 @@ public sealed class LockerScan : ILockerScan
         return closed;
     }
 
+    /// <inheritdoc/>
+    public int WaitForUnsettledLookups(TimeSpan limit) => lookups.WaitForUnsettled(limit);
+
     /// <summary>
     /// Whether <paramref name="held"/> still names a file under a locked folder, by the re-check this scan was given. A handle that is
     /// not to be closed gets exactly one warning: that its re-check threw, or that it no longer names a locked file.
@@ -147,7 +156,7 @@ public sealed class LockerScan : ILockerScan
         bool stillNamed;
         try
         {
-            stillNamed = recheck(source, pid, held, roots);
+            stillNamed = recheck(source, pid, held, roots, lookups);
         }
 #pragma warning disable CA1031 // A re-check that fails in any way leaves its handle open, and the locker's other handles are still re-checked.
         catch (Exception error)
@@ -171,16 +180,17 @@ public sealed class LockerScan : ILockerScan
     /// <param name="pid">The locker's PID.</param>
     /// <param name="held">The handle the scan saw.</param>
     /// <param name="roots">Every spelling of every locked folder, resolved for this pass.</param>
+    /// <param name="account">Records the lookup when it is given up on while it runs.</param>
     /// <returns><see langword="true"/> only when the handle still names a file under a locked folder.</returns>
-    internal static bool StillNamesALockedFile(SafeFileHandle source, int pid, HeldHandle held, IReadOnlyList<string> roots)
+    internal static bool StillNamesALockedFile(SafeFileHandle source, int pid, HeldHandle held, IReadOnlyList<string> roots, LookupAccount account)
     {
         ArgumentNullException.ThrowIfNull(held);
         NamedHandles named = HandleNaming.Name(
             [(pid, new RemoteHandle(pid, source, (ulong)held.Handle))],
             OpenHandles.Check,
-            1,
-            HandleNaming.DefaultTimeout,
-            HandleNaming.CancelLookup
+            new NamingOptions(1, HandleNaming.DefaultTimeout, HandleNaming.DefaultStartTimeout),
+            HandleNaming.CancelLookup,
+            account
         );
         return named.Names.Any(found => found.Handle == held.Handle && found.Name is not null && LockedPaths.Matches(found.Name, roots));
     }
@@ -298,6 +308,34 @@ public sealed class LockerScan : ILockerScan
             }
         }
         return unreadable;
+    }
+
+    /// <summary>
+    /// Each process with a handle whose name lookup timed out, sorted by PID, leaving out a process already in
+    /// <paramref name="unreadable"/>, whose line already says its handles cannot be read, and a locker, which is offered anyway.
+    /// </summary>
+    /// <param name="timedOut">The processes with a timed-out lookup, from <see cref="HandleFindings.TimedOut"/>.</param>
+    /// <param name="unreadable">The processes using a locked folder whose handles there could not be read.</param>
+    /// <param name="lockers">The processes with a named handle under a locked folder.</param>
+    /// <param name="table">The process table, read before the scan.</param>
+    /// <returns>The processes.</returns>
+    internal static IReadOnlyList<TimedOutProcess> TimedOutLookups(
+        IReadOnlySet<int> timedOut,
+        IReadOnlyList<UnreadableUser> unreadable,
+        IReadOnlyList<Locker> lockers,
+        IReadOnlyDictionary<int, ProcessEntry> table
+    )
+    {
+        ArgumentNullException.ThrowIfNull(timedOut);
+        ArgumentNullException.ThrowIfNull(unreadable);
+        ArgumentNullException.ThrowIfNull(lockers);
+        return
+        [
+            .. timedOut
+                .Where(pid => !unreadable.Any(user => user.Pid == pid) && !lockers.Any(locker => locker.Pid == pid))
+                .Order()
+                .Select(pid => new TimedOutProcess(ProcessName(pid, table), pid)),
+        ];
     }
 
     /// <summary>The process's image name, or <see cref="UnknownProcess"/> when the table did not list it.</summary>

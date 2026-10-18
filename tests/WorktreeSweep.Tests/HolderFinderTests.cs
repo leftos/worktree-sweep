@@ -32,7 +32,7 @@ public sealed class HolderFinderTests : IDisposable
     {
         using ReadyChild child = CwdChild();
 
-        HolderReport report = HolderFinder.Find(Scanned, []);
+        HolderReport report = HolderFinder.Find(Scanned, [], new LookupAccount());
 
         Assert.True(HoldsCurrentFolder(report, child.Id), $"pid {child.Id} not listed with its current folder: {Describe(report)}");
         Assert.Contains("-NoProfile", FindHolder(report, child.Id)?.CommandLine, StringComparison.Ordinal);
@@ -46,7 +46,7 @@ public sealed class HolderFinderTests : IDisposable
         Assert.SkipWhen(shortName.Equals(Scanned, StringComparison.OrdinalIgnoreCase), $"{Scanned} has no 8.3 name");
         using ReadyChild child = CwdChild();
 
-        HolderReport report = HolderFinder.Find(shortName, []);
+        HolderReport report = HolderFinder.Find(shortName, [], new LookupAccount());
 
         Assert.True(HoldsCurrentFolder(report, child.Id), $"pid {child.Id} not found through {shortName}: {Describe(report)}");
     }
@@ -59,7 +59,7 @@ public sealed class HolderFinderTests : IDisposable
         Assert.SkipUnless(Fixture.MakeJunction(link, Scanned), "mklink /J is unavailable");
         using var child = ReadyChild.Start(Path.Join(link, "sub folder"), Ready("junction"));
 
-        HolderReport report = HolderFinder.Find(link, []);
+        HolderReport report = HolderFinder.Find(link, [], new LookupAccount());
 
         Assert.True(HoldsCurrentFolder(report, child.Id), $"pid {child.Id} with its cwd under {link} not found: {Describe(report)}");
     }
@@ -70,7 +70,7 @@ public sealed class HolderFinderTests : IDisposable
     {
         using ReadyChild child = CwdChild();
 
-        HolderReport report = HolderFinder.Find(Scanned, [child.Id]);
+        HolderReport report = HolderFinder.Find(Scanned, [child.Id], new LookupAccount());
 
         Assert.Null(FindHolder(report, child.Id));
         Assert.DoesNotContain(report.MayHold, may => may.Pid == child.Id);
@@ -85,7 +85,7 @@ public sealed class HolderFinderTests : IDisposable
     {
         using var bystander = ReadyChild.Start(Side, Ready("bystander"));
 
-        HolderReport report = HolderFinder.Find(Scanned, []);
+        HolderReport report = HolderFinder.Find(Scanned, [], new LookupAccount());
 
         int own = Environment.ProcessId;
         Assert.Null(FindHolder(report, own));
@@ -99,7 +99,7 @@ public sealed class HolderFinderTests : IDisposable
     public void StillSameDetectsExit()
     {
         using ReadyChild child = CwdChild();
-        HolderReport report = HolderFinder.Find(Scanned, []);
+        HolderReport report = HolderFinder.Find(Scanned, [], new LookupAccount());
         Holder found = FindHolder(report, child.Id) ?? throw new InvalidOperationException($"pid {child.Id} not found: {Describe(report)}");
 
         Assert.True(HolderFinder.StillSame(found), $"live child reported as gone: {found}");
@@ -115,7 +115,7 @@ public sealed class HolderFinderTests : IDisposable
         Assert.SkipUnless(File.Exists(powershell), $"{powershell} is not installed");
         using var child = ReadyChild.Start(powershell, Path.Join(Scanned, "sub folder"), Ready("wow64"));
 
-        HolderReport report = HolderFinder.Find(Scanned, []);
+        HolderReport report = HolderFinder.Find(Scanned, [], new LookupAccount());
 
         Assert.True(HoldsCurrentFolder(report, child.Id), $"32-bit pid {child.Id} not listed with its current folder: {Describe(report)}");
         Assert.Null(FindHolder(report, child.Id)?.CommandLine);
@@ -134,11 +134,12 @@ public sealed class HolderFinderTests : IDisposable
         HolderReport report = HolderFinder.Find(
             Scanned,
             [],
-            (pids, _) =>
+            (pids, _, _) =>
             {
                 inspected = [.. pids];
                 return new HandleFindings([new NamedHandle(child.Id, Verbatim + file, 0x54)], [], []);
-            }
+            },
+            new LookupAccount()
         );
 
         Assert.Contains(child.Id, inspected);
@@ -155,7 +156,8 @@ public sealed class HolderFinderTests : IDisposable
         HolderReport report = HolderFinder.Find(
             Scanned,
             [],
-            (_, _) => new HandleFindings([new NamedHandle(child.Id, file, 0x54), new NamedHandle(child.Id, file, 0x58)], [], [])
+            (_, _, _) => new HandleFindings([new NamedHandle(child.Id, file, 0x54), new NamedHandle(child.Id, file, 0x58)], [], []),
+            new LookupAccount()
         );
 
         Assert.Equal<Hold>([new Hold.OpenHandle(file)], RequiredHolder(report, child.Id).Holds);
@@ -167,7 +169,12 @@ public sealed class HolderFinderTests : IDisposable
     {
         using var child = ReadyChild.Start(Side, Ready("unnamed"));
 
-        HolderReport report = HolderFinder.Find(Scanned, [], (_, _) => new HandleFindings([new NamedHandle(child.Id, null, 0)], [], []));
+        HolderReport report = HolderFinder.Find(
+            Scanned,
+            [],
+            (_, _, _) => new HandleFindings([new NamedHandle(child.Id, null, 0)], [], []),
+            new LookupAccount()
+        );
 
         Assert.Null(FindHolder(report, child.Id));
         Assert.Contains(new MayHold(child.Id, "pwsh.exe", MayHoldWhy.UnnamedHandle), report.MayHold);
@@ -180,7 +187,12 @@ public sealed class HolderFinderTests : IDisposable
         using var child = ReadyChild.Start(Side, Ready("failed-using"));
         var named = new NamedHandles([], new HashSet<int> { child.Id });
 
-        HolderReport report = HolderFinder.Find(Scanned, [], (_, _) => OpenHandles.Findings(named, [], [new RootUser(child.Id, Scanned)]));
+        HolderReport report = HolderFinder.Find(
+            Scanned,
+            [],
+            (_, _, _) => OpenHandles.Findings(named, [], [new RootUser(child.Id, Scanned)]),
+            new LookupAccount()
+        );
 
         Assert.Null(FindHolder(report, child.Id));
         Assert.Contains(new MayHold(child.Id, "pwsh.exe", MayHoldWhy.UnnamedHandle), report.MayHold);
@@ -193,7 +205,7 @@ public sealed class HolderFinderTests : IDisposable
         using var child = ReadyChild.Start(Side, Ready("failed-unused"));
         var named = new NamedHandles([], new HashSet<int> { child.Id });
 
-        HolderReport report = HolderFinder.Find(Scanned, [], (_, _) => OpenHandles.Findings(named, [], []));
+        HolderReport report = HolderFinder.Find(Scanned, [], (_, _, _) => OpenHandles.Findings(named, [], []), new LookupAccount());
 
         Assert.Null(FindHolder(report, child.Id));
         Assert.DoesNotContain(report.MayHold, may => may.Pid == child.Id);
@@ -205,7 +217,12 @@ public sealed class HolderFinderTests : IDisposable
     {
         using var child = ReadyChild.Start(Side, Ready("unlisted"));
 
-        HolderReport report = HolderFinder.Find(Scanned, [], (_, _) => new HandleFindings([], [child.Id], [new RootUser(child.Id, Scanned)]));
+        HolderReport report = HolderFinder.Find(
+            Scanned,
+            [],
+            (_, _, _) => new HandleFindings([], [child.Id], [new RootUser(child.Id, Scanned)]),
+            new LookupAccount()
+        );
 
         Assert.Contains(new MayHold(child.Id, "pwsh.exe", MayHoldWhy.CannotOpen), report.MayHold);
     }
@@ -221,11 +238,12 @@ public sealed class HolderFinderTests : IDisposable
         HolderReport report = HolderFinder.Find(
             Scanned,
             [],
-            (_, roots) =>
+            (_, roots, _) =>
             {
                 scanned = roots;
                 return new HandleFindings([], [], []) { RootsWithoutUsers = roots };
-            }
+            },
+            new LookupAccount()
         );
 
         Assert.Equal([Scanned], report.UnknownFolders);
@@ -236,7 +254,7 @@ public sealed class HolderFinderTests : IDisposable
     [Fact]
     public void ScanWithEveryFolderReadableReportsNoUnknownFolder()
     {
-        HolderReport report = HolderFinder.Find(Scanned, [], (_, _) => new HandleFindings([], [], []));
+        HolderReport report = HolderFinder.Find(Scanned, [], (_, _, _) => new HandleFindings([], [], []), new LookupAccount());
 
         Assert.Empty(report.UnknownFolders);
     }
@@ -247,7 +265,12 @@ public sealed class HolderFinderTests : IDisposable
     {
         using ReadyChild child = CwdChild();
 
-        HolderReport report = HolderFinder.Find(Scanned, [], (_, _) => new HandleFindings([], [child.Id], [new RootUser(child.Id, Scanned)]));
+        HolderReport report = HolderFinder.Find(
+            Scanned,
+            [],
+            (_, _, _) => new HandleFindings([], [child.Id], [new RootUser(child.Id, Scanned)]),
+            new LookupAccount()
+        );
 
         Assert.True(HoldsCurrentFolder(report, child.Id), $"pid {child.Id} not listed with its current folder: {Describe(report)}");
         Assert.DoesNotContain(report.MayHold, may => may.Pid == child.Id);
@@ -266,7 +289,8 @@ public sealed class HolderFinderTests : IDisposable
         HolderReport report = HolderFinder.Find(
             Scanned,
             [own],
-            (_, _) => new HandleFindings([new NamedHandle(own, file, 0x54)], [own], [new RootUser(own, Scanned)])
+            (_, _, _) => new HandleFindings([new NamedHandle(own, file, 0x54)], [own], [new RootUser(own, Scanned)]),
+            new LookupAccount()
         );
 
         Assert.Null(FindHolder(report, own));
@@ -286,7 +310,7 @@ public sealed class HolderFinderTests : IDisposable
                 + $"Set-Content -LiteralPath {ReadyChild.Quoted(Ready("handle"))} ready; Start-Sleep 120"
         );
 
-        HolderReport report = HolderFinder.Find(Scanned, []);
+        HolderReport report = HolderFinder.Find(Scanned, [], new LookupAccount());
 
         Assert.True(
             FindHolder(report, child.Id)?.Holds.Any(hold => hold is Hold.OpenHandle open && Fixture.SamePath(open.Path, file)) ?? false,
@@ -314,7 +338,7 @@ public sealed class HolderFinderTests : IDisposable
         using var child = ReadyChild.Run(Side, Ready("churn-ready"), ChurnScript(Path.Join(churn, "churn.tmp"), failures, stop, done));
         for (int scan = 0; scan < 5; scan++)
         {
-            _ = HolderFinder.Find(Scanned, []);
+            _ = HolderFinder.Find(Scanned, [], new LookupAccount());
         }
         File.WriteAllText(stop, "stop");
         child.WaitFor(done);

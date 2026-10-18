@@ -31,8 +31,11 @@ internal sealed record AgentSeams
     /// <summary>Gets how long one recycle may take before the worktree is released instead.</summary>
     public required TimeSpan RecycleTimeout { get; init; }
 
-    /// <summary>Gets what finds the processes holding a folder, never listing the PIDs it is given.</summary>
-    public required Func<string, IReadOnlyCollection<int>, HolderReport> FindHolders { get; init; }
+    /// <summary>
+    /// Gets what finds the processes holding a folder, never listing the PIDs it is given, and records in the run's account each
+    /// name lookup it gives up on while it runs.
+    /// </summary>
+    public required Func<string, IReadOnlyCollection<int>, LookupAccount, HolderReport> FindHolders { get; init; }
 
     /// <summary>Gets what lists the PIDs of this process and its ancestors.</summary>
     public required Func<IReadOnlySet<int>> OwnChain { get; init; }

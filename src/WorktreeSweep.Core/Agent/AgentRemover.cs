@@ -84,7 +84,7 @@ public static class AgentRemover
             draft.Refuse(Reason.WouldLose);
             draft.Loss = loss;
         }
-        else if (CallerScan(candidate.Path, seams) is { } scan)
+        else if (CallerScan(candidate.Path, seams, draft.Lookups) is { } scan)
         {
             draft.Refuse(Reason.CallerHolds);
             draft.CdTo = resolved.MainWorktree;
@@ -117,10 +117,10 @@ public static class AgentRemover
     private static string LossRoot(RegisteredCandidate candidate) => Path.GetDirectoryName(candidate.Repo) ?? candidate.Repo;
 
     /// <summary>The holders scan, when the caller's own process chain holds the folder; <see langword="null"/> when it does not.</summary>
-    private static HolderReport? CallerScan(string folder, AgentSeams seams)
+    private static HolderReport? CallerScan(string folder, AgentSeams seams, LookupAccount lookups)
     {
         IReadOnlySet<int> chain = seams.OwnChain();
-        HolderReport scan = seams.FindHolders(folder, [Environment.ProcessId]);
+        HolderReport scan = seams.FindHolders(folder, [Environment.ProcessId], lookups);
         return CallerHolds.Check(chain, scan) ? scan : null;
     }
 
@@ -306,15 +306,21 @@ public static class AgentRemover
     }
 
     /// <summary>
+    /// The note on a worktree still locked after the retry while a name lookup of this run's holder scans had not returned: the
+    /// duplicate handle that lookup made in this process may be what holds the folder.
+    /// </summary>
+    private const string UnsettledLookupNote = "a handle lookup of this run had not returned, so worktree-sweep itself may still hold a file in it";
+
+    /// <summary>
     /// On a lock: lists the holders, stops the allowlisted ones when asked, and retries once. Returns whether the folder is gone; when
-    /// it is not, the worktree is released.
+    /// it is not, the worktree is released, with a note when a lookup of any of this run's holder scans had not returned.
     /// </summary>
     private static bool RetryLocked(RegisteredCandidate candidate, AgentOptions options, AgentSeams seams, Draft draft)
     {
         HolderReport scan;
         try
         {
-            scan = seams.FindHolders(candidate.Path, []);
+            scan = seams.FindHolders(candidate.Path, [], draft.Lookups);
         }
         catch (Exception error)
             when (error is IOException or Win32Exception or PlatformNotSupportedException or UnauthorizedAccessException or InvalidOperationException)
@@ -335,6 +341,10 @@ public static class AgentRemover
                 return true;
             case Recycled.Locked:
                 AddUnknownFolderNotes(remaining, draft);
+                if (draft.Lookups.Unsettled > 0)
+                {
+                    draft.Notes.Add(UnsettledLookupNote);
+                }
                 Release(draft, candidate, reason);
                 return false;
             default:
@@ -480,6 +490,9 @@ public static class AgentRemover
         public Released? Released { get; set; }
 
         public List<string> Notes { get; } = [];
+
+        /// <summary>Gets the run's record of name lookups given up on while they ran, from every holder scan of the run.</summary>
+        public LookupAccount Lookups { get; } = new();
 
         public void Refuse(Reason reason)
         {
