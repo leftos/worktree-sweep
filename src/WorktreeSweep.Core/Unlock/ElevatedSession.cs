@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using WorktreeSweep.Holders;
 using WorktreeSweep.Processes;
 
 namespace WorktreeSweep.Unlock;
@@ -108,7 +109,7 @@ public sealed class ElevatedSession(TextReader input, TextWriter output, ILocker
         }
         foreach (string path in found.Unreachable)
         {
-            Say($"{path} cannot be read here, so it is not known what holds it.");
+            Say(UnknownFolderText.Line(path));
         }
         return found.Unreadable.Count > 0 || found.Unreachable.Count > 0;
     }

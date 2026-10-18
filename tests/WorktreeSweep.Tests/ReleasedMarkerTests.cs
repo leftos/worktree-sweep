@@ -101,6 +101,27 @@ public sealed class ReleasedMarkerTests
         Assert.Equal([ReleasedMarker.FileName], Directory.GetFiles(wt.Admin, "worktree-sweep-*").Select(Path.GetFileName));
     }
 
+    /// <summary>The cannot-tell reason is written as <c>cannot_tell</c> and read back as <see cref="Reason.CannotTell"/>.</summary>
+    [Fact]
+    public void CannotTellReasonRoundTripsThroughTheMarker()
+    {
+        using var fx = new Fixture();
+        (string Worktree, string Admin) wt = WorktreeWithAdmin(fx);
+        var written = new Released
+        {
+            ReleasedAtUnix = 1_790_000_000,
+            Reason = Reason.CannotTell,
+            Holders = [],
+        };
+
+        ReleasedMarker.Write(wt.Admin, written);
+        Released? read = ReleasedMarker.Read(wt.Admin);
+
+        Assert.NotNull(read);
+        Assert.Equal(Reason.CannotTell, read.Reason);
+        Assert.Contains("\"reason\": \"cannot_tell\"", File.ReadAllText(Path.Join(wt.Admin, ReleasedMarker.FileName)), StringComparison.Ordinal);
+    }
+
     /// <summary>A marker write whose rename fails leaves no temporary file behind.</summary>
     [Fact]
     public void FailedRenameLeavesNoTempFile()

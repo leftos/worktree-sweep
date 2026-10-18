@@ -320,6 +320,79 @@ public sealed class AgentRemoverTests
         Assert.Contains(report.Notes, note => note.StartsWith("cannot list the processes holding it:", StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// A locked retry that finds no holder while a folder's users could not be listed is released as cannot-tell, with a note naming
+    /// the folder.
+    /// </summary>
+    [Fact]
+    public void ALockedRetryWithAnUnknownFolderIsCannotTell()
+    {
+        using var fx = new Fixture();
+        (_, string worktree) = RepoWithWorktree(fx, @"x.wt\feat", "feat");
+        HolderReport UnknownOnRetry(string folder, IReadOnlyCollection<int> exclude) =>
+            exclude.Count == 0 ? new HolderReport([], []) { UnknownFolders = [worktree] } : new HolderReport([], []);
+
+        RemoveReport report = AgentRemover.Run(worktree, Plain, Seams(AlwaysLocked, UnknownOnRetry, NeverStop));
+
+        Assert.Equal(RemoveStatus.Released, report.Status);
+        Assert.Equal(Reason.CannotTell, report.Reason);
+        Assert.Equal(5, RemoveExitCode.For(report.Status));
+        Assert.Contains($"{worktree} cannot be read here, so it is not known what holds it.", report.Notes);
+    }
+
+    /// <summary>A retry that removes the folder despite an unknown folder is removed, and no note about the folder is added.</summary>
+    [Fact]
+    public void ARecycleThatSucceedsWithAnUnknownFolderIsRemovedWithoutANote()
+    {
+        using var fx = new Fixture();
+        (_, string worktree) = RepoWithWorktree(fx, @"x.wt\feat", "feat");
+        int recycles = 0;
+        void Recycle(string path)
+        {
+            recycles++;
+            if (recycles == 1)
+            {
+                throw new LockedException(path, firstLockedFile: null);
+            }
+            Directory.Delete(path, recursive: true);
+        }
+
+        HolderReport UnknownOnRetry(string folder, IReadOnlyCollection<int> exclude) =>
+            exclude.Count == 0 ? new HolderReport([], []) { UnknownFolders = [worktree] } : new HolderReport([], []);
+
+        RemoveReport report = AgentRemover.Run(worktree, Plain, Seams(Recycle, UnknownOnRetry, NeverStop));
+
+        Assert.Equal(RemoveStatus.Removed, report.Status);
+        Assert.Equal(2, recycles);
+        Assert.DoesNotContain(report.Notes, note => note.Contains("cannot be read here", StringComparison.Ordinal));
+    }
+
+    /// <summary>A stopped holder leaves the unknown folder on the scan, so the retry is still cannot-tell.</summary>
+    [Fact]
+    public void WithoutStoppedKeepsUnknownFolders()
+    {
+        using var fx = new Fixture();
+        (_, string worktree) = RepoWithWorktree(fx, @"x.wt\feat", "feat");
+        var cargo = new Holder(4242, "cargo.exe", null, 0, null, [new Hold.OpenHandle(Path.Join(worktree, "README.md"))]);
+        var stopped = new List<Holder>();
+        HolderReport UnknownOnRetry(string folder, IReadOnlyCollection<int> exclude) =>
+            exclude.Count == 0 ? new HolderReport([cargo], []) { UnknownFolders = [worktree] } : new HolderReport([], []);
+
+        RemoveReport report = AgentRemover.Run(
+            worktree,
+            new AgentOptions(Force: false, StopBuildServers: true),
+            Seams(AlwaysLocked, UnknownOnRetry, stopped.Add) with
+            {
+                StillSame = _ => true,
+            }
+        );
+
+        Assert.Equal(RemoveStatus.Released, report.Status);
+        Assert.Equal(Reason.CannotTell, report.Reason);
+        Assert.Equal([cargo], stopped);
+        Assert.Contains($"{worktree} cannot be read here, so it is not known what holds it.", report.Notes);
+    }
+
     /// <summary>A git lock <c>--force</c> lifted is put back, with its reason, when the worktree stays and is released.</summary>
     [Fact]
     public void ForceRelocksAWorktreeItReleases()
@@ -568,6 +641,7 @@ public sealed class AgentRemoverTests
     [Theory]
     [InlineData(ReasonKind.Locked, null, "locked")]
     [InlineData(ReasonKind.MayHold, null, "may_hold")]
+    [InlineData(ReasonKind.CannotTell, null, "cannot_tell")]
     [InlineData(ReasonKind.TooBigForRecycleBin, null, "too_big_for_recycle_bin")]
     [InlineData(ReasonKind.ShellTimeout, null, "shell_timeout")]
     [InlineData(ReasonKind.WouldLose, null, "would_lose")]
@@ -585,6 +659,7 @@ public sealed class AgentRemoverTests
         {
             ReasonKind.Locked => Reason.Locked,
             ReasonKind.MayHold => Reason.MayHold,
+            ReasonKind.CannotTell => Reason.CannotTell,
             ReasonKind.TooBigForRecycleBin => Reason.TooBigForRecycleBin,
             ReasonKind.ShellTimeout => Reason.ShellTimeout,
             ReasonKind.WouldLose => Reason.WouldLose,

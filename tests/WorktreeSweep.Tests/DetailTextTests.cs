@@ -192,6 +192,77 @@ public sealed class DetailTextTests
         Assert.DoesNotContain("\n", lines[6], StringComparison.Ordinal);
     }
 
+    /// <summary>Every reason kind a released marker can hold renders in the detail pane rather than throwing.</summary>
+    /// <param name="kind">The reason kind.</param>
+    [Theory]
+    [MemberData(nameof(ReasonKinds))]
+    public void EveryReasonKindRendersInAReleasedMarker(ReasonKind kind)
+    {
+        RegisteredCandidate baseCandidate = Registered(@"yaat.wt\held", null, new WorktreeSignals());
+        RegisteredCandidate candidate = baseCandidate with
+        {
+            Released = new Released
+            {
+                ReleasedAtUnix = Now,
+                Reason = ReasonOf(kind),
+                Holders = [],
+            },
+        };
+
+        string[] lines = [.. DetailText.Lines(candidate, Now, UtcZone)];
+
+        Assert.StartsWith("released ", lines[4], StringComparison.Ordinal);
+    }
+
+    /// <summary>A folder whose users could not be listed reads as cannot tell what holds it.</summary>
+    [Fact]
+    public void CannotTellReasonReadsAsItsLabel()
+    {
+        RegisteredCandidate baseCandidate = Registered(@"yaat.wt\held", null, new WorktreeSignals());
+        RegisteredCandidate candidate = baseCandidate with
+        {
+            Released = new Released
+            {
+                ReleasedAtUnix = Now,
+                Reason = Reason.CannotTell,
+                Holders = [],
+            },
+        };
+
+        string[] lines = [.. DetailText.Lines(candidate, Now, UtcZone)];
+
+        Assert.Contains(": cannot tell what holds it", lines[4], StringComparison.Ordinal);
+    }
+
+    /// <summary>Every reason kind, for <see cref="EveryReasonKindRendersInAReleasedMarker"/>.</summary>
+    /// <returns>The reason kinds.</returns>
+    public static TheoryData<ReasonKind> ReasonKinds()
+    {
+        var data = new TheoryData<ReasonKind>();
+        foreach (ReasonKind kind in Enum.GetValues<ReasonKind>())
+        {
+            data.Add(kind);
+        }
+        return data;
+    }
+
+    /// <summary>The reason a released marker carries for <paramref name="kind"/>.</summary>
+    /// <param name="kind">The reason kind.</param>
+    /// <returns>The reason.</returns>
+    private static Reason ReasonOf(ReasonKind kind) =>
+        kind switch
+        {
+            ReasonKind.Locked => Reason.Locked,
+            ReasonKind.MayHold => Reason.MayHold,
+            ReasonKind.CannotTell => Reason.CannotTell,
+            ReasonKind.TooBigForRecycleBin => Reason.TooBigForRecycleBin,
+            ReasonKind.ShellTimeout => Reason.ShellTimeout,
+            ReasonKind.WouldLose => Reason.WouldLose,
+            ReasonKind.CallerHolds => Reason.CallerHolds,
+            ReasonKind.NotRemovable => Reason.NotRemovable(RefusalReason.NotFound),
+            _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "not a reason kind"),
+        };
+
     /// <summary>A partly measured size reads as a lower bound and still names its unreadable entries.</summary>
     [Fact]
     public void PartlyMeasuredSizeReadsAsALowerBound()

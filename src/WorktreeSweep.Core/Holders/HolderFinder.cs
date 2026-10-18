@@ -131,7 +131,8 @@ public static class HolderFinder
                 census.AddHold(handle.Pid, new Hold.OpenHandle(WithoutVerbatimPrefix(handle.Name)));
             }
         }
-        return census.IntoReport(table, unnamed, findings.Using, exclude);
+        IReadOnlyList<string> unknownFolders = findings.RootsWithoutUsers.Count == 0 ? [] : [folder];
+        return census.IntoReport(table, unnamed, findings.Using, exclude) with { UnknownFolders = unknownFolders };
     }
 
     /// <summary>

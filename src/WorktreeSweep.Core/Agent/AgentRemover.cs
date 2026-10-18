@@ -334,6 +334,7 @@ public static class AgentRemover
             case Recycled.Done:
                 return true;
             case Recycled.Locked:
+                AddUnknownFolderNotes(remaining, draft);
                 Release(draft, candidate, reason);
                 return false;
             default:
@@ -370,7 +371,19 @@ public static class AgentRemover
             : new HolderReport(
                 [.. scan.Holders.Where(holder => !draft.Stopped.Any(stopped => stopped.Pid == holder.Pid && stopped.Exe == holder.Exe))],
                 scan.MayHold
-            );
+            )
+            {
+                UnknownFolders = scan.UnknownFolders,
+            };
+
+    /// <summary>Notes each folder whose users could not be listed, so what holds it is not known.</summary>
+    private static void AddUnknownFolderNotes(HolderReport report, Draft draft)
+    {
+        foreach (string folder in report.UnknownFolders)
+        {
+            draft.Notes.Add(UnknownFolderText.Line(folder));
+        }
+    }
 
     /// <summary>Marks the report released and writes the marker; a marker that cannot be written is a note.</summary>
     private static void Release(Draft draft, RegisteredCandidate candidate, Reason reason)
