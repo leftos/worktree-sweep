@@ -180,11 +180,14 @@ internal static class OpenHandles
         throw new IOException($"cannot find the File object type among this process's handles: {exe} is not among them");
     }
 
-    /// <summary>Opens a process to list its handles and duplicate them.</summary>
+    /// <summary>Opens a process to list its handles, duplicate them and wait on it.</summary>
     /// <param name="pid">The process.</param>
     /// <returns>The open process, or <see langword="null"/> when it cannot be opened with that access.</returns>
     internal static SafeFileHandle? OpenSource(int pid) =>
-        ProcessQuery.Open(pid, PROCESS_ACCESS_RIGHTS.PROCESS_QUERY_INFORMATION | PROCESS_ACCESS_RIGHTS.PROCESS_DUP_HANDLE);
+        ProcessQuery.Open(
+            pid,
+            PROCESS_ACCESS_RIGHTS.PROCESS_QUERY_INFORMATION | PROCESS_ACCESS_RIGHTS.PROCESS_DUP_HANDLE | PROCESS_ACCESS_RIGHTS.PROCESS_SYNCHRONIZE
+        );
 
     /// <summary>Each open handle of a process: its value and its object type index.</summary>
     /// <param name="process">A process open with query access.</param>

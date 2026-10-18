@@ -106,8 +106,8 @@ public sealed class LockerScan : ILockerScan
 
     /// <inheritdoc/>
     /// <remarks>Returns <see langword="null"/>, not 0, when the locker has no start time from the scan, or its process cannot be
-    /// opened or no longer has that start time: the process was not confirmed, and the session reports it skipped rather than
-    /// claiming that no handle closed.</remarks>
+    /// opened, no longer has that start time, has exited, or cannot be checked for exit: the process was not confirmed, and the
+    /// session reports it skipped rather than claiming that no handle closed.</remarks>
     public int? CloseStillHeld(Locker locker, IReadOnlyList<string> lockedPaths, Func<HeldHandle, bool> close)
     {
         ArgumentNullException.ThrowIfNull(locker);
@@ -125,6 +125,15 @@ public sealed class LockerScan : ILockerScan
         {
             Trace.TraceWarning($"{label} cannot be opened or is no longer the process the scan saw; no handle closed");
             return null;
+        }
+        switch (ProcessQuery.HasExited(source))
+        {
+            case true:
+                Trace.TraceWarning($"{label} has exited; no handle closed");
+                return null;
+            case null:
+                Trace.TraceWarning($"{label} cannot be checked for exit; no handle closed");
+                return null;
         }
         IReadOnlyList<string> roots = [.. Survey(lockedPaths).Folders.SelectMany(folder => folder.Forms)];
         int closed = 0;

@@ -1,4 +1,5 @@
 using System.Security.Principal;
+using Microsoft.Win32.SafeHandles;
 using WorktreeSweep.Holders;
 using WorktreeSweep.Processes;
 using WorktreeSweep.Unlock;
@@ -7,6 +8,7 @@ namespace WorktreeSweep.Tests;
 
 /// <summary>The production locker scan over children the tests start: the elevated scan of every process, and the re-check before a
 /// close.</summary>
+[Collection(ProcessEnvironment.Name)]
 public sealed class LockerScanTests : IDisposable
 {
     /// <summary>The command that runs the elevated test, named when the run is not elevated.</summary>
@@ -46,8 +48,9 @@ public sealed class LockerScanTests : IDisposable
 
     /// <summary>
     /// The closing pass hands the close a handle a same-user child still holds under the folder, and hands it nothing under another
-    /// start time or an unknown start time, reporting the process unconfirmed; it hands it nothing either under a folder the handle
-    /// is not under, or once the child has exited, and reports 0 there because the process was confirmed.
+    /// start time or an unknown start time, reporting the process unconfirmed; it hands it nothing under a folder the handle is not
+    /// under and reports 0 there because the process was confirmed, and it hands it nothing once the child has exited, reporting the
+    /// process unconfirmed there too.
     /// </summary>
     [Fact]
     public void CloseStillHeldClosesOnlyForTheSameProcessAndFolder()
@@ -81,6 +84,47 @@ public sealed class LockerScanTests : IDisposable
             stopped = true;
             Assert.Null(scan.CloseStillHeld(locker, [folder], Close));
             Assert.Empty(handed);
+        }
+        finally
+        {
+            if (!stopped)
+            {
+                child.Dispose();
+            }
+        }
+    }
+
+    /// <summary>
+    /// The closing pass reports the process unconfirmed, closing nothing, once the child has exited even while this test still holds
+    /// the child's process object open, which keeps its PID and start time alive for the pass's open.
+    /// </summary>
+    [Fact]
+    public void CloseStillHeldReportsAnExitedLockerUnconfirmedWhileItsProcessIsStillOpen()
+    {
+        string folder = fx.PathTo("exited");
+        string ready = fx.PathTo("ready-exited");
+        var child = ReadyChild.Run(fx.Root, ready, HoldScript([HeldFile(folder)], ready));
+        bool stopped = false;
+        try
+        {
+            using var traces = new TraceCapture();
+            var scan = new LockerScan();
+            Locker locker = Assert.Single(scan.Find([folder], [child.Id]).Lockers);
+            using SafeFileHandle? kept = OpenHandles.OpenSource(child.Id);
+            Assert.NotNull(kept);
+            var handed = new List<HeldHandle>();
+            bool Close(HeldHandle candidate)
+            {
+                handed.Add(candidate);
+                return true;
+            }
+
+            // Kills the child and waits for its exit; the handle kept above holds its process object, PID and start time alive.
+            child.Dispose();
+            stopped = true;
+            Assert.Null(scan.CloseStillHeld(locker, [folder], Close));
+            Assert.Empty(handed);
+            Assert.Contains("has exited; no handle closed", traces.Text, StringComparison.Ordinal);
         }
         finally
         {

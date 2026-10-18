@@ -31,7 +31,8 @@ public interface ILockerScan
     /// <param name="close">Closes one handle and returns whether it closed.</param>
     /// <returns>How many calls to <paramref name="close"/> returned <see langword="true"/>, which is 0 when the process was confirmed
     /// and nothing was closed; <see langword="null"/> when the process could not be confirmed as the one the scan saw, by a
-    /// <see langword="null"/> start time, a process that cannot be opened, or a start time that differs, so nothing was closed.</returns>
+    /// <see langword="null"/> start time, a process that cannot be opened, a start time that differs, a process that has exited, or
+    /// a process whose exit cannot be checked, so nothing was closed.</returns>
     int? CloseStillHeld(Locker locker, IReadOnlyList<string> lockedPaths, Func<HeldHandle, bool> close);
 
     /// <summary>

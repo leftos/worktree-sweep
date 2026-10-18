@@ -316,8 +316,10 @@ public sealed class ElevatedSession(TextReader input, TextWriter output, ILocker
         // file: a handle value can be reused between the scan and the answer.
         if (scan.CloseStillHeld(locker, paths, held => CloseOne(held, locker, label)) is not int closed)
         {
-            // The pass closed nothing because the process was not confirmed, which is a skip and not a count of zero.
-            return Skipped(label, LockerState.Unconfirmed);
+            // The pass closed nothing because the process was not confirmed, which is a skip and not a count of zero. Look again:
+            // the pass also returns null for a process that exited after the prompt, and that gets the exited line.
+            LockerState after = CheckLocker(locker);
+            return Skipped(label, after == LockerState.Same ? LockerState.Unconfirmed : after);
         }
         return new Outcome($"Closed {closed} of {locker.Handles.Count} handle(s) of {label}.", closed > 0);
     }
