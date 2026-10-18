@@ -614,6 +614,25 @@ public sealed class ElevatedSessionTests : IDisposable
         Assert.DoesNotContain("Closed 0 of", text, StringComparison.Ordinal);
     }
 
+    /// <summary>A locker that exits between the close's confirmation and its closing pass reports the exited line, not the
+    /// unconfirmed one.</summary>
+    [Fact]
+    public void ALockerThatExitsBeforeTheCloseIsReportedExited()
+    {
+        StringWriter output = Writer();
+        var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)), Running(("pwsh.exe", 642)), Running(("pwsh.exe", 642)), Running());
+        processes.StartedTimes[642] = 1000;
+        var scan = new FakeScan(Found(Pwsh(1000))) { UnconfirmedClose = true };
+        ElevatedSession session = Session(new StringReader("2\ny\n"), output, scan, new FakeHandleExe(), processes);
+
+        int exit = session.Run([Locked], null, null, null);
+
+        string text = output.ToString();
+        Assert.Equal(UnlockExit.NothingDone, exit);
+        Assert.Contains("pwsh.exe (pid 642) has exited; skipped.\n", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("could not be confirmed", text, StringComparison.Ordinal);
+    }
+
     /// <summary>The start time the scan saw is passed to the stop, so it needs no second check of its own.</summary>
     [Fact]
     public void StopPassesTheScanStartTime()
@@ -1124,10 +1143,11 @@ public sealed class ElevatedSessionTests : IDisposable
         }
     }
 
-    /// <summary>A process control with a scripted table, a scripted start-time reader, a record of the stops and scripted
-    /// failures.</summary>
-    private sealed class ScriptedProcessControl(IReadOnlyDictionary<int, ProcessEntry> table) : IProcessControl
+    /// <summary>A process control with scripted tables, one per snapshot and the last repeating, a scripted start-time reader, a
+    /// record of the stops and scripted failures.</summary>
+    private sealed class ScriptedProcessControl(params IReadOnlyDictionary<int, ProcessEntry>[] tables) : IProcessControl
     {
+        private readonly Queue<IReadOnlyDictionary<int, ProcessEntry>> pending = new(tables);
         private readonly List<(int Pid, string Exe, ulong? Started)> stops = [];
         private int snapshots;
 
@@ -1154,7 +1174,7 @@ public sealed class ElevatedSessionTests : IDisposable
             {
                 throw new Win32Exception("cannot take a snapshot of the running processes");
             }
-            return table;
+            return pending.Count > 1 ? pending.Dequeue() : pending.Peek();
         }
 
         public ulong? StartedAt(int pid) => StartedTimes.TryGetValue(pid, out ulong? started) ? started : null;

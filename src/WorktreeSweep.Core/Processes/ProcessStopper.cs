@@ -58,7 +58,7 @@ public static class ProcessStopper
         if (!TryImageName(process, out string? image))
         {
             int error = Marshal.GetLastPInvokeError();
-            if (HasExited(process))
+            if (ProcessQuery.HasExited(process) is true)
             {
                 return;
             }
@@ -75,7 +75,7 @@ public static class ProcessStopper
             if (started is null)
             {
                 int error = Marshal.GetLastPInvokeError();
-                if (HasExited(process))
+                if (ProcessQuery.HasExited(process) is true)
                 {
                     return;
                 }
@@ -89,7 +89,7 @@ public static class ProcessStopper
         if (!PInvoke.TerminateProcess(process, StoppedExitCode))
         {
             int error = Marshal.GetLastPInvokeError();
-            if (HasExited(process))
+            if (ProcessQuery.HasExited(process) is true)
             {
                 return;
             }
@@ -123,8 +123,6 @@ public static class ProcessStopper
         image = new string(buffer, 0, (int)length);
         return true;
     }
-
-    private static bool HasExited(SafeFileHandle process) => PInvoke.WaitForSingleObject(process, 0) == WAIT_EVENT.WAIT_OBJECT_0;
 
     private static void WaitForExit(SafeFileHandle process, int pid, TimeSpan wait)
     {

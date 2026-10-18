@@ -114,4 +114,16 @@ internal static class ProcessQuery
         ulong started = ((ulong)(uint)created.dwHighDateTime << 32) | (uint)created.dwLowDateTime;
         return started == 0 ? null : started;
     }
+
+    /// <summary>Whether the process has exited, by a wait that returns at once; a wait that fails leaves that unknown.</summary>
+    /// <param name="process">A process open with query access and synchronize access.</param>
+    /// <returns><see langword="true"/> when the process has exited, <see langword="false"/> while it is still running, and
+    /// <see langword="null"/> when the wait fails.</returns>
+    internal static bool? HasExited(SafeHandle process) =>
+        PInvoke.WaitForSingleObject(process, 0) switch
+        {
+            WAIT_EVENT.WAIT_OBJECT_0 => true,
+            WAIT_EVENT.WAIT_FAILED => null,
+            _ => false,
+        };
 }
