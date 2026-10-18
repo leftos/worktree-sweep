@@ -8,7 +8,7 @@ Start here. Plans live in [plans/MAIN.md](./plans/MAIN.md).
 
 ## Glossary
 
-- **Abandonable worker**: one of the holder finder's four threads that name open handles; a lookup that takes over 200 ms is cancelled, its process reported as "may hold", and the worker abandoned for a fresh one if the lookup still does not return.
+- **Abandonable worker**: one of four threads that name open handles; a lookup that takes over 200 ms is cancelled and counts as timed out, and the worker is replaced by a fresh one if the lookup still does not return, or if the worker had not started it in time (the unclaimed item is withdrawn and never runs). A process with a timed-out lookup is reported as "may hold" on the agent path and, in the elevated session, as a process that may hold files and ends the session at exit 3.
 - **Ancestor** (merge state): the branch tip is reachable from the default branch.
 - **Brief**: a written, self-contained implementation step (files, change, proving commands) handed to an implementer agent; open briefs live in `docs/plans/`.
 - **Caller**: the shell that started worktree-sweep; it is flagged as a locker, never stopped by default.
@@ -27,6 +27,7 @@ Start here. Plans live in [plans/MAIN.md](./plans/MAIN.md).
 - **Junction orphan**: an orphan that is a junction or symlink to a folder elsewhere (e.g. `X:\dev\yaat-server.wt\yaat` → `X:\dev\yaat`). Removing it deletes the link only; the target is never entered, sized or deleted.
 - **Lock kind**: how a process holds a folder (its current directory, an open file, a folder handle, a running exe or loaded DLL). Some kinds block a recycle and others only a permanent delete; the table is in [agent-path.md](./agent-path.md).
 - **Locker**: a process that holds at least one `File` handle on a path inside a file-locked pick; the unlock flow offers one prompt per locker.
+- **Lookup account**: `LookupAccount`, the caller-owned record of one run's handle-name lookups that a driver gave up on while they ran, counting those that have not returned. The elevated session owns one for its scan and re-check, and an agent `remove` run owns one across its caller scan and its retry scan.
 - **No commits** (merge state): the branch tip is reachable from the default branch, but the branch's complete reflog records nothing except its creation and operations that make no commit (fast-forwards, resets, rebases), as for a branch just created for work not yet started. Review asks twice before removing it, because another session may be about to use it.
 - **Orphan**: a folder inside a container dir that no repo registers as a worktree, such as the leftover of a failed `git worktree remove`.
 - **Parent chain**: a process's parent, its parent's parent, and so on up. The tool never offers its own chain as lockers or holders, and `remove` refuses with `caller_holds` when a process in it holds the folder. A link counts as ancestry only if the parent was created before its child, since a reused PID ends the chain.
@@ -48,3 +49,4 @@ Start here. Plans live in [plans/MAIN.md](./plans/MAIN.md).
 - **Unlock step**: the terminal part of the unlock flow, asked as plain numbered line prompts while the window waits.
 - **Unreachable folder**: a locked folder the elevated scan cannot say what holds, because it does not open or its users cannot be listed. The session prints `{path} cannot be read here, so it is not known what holds it.` and ends at exit 3, never 0.
 - **Unreadable user**: a process the file system reports using a locked folder but for which the scan could name no handle there. The session prints it and ends at exit 3, never 0.
+- **Unsettled lookup**: a handle-name lookup of worktree-sweep's own that a worker has claimed and that has not returned, so the tool may itself still hold the file it duplicated. Before saying clear, the elevated session waits up to 1 s for them and ends at exit 3 if any are left.

@@ -12,8 +12,9 @@ public interface ILockerScan
     /// </summary>
     /// <param name="lockedPaths">The locked folders, as the user picked them.</param>
     /// <param name="pids">The processes to open; no other process is opened.</param>
-    /// <returns>The lockers, the processes the file system reports using a folder whose handles there could not be read, and the
-    /// folders that could not be opened or whose users could not be listed.</returns>
+    /// <returns>The lockers, the processes the file system reports using a folder whose handles there could not be read, the
+    /// folders that could not be opened or whose users could not be listed, and the processes with a handle whose name could not
+    /// be read in time.</returns>
     LockerFindings Find(IReadOnlyList<string> lockedPaths, IReadOnlyCollection<int> pids);
 
     /// <summary>
@@ -32,6 +33,15 @@ public interface ILockerScan
     /// and nothing was closed; <see langword="null"/> when the process could not be confirmed as the one the scan saw, by a
     /// <see langword="null"/> start time, a process that cannot be opened, or a start time that differs, so nothing was closed.</returns>
     int? CloseStillHeld(Locker locker, IReadOnlyList<string> lockedPaths, Func<HeldHandle, bool> close);
+
+    /// <summary>
+    /// Waits, at most <paramref name="limit"/>, for the name lookups this scan gave up on while they ran, in its scans and its
+    /// re-checks alike, to return. Until one returns, this process may itself hold a file under a locked folder through the duplicate
+    /// handle the lookup made.
+    /// </summary>
+    /// <param name="limit">How long to wait.</param>
+    /// <returns>How many of those lookups have still not returned.</returns>
+    int WaitForUnsettledLookups(TimeSpan limit);
 }
 
 /// <summary>What a <see cref="ILockerScan"/> found.</summary>
@@ -40,7 +50,17 @@ public interface ILockerScan
 /// the process could not be opened, or its handles had no name.</param>
 /// <param name="Unreachable">The locked folders, as the user picked them, that could not be opened or whose users could not be
 /// listed, so what holds them is not known.</param>
-public sealed record LockerFindings(IReadOnlyList<Locker> Lockers, IReadOnlyList<UnreadableUser> Unreadable, IReadOnlyList<string> Unreachable);
+public sealed record LockerFindings(IReadOnlyList<Locker> Lockers, IReadOnlyList<UnreadableUser> Unreadable, IReadOnlyList<string> Unreachable)
+{
+    /// <summary>Gets the processes with a handle whose name could not be read in time, so it may name a file under a locked folder,
+    /// sorted by PID; a process in <see cref="Unreadable"/> or <see cref="Lockers"/> is left out. Empty unless set.</summary>
+    public IReadOnlyList<TimedOutProcess> TimedOut { get; init; } = [];
+}
+
+/// <summary>A process with a handle whose name lookup timed out.</summary>
+/// <param name="Process">The image name of the process, or <c>unknown</c> when it was not in the process table.</param>
+/// <param name="Pid">The process id.</param>
+public sealed record TimedOutProcess(string Process, int Pid);
 
 /// <summary>A process the file system reports using a locked folder, whose handles there could not be read.</summary>
 /// <param name="Process">The image name of the process, or <c>unknown</c> when it was not in the process table.</param>

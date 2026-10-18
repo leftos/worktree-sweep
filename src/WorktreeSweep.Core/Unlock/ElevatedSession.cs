@@ -20,6 +20,9 @@ public sealed class ElevatedSession(TextReader input, TextWriter output, ILocker
     /// <summary>How many of a locker's handles the description shows before it says how many it left out.</summary>
     private const int ShownHandles = 5;
 
+    /// <summary>How long the session waits, before it says nothing holds the files, for the scan's own lookups that have not returned.</summary>
+    private static readonly TimeSpan UnsettledLookupWait = TimeSpan.FromSeconds(1);
+
     /// <summary>The actions the prompt offers, in the order it numbers them.</summary>
     private static readonly LockerAction[] Actions = [LockerAction.Stop, LockerAction.CloseHandles, LockerAction.Skip, LockerAction.Done];
 
@@ -29,9 +32,10 @@ public sealed class ElevatedSession(TextReader input, TextWriter output, ILocker
     /// <summary>
     /// Runs the session, scanning, offering and acting until nothing holds the files or the user ends it. Each scan opens every
     /// running process but the idle and System processes, this one and the excluded ones. A process the file system reports using a
-    /// folder, whose handles there the scan could not read, System included, and a folder that cannot be opened here, are reported
-    /// after each scan and never let the session report clear: they end the session at <see cref="UnlockExit.SomeLeft"/>, so the
-    /// sweep retries every locked pick.
+    /// folder, whose handles there the scan could not read, System included, a process with a handle whose name could not be read in
+    /// time, and a folder that cannot be opened here, are reported after each scan and never let the session report clear: they end
+    /// the session at <see cref="UnlockExit.SomeLeft"/>, so the sweep retries every locked pick. So does a lookup of the scan's own
+    /// that has not returned when the session would otherwise end clear, since it may hold a file under the folders itself.
     /// </summary>
     /// <param name="paths">The folders whose open handles are cleared; a folder named twice, by full path in any case, counts once.</param>
     /// <param name="callerPid">The process that started the unelevated run, usually the user's shell, whose stopping is not the
@@ -60,16 +64,7 @@ public sealed class ElevatedSession(TextReader input, TextWriter output, ILocker
             IReadOnlyList<Locker> lockers = found.Lockers;
             if (lockers.Count == 0)
             {
-                if (unknown)
-                {
-                    if (found.Unreadable.Count > 0)
-                    {
-                        Say("Nothing else holds files under those folders.");
-                    }
-                    return UnlockExit.SomeLeft;
-                }
-                Say("Nothing holds files under those folders.");
-                return UnlockExit.For(true, acted);
+                return EndWithNoLockers(found, unknown, acted);
             }
             if (finished)
             {
@@ -83,9 +78,39 @@ public sealed class ElevatedSession(TextReader input, TextWriter output, ILocker
     }
 
     /// <summary>
+    /// Ends a session whose scan found no locker. It ends clear only when nothing was unknown and every lookup of the scan's own has
+    /// returned, waiting at most <see cref="UnsettledLookupWait"/> for those: a lookup that has not returned may hold a file under the
+    /// folders in this process.
+    /// </summary>
+    /// <param name="found">What the scan found.</param>
+    /// <param name="unknown">Whether anything the scan could not read was reported.</param>
+    /// <param name="acted">Whether anything was stopped or had its handles closed.</param>
+    /// <returns>The session's exit code.</returns>
+    private int EndWithNoLockers(LockerFindings found, bool unknown, bool acted)
+    {
+        if (unknown)
+        {
+            if (found.Unreadable.Count > 0 || found.TimedOut.Count > 0)
+            {
+                Say("Nothing else holds files under those folders.");
+            }
+            return UnlockExit.SomeLeft;
+        }
+        int unsettled = scan.WaitForUnsettledLookups(UnsettledLookupWait);
+        if (unsettled > 0)
+        {
+            Say($"{unsettled} handle lookup(s) of worktree-sweep's own have not returned, so it may itself still hold a file under those folders.");
+            return UnlockExit.SomeLeft;
+        }
+        Say("Nothing holds files under those folders.");
+        return UnlockExit.For(true, acted);
+    }
+
+    /// <summary>
     /// Scans every running process but the idle and System processes, this one and <paramref name="excluded"/>, and drops this one
-    /// and <paramref name="excluded"/> from the ones reported using a folder unread, so the tool's own chain is never opened or
-    /// offered. System stays among those reported: kernel handles under a folder hold it as surely as any process's.
+    /// and <paramref name="excluded"/> from the ones reported using a folder unread or with a timed-out lookup, so the tool's own
+    /// chain is never opened or offered. System stays among those reported: kernel handles under a folder hold it as surely as any
+    /// process's.
     /// </summary>
     /// <param name="paths">The folders whose open handles are cleared.</param>
     /// <param name="excluded">This process's chain, the unelevated worktree-sweep and its children.</param>
@@ -95,10 +120,17 @@ public sealed class ElevatedSession(TextReader input, TextWriter output, ILocker
         bool Ours(int pid) => pid == Environment.ProcessId || excluded.Contains(pid);
         IReadOnlyList<int> pids = [.. processes.Snapshot().Keys.Where(pid => !Ours(pid) && !ProcessTable.SystemPids.Contains(pid)).Order()];
         LockerFindings found = scan.Find(paths, pids);
-        return found with { Unreadable = [.. found.Unreadable.Where(user => !Ours(user.Pid))] };
+        return found with
+        {
+            Unreadable = [.. found.Unreadable.Where(user => !Ours(user.Pid))],
+            TimedOut = [.. found.TimedOut.Where(process => !Ours(process.Pid))],
+        };
     }
 
-    /// <summary>Prints each process using a folder whose handles there could not be read, and each folder that could not be opened.</summary>
+    /// <summary>
+    /// Prints each process using a folder whose handles there could not be read, each process with a handle whose name could not be
+    /// read in time, and each folder that could not be opened.
+    /// </summary>
     /// <param name="found">What the scan found.</param>
     /// <returns><see langword="true"/> when anything was printed, so what holds the folders is not fully known.</returns>
     private bool ReportUnknown(LockerFindings found)
@@ -107,11 +139,15 @@ public sealed class ElevatedSession(TextReader input, TextWriter output, ILocker
         {
             Say($"{user.Process} ({user.Pid}) uses {user.Path}, but its handles cannot be read.");
         }
+        foreach (TimedOutProcess process in found.TimedOut)
+        {
+            Say($"{process.Process} ({process.Pid}) has a handle whose name could not be read in time, so it may hold files under those folders.");
+        }
         foreach (string path in found.Unreachable)
         {
             Say(UnknownFolderText.Line(path));
         }
-        return found.Unreadable.Count > 0 || found.Unreachable.Count > 0;
+        return found.Unreadable.Count > 0 || found.TimedOut.Count > 0 || found.Unreachable.Count > 0;
     }
 
     /// <summary>Offers every locker in turn and applies the answer.</summary>

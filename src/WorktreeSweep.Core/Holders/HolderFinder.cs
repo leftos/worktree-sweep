@@ -22,19 +22,21 @@ public static class HolderFinder
     /// </summary>
     /// <param name="folder">The folder, as the user gave it; a junction, subst drive or 8.3 name in it is matched as given and resolved.</param>
     /// <param name="exclude">PIDs that are never inspected or listed.</param>
+    /// <param name="lookups">Records each name lookup given up on while it runs; the caller's, read before it decides the folder is free.</param>
     /// <returns>The holders and the processes that may hold the folder, each sorted by PID.</returns>
     /// <exception cref="PlatformNotSupportedException">This is not a 64-bit process, which the PEB offsets assume.</exception>
     /// <exception cref="IOException">
     /// The folder cannot be opened or resolved, or this program's own file or handles cannot be read to learn which handles are files.
     /// </exception>
     /// <exception cref="System.ComponentModel.Win32Exception">The process list or this process's own user cannot be read.</exception>
-    public static HolderReport Find(string folder, IReadOnlyCollection<int> exclude) => Find(folder, exclude, OpenHandles.Scan);
+    internal static HolderReport Find(string folder, IReadOnlyCollection<int> exclude, LookupAccount lookups) =>
+        Find(folder, exclude, OpenHandles.Scan, lookups);
 
     /// <summary>
     /// Whether <paramref name="holder"/>'s PID still names the same running process: same creation time and same image.
     /// <see langword="false"/> when that cannot be checked.
     /// </summary>
-    /// <param name="holder">A holder from <see cref="Find(string, IReadOnlyCollection{int})"/>.</param>
+    /// <param name="holder">A holder from <see cref="Find(string, IReadOnlyCollection{int}, LookupAccount)"/>.</param>
     /// <returns><see langword="true"/> when the process is still running and is the one found.</returns>
     public static bool StillSame(Holder holder)
     {
@@ -89,17 +91,19 @@ public static class HolderFinder
     }
 
     /// <summary>
-    /// <see cref="Find(string, IReadOnlyCollection{int})"/>, with the open handles of the inspected processes found by
+    /// <see cref="Find(string, IReadOnlyCollection{int}, LookupAccount)"/>, with the open handles of the inspected processes found by
     /// <paramref name="handles"/>; without one, only current folders are looked at.
     /// </summary>
     /// <param name="folder">The folder.</param>
     /// <param name="exclude">PIDs that are never inspected or listed.</param>
     /// <param name="handles">Lists and names the inspected processes' open handles, or <see langword="null"/> to skip handles.</param>
+    /// <param name="lookups">Records each name lookup given up on while it runs.</param>
     /// <returns>The report.</returns>
-    internal static HolderReport Find(string folder, IReadOnlyCollection<int> exclude, HandleScanner? handles)
+    internal static HolderReport Find(string folder, IReadOnlyCollection<int> exclude, HandleScanner? handles, LookupAccount lookups)
     {
         ArgumentNullException.ThrowIfNull(folder);
         ArgumentNullException.ThrowIfNull(exclude);
+        ArgumentNullException.ThrowIfNull(lookups);
         Peb.EnsureSixtyFourBit();
         IReadOnlyList<string> roots = FolderForms(folder);
         IReadOnlyDictionary<int, ProcessEntry> table = ProcessTable.Snapshot();
@@ -114,7 +118,7 @@ public static class HolderFinder
             }
             census.Inspect(pair.Key, pair.Value.Exe, ownUser, roots);
         }
-        HandleFindings findings = handles?.Invoke(census.CandidatePids, [roots[0]]) ?? HandleFindings.None;
+        HandleFindings findings = handles?.Invoke(census.CandidatePids, [roots[0]], lookups) ?? HandleFindings.None;
         foreach (int pid in findings.Unlisted)
         {
             census.MarkUnopened(pid);

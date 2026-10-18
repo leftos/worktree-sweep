@@ -89,7 +89,7 @@ public sealed class OpenHandlesTests : IDisposable
     {
         string missing = fx.PathTo("missing");
 
-        HandleFindings findings = OpenHandles.Scan([], [missing]);
+        HandleFindings findings = OpenHandles.Scan([], [missing], new LookupAccount());
 
         Assert.Empty(findings.Using);
         Assert.Equal([missing], findings.RootsWithoutUsers);
@@ -99,7 +99,7 @@ public sealed class OpenHandlesTests : IDisposable
     [Fact]
     public void UnopenablePidIsUnlisted()
     {
-        HandleFindings findings = OpenHandles.Scan([0], [fx.Root]);
+        HandleFindings findings = OpenHandles.Scan([0], [fx.Root], new LookupAccount());
 
         Assert.Equal([0], findings.Unlisted);
         Assert.Empty(findings.Names);
@@ -120,7 +120,7 @@ public sealed class OpenHandlesTests : IDisposable
         using var child = ReadyChild.Run(fx.Root, ready, HoldScript(file, ready));
         IReadOnlyList<string> roots = HolderFinder.FolderForms(folder);
 
-        HandleFindings findings = OpenHandles.Scan([child.Id], roots);
+        HandleFindings findings = OpenHandles.Scan([child.Id], roots, new LookupAccount());
 
         NamedHandle held = Assert.Single(findings.Names, handle => handle.Name is string name && LockedPaths.Matches(name, roots));
         Assert.Equal(child.Id, held.Pid);
@@ -139,10 +139,29 @@ public sealed class OpenHandlesTests : IDisposable
         using var firstChild = ReadyChild.Start(first, fx.PathTo("ready-first"));
         using var secondChild = ReadyChild.Start(second, fx.PathTo("ready-second"));
 
-        HandleFindings findings = OpenHandles.Scan([], [.. HolderFinder.FolderForms(first), .. HolderFinder.FolderForms(second)]);
+        HandleFindings findings = OpenHandles.Scan(
+            [],
+            [.. HolderFinder.FolderForms(first), .. HolderFinder.FolderForms(second)],
+            new LookupAccount()
+        );
 
         Assert.Contains(firstChild.Id, findings.Using);
         Assert.Contains(secondChild.Id, findings.Using);
+    }
+
+    /// <summary>
+    /// The findings count a handle the naming gave no name, its lookup having timed out, as a timed-out lookup of its process; a check
+    /// that failed at once on a process using the folder adds an unnamed handle, but not a timed-out lookup.
+    /// </summary>
+    [Fact]
+    public void FindingsCountOnlyATimedOutNameAsATimedOutLookup()
+    {
+        var named = new NamedHandles([new NamedHandle(7, null, 0), new NamedHandle(8, @"D:\a\file.txt", 0x54)], new HashSet<int> { 9 });
+
+        HandleFindings findings = OpenHandles.Findings(named, [], [new RootUser(9, @"D:\a")]);
+
+        Assert.Equal([7], findings.TimedOut);
+        Assert.Contains(new NamedHandle(9, null, 0), findings.Names);
     }
 
     /// <inheritdoc/>

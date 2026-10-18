@@ -763,6 +763,92 @@ public sealed class ElevatedSessionTests : IDisposable
         Assert.DoesNotContain(4, Assert.Single(scan.Scanned));
     }
 
+    /// <summary>
+    /// A process with a handle whose name could not be read in time is reported and never lets the session report clear, even when
+    /// nothing else holds the files.
+    /// </summary>
+    [Fact]
+    public void ProcessWithATimedOutLookupIsReportedAndEndsSomeLeft()
+    {
+        StringWriter output = Writer();
+        var scan = new FakeScan(new LockerFindings([], [], []) { TimedOut = [new TimedOutProcess("pwsh.exe", 642)] });
+        ElevatedSession session = Session(
+            new StringReader(""),
+            output,
+            scan,
+            new FakeHandleExe(),
+            new ScriptedProcessControl(Running(("pwsh.exe", 642)))
+        );
+
+        int exit = session.Run([Locked], null, null, null);
+
+        string text = output.ToString();
+        Assert.Equal(UnlockExit.SomeLeft, exit);
+        Assert.Contains(
+            "pwsh.exe (642) has a handle whose name could not be read in time, so it may hold files under those folders.\n",
+            text,
+            StringComparison.Ordinal
+        );
+        Assert.Contains("Nothing else holds files under those folders.\n", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("Nothing holds files under those folders.", text, StringComparison.Ordinal);
+    }
+
+    /// <summary>A timed-out lookup the scan reports for this process itself is dropped, as this process is never reported, and the
+    /// session ends clear.</summary>
+    [Fact]
+    public void TimedOutLookupOfThisProcessIsNotReported()
+    {
+        StringWriter output = Writer();
+        int own = Environment.ProcessId;
+        var scan = new FakeScan(new LockerFindings([], [], []) { TimedOut = [new TimedOutProcess("worktree-sweep.exe", own)] });
+        ElevatedSession session = Session(new StringReader(""), output, scan, new FakeHandleExe(), new ScriptedProcessControl(Running()));
+
+        int exit = session.Run([Locked], null, null, null);
+
+        string text = output.ToString();
+        Assert.Equal(UnlockExit.AllClear, exit);
+        Assert.DoesNotContain("could not be read in time", text, StringComparison.Ordinal);
+        Assert.Contains("Nothing holds files under those folders.\n", text, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// With nothing holding the files, a lookup of the session's own that has not returned after the wait stops the clear verdict: it
+    /// is reported and the session ends with something left.
+    /// </summary>
+    [Fact]
+    public void UnsettledOwnLookupStopsAClearVerdict()
+    {
+        StringWriter output = Writer();
+        var scan = new FakeScan(Found()) { UnsettledLookups = 1 };
+        ElevatedSession session = Session(new StringReader(""), output, scan, new FakeHandleExe(), new ScriptedProcessControl(Running()));
+
+        int exit = session.Run([Locked], null, null, null);
+
+        string text = output.ToString();
+        Assert.Equal(UnlockExit.SomeLeft, exit);
+        Assert.Contains(
+            "1 handle lookup(s) of worktree-sweep's own have not returned, so it may itself still hold a file under those folders.\n",
+            text,
+            StringComparison.Ordinal
+        );
+        Assert.DoesNotContain("Nothing holds files under those folders.", text, StringComparison.Ordinal);
+    }
+
+    /// <summary>With nothing holding the files and every lookup of its own returned, the session asks once and ends clear.</summary>
+    [Fact]
+    public void SettledLookupsLetTheSessionEndClear()
+    {
+        StringWriter output = Writer();
+        var scan = new FakeScan(Found());
+        ElevatedSession session = Session(new StringReader(""), output, scan, new FakeHandleExe(), new ScriptedProcessControl(Running()));
+
+        int exit = session.Run([Locked], null, null, null);
+
+        Assert.Equal(UnlockExit.AllClear, exit);
+        Assert.Equal([TimeSpan.FromSeconds(1)], scan.LookupWaits);
+        Assert.Contains("Nothing holds files under those folders.\n", output.ToString(), StringComparison.Ordinal);
+    }
+
     /// <summary>A folder picked twice, by the same full path in another case, is scanned and reported once.</summary>
     [Fact]
     public void FolderPickedTwiceIsReportedOnce()
@@ -920,6 +1006,18 @@ public sealed class ElevatedSessionTests : IDisposable
         /// process the scan saw, closing nothing.</summary>
         public bool UnconfirmedClose { get; set; }
 
+        /// <summary>Gets or sets how many lookups of the scan's own every wait reports still unsettled.</summary>
+        public int UnsettledLookups { get; set; }
+
+        /// <summary>Gets the limit of each wait for the scan's unsettled lookups, in order.</summary>
+        public List<TimeSpan> LookupWaits { get; } = [];
+
+        public int WaitForUnsettledLookups(TimeSpan limit)
+        {
+            LookupWaits.Add(limit);
+            return UnsettledLookups;
+        }
+
         public LockerFindings Find(IReadOnlyList<string> lockedPaths, IReadOnlyCollection<int> pids)
         {
             Scanned.Add([.. pids]);
@@ -980,6 +1078,8 @@ public sealed class ElevatedSessionTests : IDisposable
             new([], [.. lockedPaths.Select(path => new UnreadableUser("pwsh.exe", 642, path))], []);
 
         public int? CloseStillHeld(Locker locker, IReadOnlyList<string> lockedPaths, Func<HeldHandle, bool> close) => 0;
+
+        public int WaitForUnsettledLookups(TimeSpan limit) => 0;
     }
 
     /// <summary>A handle.exe that records what it closed.</summary>

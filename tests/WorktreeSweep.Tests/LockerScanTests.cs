@@ -127,10 +127,10 @@ public sealed class LockerScanTests : IDisposable
         using var child = ReadyChild.Run(fx.Root, ready, HoldScript(TwoHeldFiles(folder), ready));
         var steps = new List<(string Step, string File)>();
         var scan = new LockerScan(
-            (source, pid, held, roots) =>
+            (source, pid, held, roots, account) =>
             {
                 steps.Add(("recheck", Path.GetFileName(held.Name)));
-                return LockerScan.StillNamesALockedFile(source, pid, held, roots);
+                return LockerScan.StillNamesALockedFile(source, pid, held, roots, account);
             }
         );
         Locker locker = Assert.Single(scan.Find([folder], [child.Id]).Lockers);
@@ -157,10 +157,10 @@ public sealed class LockerScanTests : IDisposable
         string ready = fx.PathTo("ready-throws");
         using var child = ReadyChild.Run(fx.Root, ready, HoldScript(TwoHeldFiles(folder), ready));
         var scan = new LockerScan(
-            (source, pid, held, roots) =>
+            (source, pid, held, roots, account) =>
                 Path.GetFileName(held.Name) == "a.txt"
                     ? throw new IOException("cannot duplicate the handle")
-                    : LockerScan.StillNamesALockedFile(source, pid, held, roots)
+                    : LockerScan.StillNamesALockedFile(source, pid, held, roots, account)
         );
         Locker locker = Assert.Single(scan.Find([folder], [child.Id]).Lockers);
         var handed = new List<string>();
@@ -206,6 +206,37 @@ public sealed class LockerScanTests : IDisposable
         LockerFindings found = scan.Find([folder], []);
 
         Assert.Empty(found.Unreachable);
+    }
+
+    /// <summary>
+    /// Each process with a timed-out lookup is listed once, by PID, with its image name; one already reported as using a folder unread
+    /// is left out, so it gets only that line.
+    /// </summary>
+    [Fact]
+    public void TimedOutLookupsLeaveOutAnUnreadableProcess()
+    {
+        var table = new Dictionary<int, ProcessEntry> { [642] = new(1, "pwsh.exe"), [800] = new(1, "code.exe") };
+
+        IReadOnlyList<TimedOutProcess> timedOut = LockerScan.TimedOutLookups(
+            new HashSet<int> { 900, 800, 642 },
+            [new UnreadableUser("pwsh.exe", 642, @"D:\a.wt\x")],
+            [],
+            table
+        );
+
+        Assert.Equal([new TimedOutProcess("code.exe", 800), new TimedOutProcess("unknown", 900)], timedOut);
+    }
+
+    /// <summary>A locker with a timed-out lookup is left out: it is offered as a locker, so it is not also reported as timed out.</summary>
+    [Fact]
+    public void TimedOutLookupsLeaveOutALocker()
+    {
+        var table = new Dictionary<int, ProcessEntry> { [642] = new(1, "pwsh.exe"), [800] = new(1, "code.exe") };
+        var locker = new Locker("pwsh.exe", 642, [new HeldHandle(0x54, @"D:\a.wt\x\file.txt")], 1000);
+
+        IReadOnlyList<TimedOutProcess> timedOut = LockerScan.TimedOutLookups(new HashSet<int> { 800, 642 }, [], [locker], table);
+
+        Assert.Equal([new TimedOutProcess("code.exe", 800)], timedOut);
     }
 
     /// <inheritdoc/>

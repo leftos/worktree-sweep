@@ -13,6 +13,8 @@ public sealed class AgentRemoverTests
 {
     private static readonly AgentOptions Plain = new(Force: false, StopBuildServers: false);
 
+    private const string UnsettledLookupNote = "a handle lookup of this run had not returned, so worktree-sweep itself may still hold a file in it";
+
     private static readonly BinCapacity Fits = new(uint.MaxValue, NukeOnDelete: false);
 
     /// <summary>A repo's main worktree is refused, and nothing is touched.</summary>
@@ -203,7 +205,7 @@ public sealed class AgentRemoverTests
         RemoveReport report = AgentRemover.Run(
             worktree,
             new AgentOptions(Force: false, StopBuildServers: true),
-            Seams(Recycle, (_, _) => new HolderReport([cargo], []), stopped.Add) with
+            Seams(Recycle, (_, _, _) => new HolderReport([cargo], []), stopped.Add) with
             {
                 StillSame = _ => true,
             }
@@ -243,7 +245,7 @@ public sealed class AgentRemoverTests
         RemoveReport report = AgentRemover.Run(
             worktree,
             new AgentOptions(Force: false, StopBuildServers: false),
-            Seams(Recycle, (_, _) => new HolderReport([code], [may]), NeverStop)
+            Seams(Recycle, (_, _, _) => new HolderReport([code], [may]), NeverStop)
         );
 
         Assert.Equal(RemoveStatus.Removed, report.Status);
@@ -265,7 +267,7 @@ public sealed class AgentRemoverTests
         RemoveReport report = AgentRemover.Run(
             worktree,
             new AgentOptions(Force: false, StopBuildServers: true),
-            Seams(AlwaysLocked, (_, _) => new HolderReport([cargo], []), stopped.Add) with
+            Seams(AlwaysLocked, (_, _, _) => new HolderReport([cargo], []), stopped.Add) with
             {
                 StillSame = _ => false,
             }
@@ -311,7 +313,7 @@ public sealed class AgentRemoverTests
             Plain,
             Seams(
                 AlwaysLocked,
-                (_, exclude) => exclude.Count == 0 ? throw new UnauthorizedAccessException("access denied") : new HolderReport([], []),
+                (_, exclude, _) => exclude.Count == 0 ? throw new UnauthorizedAccessException("access denied") : new HolderReport([], []),
                 NeverStop
             )
         );
@@ -329,7 +331,7 @@ public sealed class AgentRemoverTests
     {
         using var fx = new Fixture();
         (_, string worktree) = RepoWithWorktree(fx, @"x.wt\feat", "feat");
-        HolderReport UnknownOnRetry(string folder, IReadOnlyCollection<int> exclude) =>
+        HolderReport UnknownOnRetry(string folder, IReadOnlyCollection<int> exclude, LookupAccount lookups) =>
             exclude.Count == 0 ? new HolderReport([], []) { UnknownFolders = [worktree] } : new HolderReport([], []);
 
         RemoveReport report = AgentRemover.Run(worktree, Plain, Seams(AlwaysLocked, UnknownOnRetry, NeverStop));
@@ -338,6 +340,92 @@ public sealed class AgentRemoverTests
         Assert.Equal(Reason.CannotTell, report.Reason);
         Assert.Equal(5, RemoveExitCode.For(report.Status));
         Assert.Contains($"{worktree} cannot be read here, so it is not known what holds it.", report.Notes);
+    }
+
+    /// <summary>
+    /// A locked retry whose holder scan has a lookup that has not returned is released with the same reason as without it, and a note
+    /// that this run may itself hold a file in the folder.
+    /// </summary>
+    [Fact]
+    public void ALockedRetryWithAnUnsettledLookupNotesIt()
+    {
+        using var fx = new Fixture();
+        (_, string worktree) = RepoWithWorktree(fx, @"x.wt\feat", "feat");
+        static HolderReport UnsettledOnRetry(string folder, IReadOnlyCollection<int> exclude, LookupAccount lookups)
+        {
+            if (exclude.Count == 0)
+            {
+                lookups.AddUnsettled(new TaskCompletionSource().Task);
+            }
+            return new HolderReport([], []);
+        }
+
+        RemoveReport report = AgentRemover.Run(worktree, Plain, Seams(AlwaysLocked, UnsettledOnRetry, NeverStop));
+
+        Assert.Equal(RemoveStatus.Released, report.Status);
+        Assert.Equal(LockedReason.For(new HolderReport([], [])), report.Reason);
+        Assert.Contains(UnsettledLookupNote, report.Notes);
+    }
+
+    /// <summary>A locked retry whose holder scans have every lookup returned carries no note about this run's own lookups.</summary>
+    [Fact]
+    public void ALockedRetryWithSettledLookupsHasNoLookupNote()
+    {
+        using var fx = new Fixture();
+        (_, string worktree) = RepoWithWorktree(fx, @"x.wt\feat", "feat");
+
+        RemoveReport report = AgentRemover.Run(worktree, Plain, Seams(AlwaysLocked, NoHolders, NeverStop));
+
+        Assert.Equal(RemoveStatus.Released, report.Status);
+        Assert.Equal(LockedReason.For(new HolderReport([], [])), report.Reason);
+        Assert.DoesNotContain(report.Notes, note => note.Contains("handle lookup", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A lookup the caller scan, before the first recycle, gave up on and that has not returned is noted when the retry stays locked:
+    /// the run keeps one account for every holder scan.
+    /// </summary>
+    [Fact]
+    public void ALockedRetryNotesALookupTheCallerScanLeftUnsettled()
+    {
+        using var fx = new Fixture();
+        (_, string worktree) = RepoWithWorktree(fx, @"x.wt\feat", "feat");
+        static HolderReport UnsettledOnCallerScan(string folder, IReadOnlyCollection<int> exclude, LookupAccount lookups)
+        {
+            if (exclude.Count > 0)
+            {
+                lookups.AddUnsettled(new TaskCompletionSource().Task);
+            }
+            return new HolderReport([], []);
+        }
+
+        RemoveReport report = AgentRemover.Run(worktree, Plain, Seams(AlwaysLocked, UnsettledOnCallerScan, NeverStop));
+
+        Assert.Equal(RemoveStatus.Released, report.Status);
+        Assert.Contains(UnsettledLookupNote, report.Notes);
+    }
+
+    /// <summary>A lookup that the retry's scan gave up on before the scan threw is still noted when the retry stays locked.</summary>
+    [Fact]
+    public void ALockedRetryNotesALookupFromAScanThatThrew()
+    {
+        using var fx = new Fixture();
+        (_, string worktree) = RepoWithWorktree(fx, @"x.wt\feat", "feat");
+        static HolderReport UnsettledThenThrows(string folder, IReadOnlyCollection<int> exclude, LookupAccount lookups)
+        {
+            if (exclude.Count > 0)
+            {
+                return new HolderReport([], []);
+            }
+            lookups.AddUnsettled(new TaskCompletionSource().Task);
+            throw new IOException("cannot list the handles");
+        }
+
+        RemoveReport report = AgentRemover.Run(worktree, Plain, Seams(AlwaysLocked, UnsettledThenThrows, NeverStop));
+
+        Assert.Equal(RemoveStatus.Released, report.Status);
+        Assert.Contains(report.Notes, note => note.StartsWith("cannot list the processes holding it:", StringComparison.Ordinal));
+        Assert.Contains(UnsettledLookupNote, report.Notes);
     }
 
     /// <summary>A retry that removes the folder despite an unknown folder is removed, and no note about the folder is added.</summary>
@@ -357,7 +445,7 @@ public sealed class AgentRemoverTests
             Directory.Delete(path, recursive: true);
         }
 
-        HolderReport UnknownOnRetry(string folder, IReadOnlyCollection<int> exclude) =>
+        HolderReport UnknownOnRetry(string folder, IReadOnlyCollection<int> exclude, LookupAccount lookups) =>
             exclude.Count == 0 ? new HolderReport([], []) { UnknownFolders = [worktree] } : new HolderReport([], []);
 
         RemoveReport report = AgentRemover.Run(worktree, Plain, Seams(Recycle, UnknownOnRetry, NeverStop));
@@ -375,7 +463,7 @@ public sealed class AgentRemoverTests
         (_, string worktree) = RepoWithWorktree(fx, @"x.wt\feat", "feat");
         var cargo = new Holder(4242, "cargo.exe", null, 0, null, [new Hold.OpenHandle(Path.Join(worktree, "README.md"))]);
         var stopped = new List<Holder>();
-        HolderReport UnknownOnRetry(string folder, IReadOnlyCollection<int> exclude) =>
+        HolderReport UnknownOnRetry(string folder, IReadOnlyCollection<int> exclude, LookupAccount lookups) =>
             exclude.Count == 0 ? new HolderReport([cargo], []) { UnknownFolders = [worktree] } : new HolderReport([], []);
 
         RemoveReport report = AgentRemover.Run(
@@ -425,7 +513,7 @@ public sealed class AgentRemoverTests
         RemoveReport report = AgentRemover.Run(
             worktree,
             new AgentOptions(Force: false, StopBuildServers: true),
-            Seams(AlwaysLocked, (_, _) => new HolderReport([cargo, code], []), stopped.Add) with
+            Seams(AlwaysLocked, (_, _, _) => new HolderReport([cargo, code], []), stopped.Add) with
             {
                 StillSame = _ => true,
             }
@@ -483,7 +571,7 @@ public sealed class AgentRemoverTests
             _ = AgentRemover.Run(
                 worktree,
                 new AgentOptions(Force: false, StopBuildServers: true),
-                Seams(Recycle, (_, _) => new HolderReport([cargo], []), _ => { }) with
+                Seams(Recycle, (_, _, _) => new HolderReport([cargo], []), _ => { }) with
                 {
                     StillSame = _ => true,
                 }
@@ -676,7 +764,7 @@ public sealed class AgentRemoverTests
 
     private static void AlwaysLocked(string path) => throw new LockedException(path, firstLockedFile: null);
 
-    private static HolderReport NoHolders(string folder, IReadOnlyCollection<int> exclude) => new([], []);
+    private static HolderReport NoHolders(string folder, IReadOnlyCollection<int> exclude, LookupAccount lookups) => new([], []);
 
     private static void NeverStop(Holder holder) => throw new InvalidOperationException($"pid {holder.Pid} must not be stopped");
 
@@ -686,7 +774,11 @@ public sealed class AgentRemoverTests
     /// Test seams: a 200 ms recycle timeout, the caller's chain this process alone, the current folder left alone, and a Recycle Bin
     /// that takes anything, so no test reads the real one.
     /// </summary>
-    private static AgentSeams Seams(Action<string> recycle, Func<string, IReadOnlyCollection<int>, HolderReport> findHolders, Action<Holder> stop) =>
+    private static AgentSeams Seams(
+        Action<string> recycle,
+        Func<string, IReadOnlyCollection<int>, LookupAccount, HolderReport> findHolders,
+        Action<Holder> stop
+    ) =>
         new()
         {
             EnterMainWorktree = _ => { },
