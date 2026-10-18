@@ -257,7 +257,8 @@ public sealed class ElevatedSession(TextReader input, TextWriter output, ILocker
         }
     }
 
-    /// <summary>Warns about closing handles, asks (default no), then closes the locker's handles and reports how many.</summary>
+    /// <summary>Warns about closing handles, asks (default no), then closes the locker's handles and reports how many. A pass that
+    /// cannot confirm the locker as the process the scan saw reports it skipped instead.</summary>
     /// <param name="locker">The process whose handles are closed.</param>
     /// <param name="label">The process, as <c>{name} (pid {pid})</c>.</param>
     /// <param name="paths">The folders whose open handles are cleared.</param>
@@ -276,7 +277,11 @@ public sealed class ElevatedSession(TextReader input, TextWriter output, ILocker
         }
         // The scan re-checks each handle with the process held open, and calls CloseOne only for one that still names a locked
         // file: a handle value can be reused between the scan and the answer.
-        int closed = scan.CloseStillHeld(locker, paths, held => CloseOne(held, locker, label));
+        if (scan.CloseStillHeld(locker, paths, held => CloseOne(held, locker, label)) is not int closed)
+        {
+            // The pass closed nothing because the process was not confirmed, which is a skip and not a count of zero.
+            return Skipped(label, LockerState.Unconfirmed);
+        }
         return new Outcome($"Closed {closed} of {locker.Handles.Count} handle(s) of {label}.", closed > 0);
     }
 

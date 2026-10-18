@@ -99,7 +99,10 @@ public sealed class LockerScan : ILockerScan
     }
 
     /// <inheritdoc/>
-    public int CloseStillHeld(Locker locker, IReadOnlyList<string> lockedPaths, Func<HeldHandle, bool> close)
+    /// <remarks>Returns <see langword="null"/>, not 0, when the locker has no start time from the scan, or its process cannot be
+    /// opened or no longer has that start time: the process was not confirmed, and the session reports it skipped rather than
+    /// claiming that no handle closed.</remarks>
+    public int? CloseStillHeld(Locker locker, IReadOnlyList<string> lockedPaths, Func<HeldHandle, bool> close)
     {
         ArgumentNullException.ThrowIfNull(locker);
         ArgumentNullException.ThrowIfNull(lockedPaths);
@@ -108,14 +111,14 @@ public sealed class LockerScan : ILockerScan
         if (locker.Started is not ulong expected)
         {
             Trace.TraceWarning($"{label} has no start time from the scan; no handle closed");
-            return 0;
+            return null;
         }
         // Kept open until the last close has returned: while this handle is open, Windows cannot give the PID to another process.
         using SafeFileHandle? source = OpenHandles.OpenSource(locker.Pid);
         if (source is null || ProcessQuery.CreationTime(source) != expected)
         {
             Trace.TraceWarning($"{label} cannot be opened or is no longer the process the scan saw; no handle closed");
-            return 0;
+            return null;
         }
         IReadOnlyList<string> roots = [.. Survey(lockedPaths).Folders.SelectMany(folder => folder.Forms)];
         int closed = 0;

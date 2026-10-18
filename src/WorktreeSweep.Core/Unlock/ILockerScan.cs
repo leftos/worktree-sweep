@@ -21,15 +21,17 @@ public interface ILockerScan
     /// equal <see cref="Locker.Started"/>, and the folders are resolved once; then each handle in turn is duplicated and named
     /// again, the duplicate is disposed, and <paramref name="close"/> is called only while the handle still names a file under a
     /// locked folder. The process stays open until the last <paramref name="close"/> has returned, so its PID cannot pass to another
-    /// process meanwhile. Nothing the earlier scan saw is trusted: a re-check that fails or throws leaves that handle open.
+    /// process meanwhile. Nothing the earlier scan saw is trusted: a re-check that fails or throws leaves that handle open. When the
+    /// locker cannot be confirmed as the process the scan saw, nothing is closed and the result is <see langword="null"/>.
     /// </summary>
     /// <param name="locker">The process with the handles and the start time the scan saw; a <see langword="null"/> start time is
     /// never confirmed.</param>
     /// <param name="lockedPaths">The locked folders, as the user picked them.</param>
     /// <param name="close">Closes one handle and returns whether it closed.</param>
-    /// <returns>How many calls to <paramref name="close"/> returned <see langword="true"/>; 0 when the process cannot be opened or
-    /// is not the one the scan saw.</returns>
-    int CloseStillHeld(Locker locker, IReadOnlyList<string> lockedPaths, Func<HeldHandle, bool> close);
+    /// <returns>How many calls to <paramref name="close"/> returned <see langword="true"/>, which is 0 when the process was confirmed
+    /// and nothing was closed; <see langword="null"/> when the process could not be confirmed as the one the scan saw, by a
+    /// <see langword="null"/> start time, a process that cannot be opened, or a start time that differs, so nothing was closed.</returns>
+    int? CloseStillHeld(Locker locker, IReadOnlyList<string> lockedPaths, Func<HeldHandle, bool> close);
 }
 
 /// <summary>What a <see cref="ILockerScan"/> found.</summary>
