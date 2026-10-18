@@ -95,6 +95,25 @@ public sealed class AgentRulesTests
         Assert.Equal(@"x.wt\feat: 1 commit not on main will be lost. Its uncommitted changes could not be read.", WouldLose.Text(candidate));
     }
 
+    /// <summary>A git lock is named before the signals that could not be read.</summary>
+    [Fact]
+    public void LockedWorktreeWithAnUnreadableSignalKeepsItsText()
+    {
+        RegisteredCandidate locked = WithSignals(Clean(MergeState.Ancestor), signals => signals with { Dirty = null });
+        locked = locked with { Record = locked.Record with { Locked = "in use" } };
+
+        Assert.Equal(@"x.wt\feat: It is git-locked: in use. Its uncommitted changes could not be read.", WouldLose.Text(locked));
+    }
+
+    /// <summary>A branch with no commits of its own is not a loss: only the unreadable signal is named.</summary>
+    [Fact]
+    public void NoCommitsWithAnUnreadableSignalNamesOnlyTheSignal()
+    {
+        RegisteredCandidate candidate = WithSignals(Clean(MergeState.NoCommits), signals => signals with { Dirty = null });
+
+        Assert.Equal(@"x.wt\feat: Its uncommitted changes could not be read.", WouldLose.Text(candidate));
+    }
+
     /// <summary>A branch merged into the default branch, or with no commits of its own, is deleted.</summary>
     [Fact]
     public void MergedAndEmptyBranchesAreDeleted()

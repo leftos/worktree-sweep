@@ -138,6 +138,53 @@ public sealed class LossTextTests
         Assert.Null(LossText.For(Orphan(OrphanKind.Folder, liveGitdir: null)));
     }
 
+    /// <summary>Signals that could not be read make a loss line of their own, even when no known loss is named.</summary>
+    [Fact]
+    public void UnreadableSignalsAloneMakeALossLine()
+    {
+        RegisteredCandidate candidate = Worktree(Signals(MergeState.Ancestor) with { Dirty = null, MergeState = null });
+
+        Loss? loss = LossText.For(candidate);
+
+        Assert.NotNull(loss);
+        Assert.Equal("Its uncommitted changes, merge state could not be read.", loss.Text);
+        Assert.Equal("Remove anyway?", loss.Question);
+    }
+
+    /// <summary>The unreadable sentence follows the known loss.</summary>
+    [Fact]
+    public void UnreadableSignalFollowsTheKnownLoss()
+    {
+        RegisteredCandidate candidate = Worktree(
+            Signals(MergeState.Ancestor) with
+            {
+                Dirty = new Dirty { Modified = 2 },
+                Upstream = null,
+            }
+        );
+
+        Assert.Equal("2 modified files will be lost. Its upstream could not be read.", LossText.For(candidate)!.Text);
+    }
+
+    /// <summary>A prunable registration has no signals by design, so none is unreadable.</summary>
+    [Fact]
+    public void PrunableRecordHasNoUnreadableSignals()
+    {
+        RegisteredCandidate prunable = Worktree(new WorktreeSignals());
+        prunable = prunable with { Record = prunable.Record with { Prunable = "gitdir file points to non-existent location" } };
+
+        Assert.Empty(LossText.UnreadableSignals(prunable));
+    }
+
+    /// <summary>An error with every signal read does not make the loss unknown.</summary>
+    [Fact]
+    public void ErrorsAloneAreNotAnUnknownLoss()
+    {
+        WorktreeSignals signals = Signals(MergeState.Ancestor) with { Errors = ["git status failed"] };
+
+        Assert.Null(LossText.For(Worktree(signals)));
+    }
+
     /// <summary>
     /// A git dir written relative to its worktree (<c>worktree.useRelativePaths</c>) names its repo without <c>..</c> segments in the
     /// loss text.

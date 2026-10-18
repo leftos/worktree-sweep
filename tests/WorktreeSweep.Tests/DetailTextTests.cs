@@ -295,6 +295,7 @@ public sealed class DetailTextTests
 
         Assert.Equal(["What it is", "Removing it loses"], fields.Select(field => field.Label));
         Assert.Equal([false, true], fields.Select(field => field.IsLoss));
+        Assert.Equal("Its uncommitted changes, merge state, upstream could not be read.", Field(fields, "Removing it loses"));
     }
 
     /// <summary>The text of the field labelled <paramref name="label"/>, failing when there is not exactly one.</summary>

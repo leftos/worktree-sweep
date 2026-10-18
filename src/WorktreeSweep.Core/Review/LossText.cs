@@ -9,7 +9,8 @@ namespace WorktreeSweep.Review;
 /// <summary>
 /// The text saying what removing a pick would lose, and the question confirming it. A confirmation is asked for uncommitted files,
 /// commits not on the default branch, a branch with no commits of its own, a detached HEAD not on it, unpushed commits, a git lock,
-/// an orphan another repo still registers, and a link (whose target is kept).
+/// an orphan another repo still registers, and a link (whose target is kept). A worktree whose signals could not be read says which
+/// ones last, even when no other loss is named.
 /// </summary>
 public static class LossText
 {
@@ -44,6 +45,36 @@ public static class LossText
     }
 
     /// <summary>
+    /// The loss signals that could not be read, in sentence order: uncommitted changes, merge state, and upstream for a worktree on a
+    /// branch. A prunable registration has no signals by design, since its folder is gone.
+    /// </summary>
+    /// <param name="candidate">The worktree.</param>
+    /// <returns>The names; empty when every signal was read.</returns>
+    public static IReadOnlyList<string> UnreadableSignals(RegisteredCandidate candidate)
+    {
+        ArgumentNullException.ThrowIfNull(candidate);
+        if (candidate.Record.Prunable is not null)
+        {
+            return [];
+        }
+        WorktreeSignals signals = candidate.Signals;
+        var unreadable = new List<string>();
+        if (signals.Dirty is null)
+        {
+            unreadable.Add("uncommitted changes");
+        }
+        if (signals.MergeState is null)
+        {
+            unreadable.Add("merge state");
+        }
+        if (candidate.Record.Branch is not null && signals.Upstream is null)
+        {
+            unreadable.Add("upstream");
+        }
+        return unreadable;
+    }
+
+    /// <summary>
     /// The repo a worktree's git dir (<c>{repo}\.git\worktrees\{id}</c>) belongs to; the common dir itself for a bare repo
     /// (<c>{common}\worktrees\{id}</c>), and the git dir itself when it has neither shape. The git dir is first made absolute
     /// with its <c>.</c> and <c>..</c> segments removed (<see cref="Path.GetFullPath(string)"/>; nothing on disk is read), so a git
@@ -68,7 +99,8 @@ public static class LossText
         return NameIs(common, ".git") ? Path.GetDirectoryName(common) ?? common : common;
     }
 
-    /// <summary>The loss with its text uncapitalised, as it follows the path in <see cref="Sentence"/>.</summary>
+    /// <summary>The loss with its text as it follows the path in <see cref="Sentence"/>: a loss phrase starts lower-case, a sentence of
+    /// its own (the git lock, the unreadable signals) capitalised.</summary>
     /// <param name="candidate">The pick.</param>
     /// <returns>The loss; <see langword="null"/> when nothing is lost.</returns>
     private static Loss? Raw(Candidate candidate) =>
@@ -79,14 +111,23 @@ public static class LossText
             _ => throw new UnreachableException($"unknown candidate {candidate}"),
         };
 
-    /// <summary>What removing a registered worktree loses: its work as one sentence, then its git lock.</summary>
+    /// <summary>What removing a registered worktree loses: its work as one sentence, then its git lock, then its unreadable signals.</summary>
     /// <param name="registered">The worktree.</param>
     /// <returns>The text; <see langword="null"/> when nothing is lost.</returns>
     private static string? RegisteredLoss(RegisteredCandidate registered)
     {
-        string[] sentences = [.. new[] { LostWork(registered), LockSentence(registered.Record.Locked) }.OfType<string>()];
+        string[] sentences =
+        [
+            .. new[] { LostWork(registered), LockSentence(registered.Record.Locked), UnreadableSentence(registered) }.OfType<string>(),
+        ];
         return sentences.Length > 0 ? string.Join(' ', sentences) : null;
     }
+
+    /// <summary>The signals that could not be read, as one sentence.</summary>
+    /// <param name="registered">The worktree.</param>
+    /// <returns>The sentence; <see langword="null"/> when every signal was read.</returns>
+    public static string? UnreadableSentence(RegisteredCandidate registered) =>
+        UnreadableSignals(registered) is { Count: > 0 } names ? $"Its {string.Join(", ", names)} could not be read." : null;
 
     /// <summary>The uncommitted files and the commits removing a registered worktree loses, as one sentence.</summary>
     /// <param name="registered">The worktree.</param>
