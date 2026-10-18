@@ -4,18 +4,19 @@
 
 ## Window redesign
 
-- [/] WTS-56 Report scan progress and let a scan be cancelled
-- [ ] WTS-57 Choose and rescan a folder from the window, with scan progress
+- [!] WTS-56 Report scan progress and let a scan be cancelled
+- [!] WTS-57 Choose and rescan a folder from the window, with scan progress
 - [!] WTS-58 Sort, filter and tick shown rows on the Pick screen
 - [!] WTS-59 Show removal progress on the Removing screen
 - [ ] WTS-60 Document the window redesign and ship feat/window-redesign
-- [ ] WTS-61 Show discovery errors on the window's Empty screen
+- [!] WTS-61 Show discovery errors on the window's Empty screen
 - [ ] WTS-64 Merge feat/window-redesign (#124)
 
 ## C# rewrite
 
-- [ ] WTS-65 Re-check and close a locker's handles in one pass that keeps the process open
-- [ ] WTS-66 End the unlock session with something left when a folder's users cannot be listed
+- [ ] WTS-70 Never let an abandoned handle lookup keep a locked folder held by the tool itself
+- [ ] WTS-72 Bound the wait for an elevated session whose process cannot exit
+- [ ] WTS-73 Correct three stale statements about handle naming
 
 ## Backlog
 
