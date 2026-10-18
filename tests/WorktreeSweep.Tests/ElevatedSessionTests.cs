@@ -178,6 +178,38 @@ public sealed class ElevatedSessionTests : IDisposable
         Assert.Contains("Done; leaving the rest alone.\n", output.ToString(), StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// A session that finishes with lockers left, by skipping them all, by Done or at end of input, while a process uses a folder
+    /// unread or a folder cannot be read, ends with something left: what holds the folders is not known, so it is never nothing done.
+    /// </summary>
+    [Theory]
+    [InlineData("3\n", false)]
+    [InlineData("3\n", true)]
+    [InlineData("4\n", false)]
+    [InlineData("", true)]
+    public void LockersLeftWithSomethingUnknownExitSomeLeft(string answers, bool unreachable)
+    {
+        StringWriter output = Writer();
+        LockerFindings found = unreachable ? new([Pwsh(null)], [], [Locked]) : new([Pwsh(null)], [new UnreadableUser("code.exe", 300, Locked)], []);
+        ElevatedSession session = Session(
+            new StringReader(answers),
+            output,
+            new FakeScan(found),
+            new FakeHandleExe(),
+            new ScriptedProcessControl(Running(("pwsh.exe", 642)))
+        );
+
+        int exit = session.Run([Locked], null, null, null);
+
+        string text = output.ToString();
+        string unknownLine = unreachable
+            ? $"{Locked} cannot be read here, so it is not known what holds it.\n"
+            : $"code.exe (300) uses {Locked}, but its handles cannot be read.\n";
+        Assert.Equal(UnlockExit.SomeLeft, exit);
+        Assert.Contains(unknownLine, text, StringComparison.Ordinal);
+        Assert.Contains("1 process(es) still hold files under those folders.\n", text, StringComparison.Ordinal);
+    }
+
     /// <summary>A PID that is no longer the same process is not stopped, and is reported as exited.</summary>
     [Fact]
     public void ExitedProcessIsSkipped()
@@ -193,8 +225,8 @@ public sealed class ElevatedSessionTests : IDisposable
         Assert.Contains("pwsh.exe (pid 642) has exited; skipped.\n", output.ToString(), StringComparison.Ordinal);
     }
 
-    /// <summary>Close its handles warns first, re-checks each handle with the locker's PID and scan start time, then closes every
-    /// handle and reports how many, ending all clear when nothing is left.</summary>
+    /// <summary>Close its handles warns first, hands the locker with its PID and scan start time to one re-checking pass, which closes
+    /// every handle, and reports how many, ending all clear when nothing is left.</summary>
     [Fact]
     public void CloseHandlesAsksAndClosesEachHandle()
     {
@@ -211,7 +243,8 @@ public sealed class ElevatedSessionTests : IDisposable
         Assert.Equal(UnlockExit.AllClear, exit);
         Assert.Equal<nint[]>([0x1A0, 0x58], [.. handleExe.Closed.Select(entry => entry.Handle)]);
         Assert.Equal<int[]>([642, 642], [.. handleExe.Closed.Select(entry => entry.Pid)]);
-        Assert.Equal<(int, ulong?, nint)[]>([(642, 1000, 0x1A0), (642, 1000, 0x58)], [.. scan.Rechecked]);
+        CloseCall call = Assert.Single(scan.CloseCalls);
+        Assert.Equal((642, (ulong?)1000), (call.Pid, call.Started));
         Assert.Contains("Closing handles behind a program's back can make it crash or lose data.\n", text, StringComparison.Ordinal);
         Assert.Contains("Closed 2 of 2 handle(s) of pwsh.exe (pid 642).\n", text, StringComparison.Ordinal);
     }
@@ -419,7 +452,93 @@ public sealed class ElevatedSessionTests : IDisposable
 
         Assert.Equal(UnlockExit.AllClear, exit);
         Assert.Equal<nint[]>([0x58], [.. handleExe.Closed.Select(entry => entry.Handle)]);
+        Assert.Equal<(string, nint)[]>([("recheck", 0x1A0), ("recheck", 0x58), ("close", 0x58)], [.. Assert.Single(scan.CloseCalls).Steps]);
         Assert.Contains("Closed 1 of 2 handle(s) of pwsh.exe (pid 642).\n", output.ToString(), StringComparison.Ordinal);
+    }
+
+    /// <summary>A re-check that throws for one handle leaves that handle open and counts it as not closed; the other is closed.</summary>
+    [Fact]
+    public void HandleWhoseRecheckThrowsIsNotClosed()
+    {
+        StringWriter output = Writer();
+        var scan = new FakeScan(Found(TwoHandles(1000)), Found());
+        scan.RecheckThrows.Add(0x1A0);
+        var handleExe = new FakeHandleExe();
+        var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
+        processes.StartedTimes[642] = 1000;
+        ElevatedSession session = Session(new StringReader("2\ny\n"), output, scan, handleExe, processes);
+
+        int exit = session.Run([Locked], null, null, null);
+
+        Assert.Equal(UnlockExit.AllClear, exit);
+        Assert.Equal<nint[]>([0x58], [.. handleExe.Closed.Select(entry => entry.Handle)]);
+        Assert.Contains("Closed 1 of 2 handle(s) of pwsh.exe (pid 642).\n", output.ToString(), StringComparison.Ordinal);
+    }
+
+    /// <summary>A close that throws something other than an unlock failure counts as not closed, and the other handle is still
+    /// closed: one failed close never ends the session.</summary>
+    [Fact]
+    public void UnexpectedCloseThrowIsCountedAsNotClosedAndTheRestGoOn()
+    {
+        StringWriter output = Writer();
+        var handleExe = new FakeHandleExe();
+        handleExe.ThrowsUnexpectedly.Add(0x1A0);
+        var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
+        processes.StartedTimes[642] = 1000;
+        ElevatedSession session = Session(new StringReader("2\ny\n"), output, new FakeScan(Found(TwoHandles(1000)), Found()), handleExe, processes);
+
+        int exit = session.Run([Locked], null, null, null);
+
+        Assert.Equal(UnlockExit.AllClear, exit);
+        Assert.Equal<nint[]>([0x58], [.. handleExe.Closed.Select(entry => entry.Handle)]);
+        Assert.Contains("Closed 1 of 2 handle(s) of pwsh.exe (pid 642).\n", output.ToString(), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Each handle is re-checked and then closed before the next is re-checked, and handle.exe runs while the re-checking pass is
+    /// still open, so the process it holds open cannot give its PID away before the close returns.
+    /// </summary>
+    [Fact]
+    public void HandlesAreRecheckedAndClosedInTurnWhileThePassIsOpen()
+    {
+        StringWriter output = Writer();
+        var scan = new FakeScan(Found(TwoHandles(1000)), Found());
+        var handleExe = new FakeHandleExe { OnClose = scan.NoteHandleExeClose };
+        var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
+        processes.StartedTimes[642] = 1000;
+        ElevatedSession session = Session(new StringReader("2\ny\n"), output, scan, handleExe, processes);
+
+        int exit = session.Run([Locked], null, null, null);
+
+        Assert.Equal(UnlockExit.AllClear, exit);
+        CloseCall call = Assert.Single(scan.CloseCalls);
+        Assert.Equal<(string, nint)[]>(
+            [("recheck", 0x1A0), ("close", 0x1A0), ("handle.exe", 0x1A0), ("recheck", 0x58), ("close", 0x58), ("handle.exe", 0x58)],
+            [.. call.Steps]
+        );
+        Assert.True(call.ClosedWhileOpen);
+        Assert.Equal(0, scan.ClosedOutsideACall);
+    }
+
+    /// <summary>Every locker the user closes gets one re-checking pass, however many handles it has.</summary>
+    [Fact]
+    public void EachLockerGetsOneRecheckingPass()
+    {
+        StringWriter output = Writer();
+        Locker code = new("code.exe", 200, [.. Enumerable.Range(1, 5).Select(index => new HeldHandle(0x200 + index, $@"D:\a.wt\x\c{index}"))], 2000);
+        var scan = new FakeScan(Found(code, TwoHandles(1000)), Found());
+        var handleExe = new FakeHandleExe();
+        var processes = new ScriptedProcessControl(Running(("code.exe", 200), ("pwsh.exe", 642)));
+        processes.StartedTimes[200] = 2000;
+        processes.StartedTimes[642] = 1000;
+        ElevatedSession session = Session(new StringReader("2\ny\n2\ny\n"), output, scan, handleExe, processes);
+
+        int exit = session.Run([Locked], null, null, null);
+
+        Assert.Equal(UnlockExit.AllClear, exit);
+        Assert.Equal<int[]>([200, 642], [.. scan.CloseCalls.Select(call => call.Pid)]);
+        Assert.Equal<int[]>([200, 200, 200, 200, 200, 642, 642], [.. handleExe.Closed.Select(entry => entry.Pid)]);
+        Assert.Contains("Closed 5 of 5 handle(s) of code.exe (pid 200).\n", output.ToString(), StringComparison.Ordinal);
     }
 
     /// <summary>A process table that cannot be read for the same-process check counts as exited, so nothing is stopped.</summary>
@@ -470,7 +589,7 @@ public sealed class ElevatedSessionTests : IDisposable
 
         Assert.Equal(UnlockExit.NothingDone, exit);
         Assert.Empty(handleExe.Closed);
-        Assert.Empty(scan.Rechecked);
+        Assert.Empty(scan.CloseCalls);
         Assert.Contains("pwsh.exe (pid 642) is no longer the process the scan saw; skipped.\n", output.ToString(), StringComparison.Ordinal);
     }
 
@@ -732,22 +851,49 @@ public sealed class ElevatedSessionTests : IDisposable
     private static Locker SevenHandles() =>
         new("pwsh.exe", 642, [.. Enumerable.Range(1, 7).Select(index => new HeldHandle(0x100 + index, $@"D:\a.wt\x\f{index}"))], null);
 
+    /// <summary>One call to <see cref="ILockerScan.CloseStillHeld"/> on the fake scan.</summary>
+    /// <param name="pid">The locker's PID.</param>
+    /// <param name="started">The locker's start time as the scan read it.</param>
+    private sealed class CloseCall(int pid, ulong? started)
+    {
+        /// <summary>Gets the locker's PID.</summary>
+        public int Pid { get; } = pid;
+
+        /// <summary>Gets the locker's start time as the scan read it.</summary>
+        public ulong? Started { get; } = started;
+
+        /// <summary>Gets each step in order: <c>recheck</c> of a handle, <c>close</c> when it was handed to the close, and
+        /// <c>handle.exe</c> when handle.exe ran on it during this call.</summary>
+        public List<(string Step, nint Handle)> Steps { get; } = [];
+
+        /// <summary>Gets or sets a value indicating whether handle.exe ran while this call was still open.</summary>
+        public bool ClosedWhileOpen { get; set; }
+    }
+
     /// <summary>
-    /// A scan that returns its scripted findings in order, repeats the last, records the processes it was given and each re-check,
-    /// and confirms every re-check with a known start time except for the handles it was told are no longer held.
+    /// A scan that returns its scripted findings in order, repeats the last, records the processes it was given and each closing
+    /// pass, and in a pass re-checks each handle of a locker with a known start time, handing it to the close unless it was told the
+    /// handle is no longer held or that its re-check throws.
     /// </summary>
     private sealed class FakeScan(params LockerFindings[] rounds) : ILockerScan
     {
         private readonly Queue<LockerFindings> pending = new(rounds);
+        private CloseCall? open;
 
         /// <summary>Gets the processes each scan was given, in order.</summary>
         public List<IReadOnlyList<int>> Scanned { get; } = [];
 
-        /// <summary>Gets each re-check: the PID, the start time and the handle value it was given.</summary>
-        public List<(int Pid, ulong? Started, nint Handle)> Rechecked { get; } = [];
+        /// <summary>Gets each closing pass, in order.</summary>
+        public List<CloseCall> CloseCalls { get; } = [];
+
+        /// <summary>Gets how many times handle.exe ran while no closing pass was open.</summary>
+        public int ClosedOutsideACall { get; private set; }
 
         /// <summary>Gets the handle values the re-check no longer finds holding a locked file.</summary>
         public HashSet<nint> NoLongerHeld { get; } = [];
+
+        /// <summary>Gets the handle values whose re-check throws; the real scan traces the failure and leaves the handle open.</summary>
+        public HashSet<nint> RecheckThrows { get; } = [];
 
         public LockerFindings Find(IReadOnlyList<string> lockedPaths, IReadOnlyCollection<int> pids)
         {
@@ -755,10 +901,50 @@ public sealed class ElevatedSessionTests : IDisposable
             return pending.Count > 1 ? pending.Dequeue() : pending.Peek();
         }
 
-        public bool StillHolds(int pid, ulong? started, nint handle, IReadOnlyList<string> lockedPaths)
+        public int CloseStillHeld(Locker locker, IReadOnlyList<string> lockedPaths, Func<HeldHandle, bool> close)
         {
-            Rechecked.Add((pid, started, handle));
-            return started is not null && !NoLongerHeld.Contains(handle);
+            var call = new CloseCall(locker.Pid, locker.Started);
+            CloseCalls.Add(call);
+            if (locker.Started is null)
+            {
+                return 0;
+            }
+            open = call;
+            try
+            {
+                int closed = 0;
+                foreach (HeldHandle held in locker.Handles)
+                {
+                    call.Steps.Add(("recheck", held.Handle));
+                    if (NoLongerHeld.Contains(held.Handle) || RecheckThrows.Contains(held.Handle))
+                    {
+                        continue;
+                    }
+                    call.Steps.Add(("close", held.Handle));
+                    if (close(held))
+                    {
+                        closed++;
+                    }
+                }
+                return closed;
+            }
+            finally
+            {
+                open = null;
+            }
+        }
+
+        /// <summary>Notes that handle.exe ran on <paramref name="handle"/>, inside the open closing pass or outside any.</summary>
+        /// <param name="handle">The handle handle.exe was asked to close.</param>
+        public void NoteHandleExeClose(nint handle)
+        {
+            if (open is null)
+            {
+                ClosedOutsideACall++;
+                return;
+            }
+            open.Steps.Add(("handle.exe", handle));
+            open.ClosedWhileOpen = true;
         }
     }
 
@@ -768,7 +954,7 @@ public sealed class ElevatedSessionTests : IDisposable
         public LockerFindings Find(IReadOnlyList<string> lockedPaths, IReadOnlyCollection<int> pids) =>
             new([], [.. lockedPaths.Select(path => new UnreadableUser("pwsh.exe", 642, path))], []);
 
-        public bool StillHolds(int pid, ulong? started, nint handle, IReadOnlyList<string> lockedPaths) => false;
+        public int CloseStillHeld(Locker locker, IReadOnlyList<string> lockedPaths, Func<HeldHandle, bool> close) => 0;
     }
 
     /// <summary>A handle.exe that records what it closed.</summary>
@@ -785,8 +971,19 @@ public sealed class ElevatedSessionTests : IDisposable
         /// <summary>Gets or sets the failure every closing throws, or <see langword="null"/> for none.</summary>
         public UnlockException? CloseThrows { get; set; }
 
+        /// <summary>Gets or sets what is told of each closing as it starts, or <see langword="null"/> for no one.</summary>
+        public Action<nint>? OnClose { get; set; }
+
+        /// <summary>Gets the handles whose closing throws something other than an <see cref="UnlockException"/>.</summary>
+        public HashSet<nint> ThrowsUnexpectedly { get; } = [];
+
         public bool Close(nint handle, int pid, out string output)
         {
+            OnClose?.Invoke(handle);
+            if (ThrowsUnexpectedly.Contains(handle))
+            {
+                throw new InvalidOperationException($"handle.exe exited before its output could be read for handle {handle:X}");
+            }
             if (CloseThrows is UnlockException failure)
             {
                 throw failure;

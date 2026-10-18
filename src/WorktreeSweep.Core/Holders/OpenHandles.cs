@@ -50,17 +50,31 @@ internal static class OpenHandles
 
     /// <summary>
     /// Lists and names the open disk handles of <paramref name="pids"/>, and finds the processes using each root; this is the
-    /// production <see cref="HandleScanner"/>. A process that cannot be opened or listed is unlisted; a failure to find the
-    /// processes using a root is traced and adds no users of it.
+    /// production <see cref="HandleScanner"/>. A process that cannot be opened or listed is unlisted; a root whose users cannot be
+    /// listed is traced and named in <see cref="HandleFindings.RootsWithoutUsers"/>.
     /// </summary>
     /// <param name="pids">The inspected processes.</param>
     /// <param name="roots">Each folder once, fully resolved; the file system is asked once per folder.</param>
     /// <returns>What the handles showed.</returns>
     /// <exception cref="IOException">This program's own file or handles cannot be read to learn the File type index.</exception>
-    internal static HandleFindings Scan(IReadOnlyCollection<int> pids, IReadOnlyList<string> roots)
+    internal static HandleFindings Scan(IReadOnlyCollection<int> pids, IReadOnlyList<string> roots) => Scan(pids, roots, PidsUsing);
+
+    /// <summary>
+    /// Lists and names the open disk handles of <paramref name="pids"/>, and finds the processes using each root through
+    /// <paramref name="pidsUsing"/>. A process that cannot be opened or listed is unlisted; a root for which
+    /// <paramref name="pidsUsing"/> throws an <see cref="IOException"/> is traced and named in
+    /// <see cref="HandleFindings.RootsWithoutUsers"/>.
+    /// </summary>
+    /// <param name="pids">The inspected processes.</param>
+    /// <param name="roots">Each folder once, fully resolved; the file system is asked once per folder.</param>
+    /// <param name="pidsUsing">Lists the processes using a root; <see cref="PidsUsing"/> outside tests.</param>
+    /// <returns>What the handles showed.</returns>
+    /// <exception cref="IOException">This program's own file or handles cannot be read to learn the File type index.</exception>
+    internal static HandleFindings Scan(IReadOnlyCollection<int> pids, IReadOnlyList<string> roots, Func<string, IReadOnlyList<int>> pidsUsing)
     {
         ArgumentNullException.ThrowIfNull(pids);
         ArgumentNullException.ThrowIfNull(roots);
+        ArgumentNullException.ThrowIfNull(pidsUsing);
         uint fileType = FileTypeIndex();
         var sources = new List<SafeFileHandle>();
         try
@@ -88,7 +102,21 @@ internal static class OpenHandles
                 HandleNaming.DefaultTimeout,
                 HandleNaming.CancelLookup
             );
-            return Findings(named, unlisted, [.. roots.Distinct(StringComparer.Ordinal).SelectMany(UsersOf)]);
+            var users = new List<RootUser>();
+            var rootsWithoutUsers = new List<string>();
+            foreach (string root in roots.Distinct(StringComparer.Ordinal))
+            {
+                IReadOnlyList<RootUser>? rootUsers = UsersOf(root, pidsUsing);
+                if (rootUsers is null)
+                {
+                    rootsWithoutUsers.Add(root);
+                }
+                else
+                {
+                    users.AddRange(rootUsers);
+                }
+            }
+            return Findings(named, unlisted, users) with { RootsWithoutUsers = rootsWithoutUsers };
         }
         finally
         {
@@ -277,17 +305,18 @@ internal static class OpenHandles
         throw new IOException($"the list of processes using {path} kept growing");
     }
 
-    /// <summary>The processes using <paramref name="root"/>, or none when they cannot be listed, which is traced.</summary>
-    private static IReadOnlyList<RootUser> UsersOf(string root)
+    /// <summary>The processes using <paramref name="root"/>, or <see langword="null"/> when they cannot be listed, which is
+    /// traced.</summary>
+    private static List<RootUser>? UsersOf(string root, Func<string, IReadOnlyList<int>> pidsUsing)
     {
         try
         {
-            return [.. PidsUsing(root).Select(pid => new RootUser(pid, root))];
+            return [.. pidsUsing(root).Select(pid => new RootUser(pid, root))];
         }
         catch (IOException error)
         {
             Trace.TraceWarning($"cannot list the processes using {root}: {error.Message}");
-            return [];
+            return null;
         }
     }
 

@@ -82,13 +82,17 @@ public sealed class OpenHandlesTests : IDisposable
         Assert.Contains(child.Id, pids);
     }
 
-    /// <summary>A folder that cannot be opened gives no processes using it, rather than failing the scan.</summary>
+    /// <summary>A folder that cannot be opened gives no processes using it, rather than failing the scan, and is named among the
+    /// roots whose users could not be listed.</summary>
     [Fact]
     public void MissingFolderGivesNoUsingThroughTheScanner()
     {
-        HandleFindings findings = OpenHandles.Scan([], [fx.PathTo("missing")]);
+        string missing = fx.PathTo("missing");
+
+        HandleFindings findings = OpenHandles.Scan([], [missing]);
 
         Assert.Empty(findings.Using);
+        Assert.Equal([missing], findings.RootsWithoutUsers);
     }
 
     /// <summary>A process that cannot be opened, here the idle process, is unlisted and names nothing.</summary>
