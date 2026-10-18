@@ -38,7 +38,28 @@ public sealed class ScanProgressTests
         );
         Assert.Equal((1, 2, 1), (report.Repos.Count, registered, orphans));
         Assert.Equal(new ScanProgress.RepoLookedUp(report.Repos.Count, report.Repos.Count), order[lastLookup]);
-        Assert.Equal(new ScanProgress.CandidateRead(report.Candidates.Count, report.Candidates.Count), order[lastRead]);
+        ScanProgress.CandidateRead last = Assert.IsType<ScanProgress.CandidateRead>(order[lastRead]);
+        Assert.Equal((report.Candidates.Count, report.Candidates.Count), (last.Done, last.Total));
+    }
+
+    /// <summary>Every candidate's read is reported once, naming the candidate's path as its steps name it.</summary>
+    [Fact]
+    public void ScanReportsEachCandidatesReadWithItsPath()
+    {
+        using var fx = new Fixture();
+        TwoWorktreesAndAnOrphan(fx);
+        var events = new ConcurrentQueue<ScanProgress>();
+
+        ScanReport report = Scanner.Scan(fx.Root, events.Enqueue, TestContext.Current.CancellationToken);
+
+        List<ScanProgress.CandidateRead> reads = [.. events.OfType<ScanProgress.CandidateRead>()];
+        Assert.Equal(report.Candidates.Count, reads.Count);
+        foreach (Candidate candidate in report.Candidates)
+        {
+            Assert.Single(reads, read => Fixture.SamePath(read.Path, candidate.Path));
+        }
+        HashSet<string> stepPaths = [.. events.OfType<ScanProgress.CandidateStep>().Select(step => step.Path)];
+        Assert.All(reads, read => Assert.Contains(read.Path, stepPaths));
     }
 
     /// <summary>Each registered worktree's read reports every step it reads, and the orphan's its size.</summary>
