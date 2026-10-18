@@ -34,7 +34,8 @@ public abstract record ScanProgress
     public sealed record CandidateStep(string Path, ScanStep Step, long Files) : ScanProgress;
 
     /// <summary>One more candidate is read.</summary>
+    /// <param name="Path">The path of the candidate just read, as its <see cref="CandidateStep"/>s name it.</param>
     /// <param name="Done">The candidates read so far.</param>
     /// <param name="Total">The candidates to read.</param>
-    public sealed record CandidateRead(int Done, int Total) : ScanProgress;
+    public sealed record CandidateRead(string Path, int Done, int Total) : ScanProgress;
 }

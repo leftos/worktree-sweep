@@ -1,9 +1,11 @@
 using System.ComponentModel;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Interop;
+using Microsoft.Win32;
 using WorktreeSweep.ViewModels;
 
 namespace WorktreeSweep.Window;
@@ -17,19 +19,41 @@ public partial class MainWindow
     /// <summary>Initializes a new instance of the <see cref="MainWindow"/> class.</summary>
     /// <param name="main">The window's view model.</param>
     /// <param name="workers">The background jobs, which decide whether the window may close.</param>
-    /// <param name="root">The full path of the folder scanned, for the title and the Scanning screen.</param>
-    public MainWindow(MainViewModel main, WindowWorkers workers, string root)
+    public MainWindow(MainViewModel main, WindowWorkers workers)
     {
         ArgumentNullException.ThrowIfNull(main);
         ArgumentNullException.ThrowIfNull(workers);
-        ArgumentNullException.ThrowIfNull(root);
         this.workers = workers;
         InitializeComponent();
         DataContext = main;
-        Title = $"worktree-sweep — {root}";
-        ScanningText.Text = $"Scanning {root}…";
+        main.PickFolder = PickFolder;
         SourceInitialized += (_, _) => workers.OwnerWindow = new WindowInteropHelper(this).Handle;
         Closing += OnClosing;
+    }
+
+    /// <summary>Asks for a folder with the folder dialog, owned by this window, starting in <paramref name="folder"/> when it exists.</summary>
+    /// <param name="folder">The folder box's text.</param>
+    /// <returns>The folder picked; <see langword="null"/> when the dialog is cancelled.</returns>
+    private string? PickFolder(string folder)
+    {
+        var dialog = new OpenFolderDialog { Title = "Choose a folder to sweep" };
+        if (Directory.Exists(folder))
+        {
+            dialog.InitialDirectory = folder;
+        }
+        return dialog.ShowDialog(this) == true ? dialog.FolderName : null;
+    }
+
+    /// <summary>Scans the folder box's folder on Enter, instead of letting Enter press a screen's default button.</summary>
+    /// <param name="sender">A folder box.</param>
+    /// <param name="e">The key pressed.</param>
+    private void OnFolderKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter && DataContext is MainViewModel main)
+        {
+            e.Handled = true;
+            main.ScanCommand.Execute(null);
+        }
     }
 
     /// <summary>Keeps the window open when the workers refuse the close.</summary>
