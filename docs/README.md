@@ -46,3 +46,5 @@ Start here. Plans live in [plans/MAIN.md](./plans/MAIN.md).
 - **Start time** (process): the creation time Windows records for a process. The tool keeps the one it read for a caller, parent or locker, and acts on that PID later only while the start time still matches, since Windows reuses a PID once its process exits (**PID reuse**).
 - **Unlock flow**: the elevated step (`sudo worktree-sweep unlock`) that lists file-locking processes with the C# handle scan and stops them or closes their handles (through `handle.exe`). It runs at most once per run, for every file-locked pick together.
 - **Unlock step**: the terminal part of the unlock flow, asked as plain numbered line prompts while the window waits.
+- **Unreachable folder**: a locked folder the elevated scan cannot say what holds, because it does not open or its users cannot be listed. The session prints `{path} cannot be read here, so it is not known what holds it.` and ends at exit 3, never 0.
+- **Unreadable user**: a process the file system reports using a locked folder but for which the scan could name no handle there. The session prints it and ends at exit 3, never 0.
