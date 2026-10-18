@@ -8,6 +8,11 @@
 - Show each worktree's merge state (merged, no commits, cherry-picked, squashed, unmerged), uncommitted files, unpushed commits, last activity and size.
 - Install with `pwsh tools/install.ps1`, which needs the .NET 10 Desktop runtime and adds the tool to your user PATH.
 - Pick worktrees to remove in a window that opens without `--list` or `--json`; every question comes first, ending with one confirmation.
+- Open the window without a folder to type one, browse to one, or rescan one of your last five scanned folders.
+- Follow a scan step by step, see which worktrees it is reading, stop it at any time, and rescan the folder.
+- Sort, filter and search the candidate list, and tick or untick every shown row at once.
+- Problems the scan met listing a repo's worktrees show in the window, even when it found nothing to remove.
+- Removal shows its progress in items and bytes, and can stop after the current item.
 - A second confirmation guards any pick that would lose work or has no commits yet.
 - Removed folders go to the Recycle Bin; a folder too big for it asks for a permanent delete instead.
 - Junction and symbolic link orphans are removed as links, leaving their targets untouched.

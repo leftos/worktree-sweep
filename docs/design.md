@@ -44,9 +44,9 @@ Rulings:
 ### CLI
 
 ```
-worktree-sweep [ROOT]            # default: current dir; opens the window
-worktree-sweep [ROOT] --list     # table only, exit
-worktree-sweep [ROOT] --json     # machine-readable report, exit (agent-native)
+worktree-sweep [ROOT]            # opens the window; no ROOT opens its Choose screen
+worktree-sweep [ROOT] --list     # table only, exit; ROOT defaults to the current dir
+worktree-sweep [ROOT] --json     # machine-readable report, exit (agent-native); ROOT defaults to the current dir
 worktree-sweep remove <PATH> --json [--force] [--stop-build-servers]
 worktree-sweep unlock <PATH>...  # hidden: runs elevated via sudo
 ```
@@ -102,14 +102,26 @@ Per registered worktree, read in parallel.
 
 ### Window
 
-A `DataGrid` with a checkbox column above a detail pane holding the selected row's detail text (path, kind, state, activity and size, marks, what removing it loses, unreadable signals). The size and position are not remembered. Risk tints colour the MERGE, DIRTY and UPSTREAM cells.
+The window is one screen at a time: Choose, Scanning, Pick (the list), Review, Removing and Results, plus Empty and Scan failed. The size and position are not remembered. A root bar above every screen but Choose, Review and Removing holds the folder box, Browse…, Rescan (Stop scan while scanning) and the last scan's summary.
 
-- **Picker:** nothing is ticked by default, except released worktrees, which are listed first and pre-ticked. There is no filter or sort.
+- **Choose:** shown when no ROOT is given. The folder box starts on the current directory; Browse… opens the folder dialog, and Scan (or Enter) scans the folder. A folder that does not exist shows an error under the box. Below it, the recent folders: the last 5 folders scanned, most recent first, each with its age, candidate count and size; pressing one scans it.
+
+  They are kept in `%LOCALAPPDATA%\worktree-sweep\recent.json`, written after each completed scan; a file that cannot be read is traced as a warning and read as empty. A given ROOT skips Choose and scans at once.
+- **Scanning:** three steps with an overall percent bar and an elapsed time: find repos and worktree folders (folder N of M, then the repos, worktree folders and candidates found), look up each repo's default branch (N of M repos), and read each candidate's state (N of M, with a "Working on now" list naming each candidate in progress and its current sub-step: merge-tree, status, upstream, last activity, or the size walk with its running file count). The scan only reads.
+
+  Stop scan cancels it for real, killing any git it is running, and returns to Choose with the folder kept. Rescan (the root bar, from Pick, Empty, Scan failed or Results) scans the folder again; a new scan or a close cancels the old one and drops its late results.
+- **Pick:** a `DataGrid` with a checkbox column above a detail pane for the selected row. Nothing is ticked by default, except released worktrees, which are listed first and pre-ticked. Risk tints colour the MERGE, DIRTY and UPSTREAM cells.
+  - **Sort:** a column header cycles ascending, descending, table order. MERGE, DIRTY and UPSTREAM sort by risk and then text, ACTIVE and SIZE by their numbers, the rest by text ignoring case.
+  - **Filter:** a kind filter (All, Worktrees, Orphans, Links, each with its count), a Nothing lost toggle (rows whose removal loses nothing) and a search over path and branch, ignoring case; the filters combine. Only the shown rows are listed, and the selection is cleared when a filter hides the selected row.
+  - **Ticks:** Tick shown ticks the shown rows, Untick all clears every tick, and the header checkbox ticks or unticks the shown rows. A ticked row a filter hides stays ticked: a notice counts them and offers to show them, and Review gets every ticked row, hidden ones included, in table order.
+  - **Header and Review button:** `{N} candidates · {shown} shown · {K} ticked · {size} selected for removal`; the button reads `Review K picks…`.
+  - **Detail pane:** the selected row's path and kind, then labelled fields, each left out when it has no text: What it is, State (merge state, dirty counts, upstream), Activity and size, Marks (git lock, prunable, released), Removing it loses (always shown; red when something is lost, green when nothing is) and Unreadable signals.
+  - **Discovery errors:** a notice above the grid lists them, and the Empty screen shows the same notice under its message.
 - **Review:** every question is asked up front, per pick in list order: what it would lose (or that only a link goes), then a permanent delete when the pick cannot be recycled, then its branch. A branch answer applies only if the removal succeeds. A pick that is dirty, `Unmerged`, `NoCommits`, unpushed or git-locked gets the loss question that spells out what would be lost, and a git-locked pick names the lock reason.
 
   A final "Remove N items?" confirmation has Cancel as the default. An orphan is planned as a skip, and asked nothing, when a discovery error names its repo's worktree list, its own `gitdir` file or its repo's `.git\worktrees` folder, since git may still use that worktree.
-- **Removing:** a Cancel button stops after the current item, marks the rest `skipped (cancelled)` and skips the unlock step.
-- **Threads:** `[STAThread]` on `Program.Main`, and the default mode exits 0 once the window closes. The scan runs on a background thread, removal on its own STA thread, and the unlock offer on the removal thread, never the UI thread. Closing while scanning exits; while removing, it acts as Cancel and the window stays open until Results; while the unlock step runs, it is refused. The scan shows a progress indicator, with Empty and Scan failed states.
+- **Removing:** the heading reads `Removing {done} of {total}` over a determinate bar and a line of bytes done of bytes total (from the sizes the scan read). Each row shows its action (recycle, permanent delete, link, prune) and then its outcome as it lands. The "Stop after this item" button stops after the current item, marks the rest `skipped (cancelled)` and skips the unlock step.
+- **Threads:** `[STAThread]` on `Program.Main`, and the default mode exits 0 once the window closes. The scan runs on a background thread, removal on its own STA thread, and the unlock offer on the removal thread, never the UI thread. Closing while scanning exits; while removing, it acts as Cancel and the window stays open until Results; while the unlock step runs, it is refused. Scan progress reaches the UI thread coalesced to one post per 100 ms.
 - **Unlock step:** runs in the terminal the tool was launched from, with plain numbered line prompts (`[Y/n]`, `1) Stop process  2) Close its handles  3) Skip  4) Done [1]:`) read by a pure parser. While it runs the window shows a notice to finish the unlock step in the terminal and takes no input; then it shows the retry.
 - **Shell prompts:** a recycled pick's Shell prompts are owned by the window; the agent command passes no owner.
 

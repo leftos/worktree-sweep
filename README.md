@@ -27,7 +27,9 @@ worktree-sweep remove <PATH> --json [--force] [--stop-build-servers]
                                 # remove one worktree without prompts (for agents)
 ```
 
-`ROOT` defaults to the current folder. Run the tool from a terminal: with neither `--list` nor `--json` it opens the window and exits 0 when the window closes; it prints nothing afterwards, because the window's Results screen is the record. `--list` and `--json` print to standard output and never open a window. Giving both is a usage error (exit 2). A failed scan exits 1 with an `error: <message>` line on standard error.
+`ROOT` defaults to the current folder for `--list` and `--json`. With no `ROOT` the window opens on its Choose screen, where you type or browse to a folder and scan it; a given `ROOT` is scanned at once.
+
+Run the tool from a terminal: with neither `--list` nor `--json` it opens the window and exits 0 when the window closes; it prints nothing afterwards, because the window's Results screen is the record. `--list` and `--json` print to standard output and never open a window. Giving both is a usage error (exit 2). A failed scan exits 1 with an `error: <message>` line on standard error.
 
 `WORKTREE_SWEEP_LOG=debug` adds debug traces to standard error; warnings and errors always go there as `warning:` and `error:` lines.
 
@@ -54,9 +56,15 @@ Under the table, each problem the scan met listing a repo's worktrees is a `disc
 
 ### The window
 
-The window has a list of candidates with a checkbox column above a detail pane for the selected row. Nothing is ticked by default, except worktrees an agent released, which are listed first and ticked in advance; the usual confirmations still apply to them. The MERGE, DIRTY and UPSTREAM cells are tinted by risk.
+The window moves through a few screens. **Choose** (no `ROOT`) has a folder box, Browse… and the recent folders: the last 5 folders you scanned, most recent first, kept in `%LOCALAPPDATA%\worktree-sweep\recent.json`; pressing one scans it. **Scanning** shows the scan's three steps, a count of candidates read and a "Working on now" list; Stop scan cancels it and returns to Choose, and Rescan on the root bar scans the folder again.
 
-Review asks every question before anything is removed, per pick in list order: what it would lose, a permanent delete when it cannot be recycled, and its branch. A final "Remove N items?" confirmation sums up what will be removed; its default is Cancel. While removing, Cancel stops after the current item and marks the rest `skipped (cancelled)`.
+The list of candidates (the Pick screen) has a checkbox column above a detail pane for the selected row, whose labelled fields say what the row is, its state, activity and size, marks, what removing it loses and any signal that could not be read.
+
+Click a column header to sort (ascending, descending, back to table order). Filter by kind, by "Nothing lost" or by a search over path and branch; Tick shown and Untick all, and the header checkbox, tick the shown rows. A ticked row a filter hides stays ticked and goes to Review.
+
+Nothing is ticked by default, except worktrees an agent released, which are listed first and ticked in advance; the usual confirmations still apply to them. The MERGE, DIRTY and UPSTREAM cells are tinted by risk. Discovery errors show in a notice above the list, and on the Empty screen when nothing was found.
+
+Review asks every question before anything is removed, per pick in list order: what it would lose, a permanent delete when it cannot be recycled, and its branch. A final "Remove N items?" confirmation sums up what will be removed; its default is Cancel. While removing, a progress bar counts the items done (and the bytes, where sizes are known), and "Stop after this item" finishes the current item and marks the rest `skipped (cancelled)`.
 
 The unlock step runs in the terminal the tool was launched from, as plain numbered prompts, while the window shows a notice and takes no input.
 
