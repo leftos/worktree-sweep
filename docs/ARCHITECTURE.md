@@ -116,7 +116,7 @@ Rules the docs and code state: the scan writes nothing and every git call clears
 
 ## Test locations
 
-- `tests/WorktreeSweep.Tests/` (xUnit v3, run with `dotnet test WorktreeSweep.slnx -c Release --no-build`): `Fixture.cs` builds throwaway repos with real `git` under the repo's `.tmp\` (`Repo`, `CommitFile`, `AddWorktree`, `MakeJunction`, `Registered`, `Scan`). `GitRunnerTests` and `GitEnvTests` pin the git runner.
+- `tests/WorktreeSweep.Tests/` (xUnit v3, run with `dotnet test WorktreeSweep.slnx -c Release --no-build`): `Fixture.cs` builds throwaway repos with real `git` (`Repo`, `CommitFile`, `AddWorktree`, `MakeJunction`, `Registered`, `Scan`) in a fresh folder under `%TEMP%`, or under the repo's `.tmp\` with `Fixture.InRepoTmp()`; its `Git` runs a call again when a lock-file rename met a file another process held, as a scanner holds fresh files in `%TEMP%`, and `FixtureTests` pins that. `GitRunnerTests` and `GitEnvTests` pin the git runner.
 - `DiscoveryTests` pins discovery on `Discoverer.Discover`, including link and gitdir edge cases. `MergeStateTests`, `WorktreeStatusTests`, `SizeTests` and `ReflogTests` pin `SignalReader` through `Fixture.Registered`.
 - `ReportTableTests` (a byte-exact golden table), `ReportJsonTests` (a golden scan JSON document) and `ReleasedMarkerTests` pin `Report/`, building candidates by hand in `ReportSamples`. `ScanTests` pin `Scanner` through `Fixture.Scan()`, and `CliTests` run the built `worktree-sweep.exe`.
 - `HolderFinderTests`, `StopAllowlistTests` and `AncestorsTests` pin `Holders/` against children they start (`ReadyChild`); `OpenHandlesTests` pin the handle listing and checks on this process's own handles, and `HandleNamingTests` pin the worker pool, its claim and withdraw rules and its account with an injected check.
@@ -128,7 +128,7 @@ Rules the docs and code state: the scan writes nothing and every git call clears
 - `AgentRemoverTests`, `AgentResolveTests` and `AgentRulesTests` pin `Agent/` through `AgentSeams`; `RemoveCommandTests` run the built exe, and two of them are Explicit.
 - `ViewModels/` and `Window/` hold the view model and window-worker tests, which run without showing a window.
 - `tests/WorktreeSweep.Tests/ProcessEnvironment.cs` defines the non-parallel `process environment` collection (`[CollectionDefinition(Name, DisableParallelization = true)]`, joined with `[Collection(ProcessEnvironment.Name)]`) and `InheritedEnv`, which sets process environment variables and restores them on dispose. **A test that sets an environment variable joins this collection**, so no other test's git process inherits the variable.
-- `tests/WorktreeSweep.Tests/TraceCapture.cs` collects what is traced while it is alive, for tests that assert on a warning. `Trace.Listeners` is process-wide, so a test class that uses it joins the `process environment` collection too.
+- `tests/WorktreeSweep.Tests/TraceCapture.cs` collects what is traced while it is alive, for tests that assert on a warning. `Trace.Listeners` is process-wide, so a test class that uses it joins the `process environment` collection too; that keeps listener changes apart, but tests running in parallel can still trace into a live capture, so assertions on its text use `Contains`, never an exact match or `DoesNotContain`.
 - Never run the removing mode against a real folder from an agent session; use `--list` / `--json` or fixtures (`CLAUDE.md`).
 
 ## Deep docs
