@@ -1,5 +1,3 @@
-using System.Diagnostics;
-using System.Text;
 using WorktreeSweep.Unlock;
 
 namespace WorktreeSweep.Tests;
@@ -80,25 +78,5 @@ public sealed class UnlockResultFileTests
         UnlockResultFile.WriteTraced(path, 4);
 
         Assert.Contains($"cannot write the unlock result to {path}: ", capture.Text, StringComparison.Ordinal);
-    }
-
-    /// <summary>Collects what is traced while it is alive.</summary>
-    private sealed class TraceCapture : TraceListener
-    {
-        private readonly StringBuilder text = new();
-
-        public TraceCapture() => Trace.Listeners.Add(this);
-
-        public string Text => text.ToString();
-
-        public override void Write(string? message) => text.Append(message);
-
-        public override void WriteLine(string? message) => text.AppendLine(message);
-
-        protected override void Dispose(bool disposing)
-        {
-            Trace.Listeners.Remove(this);
-            base.Dispose(disposing);
-        }
     }
 }

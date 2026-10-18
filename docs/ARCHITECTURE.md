@@ -126,6 +126,7 @@ Rules the docs and code state: the scan writes nothing and every git call clears
 - `AgentRemoverTests`, `AgentResolveTests` and `AgentRulesTests` pin `Agent/` through `AgentSeams`; `RemoveCommandTests` run the built exe, and two of them are Explicit.
 - `ViewModels/` and `Window/` hold the view model and window-worker tests, which run without showing a window.
 - `tests/WorktreeSweep.Tests/ProcessEnvironment.cs` defines the non-parallel `process environment` collection (`[CollectionDefinition(Name, DisableParallelization = true)]`, joined with `[Collection(ProcessEnvironment.Name)]`) and `InheritedEnv`, which sets process environment variables and restores them on dispose. **A test that sets an environment variable joins this collection**, so no other test's git process inherits the variable.
+- `tests/WorktreeSweep.Tests/TraceCapture.cs` collects what is traced while it is alive, for tests that assert on a warning. `Trace.Listeners` is process-wide, so a test class that uses it joins the `process environment` collection too.
 - Never run the removing mode against a real folder from an agent session; use `--list` / `--json` or fixtures (`CLAUDE.md`).
 
 ## Deep docs

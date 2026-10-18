@@ -701,19 +701,8 @@ public sealed class PathResolverTraceTests
 
     private static (string Resolved, string Trace) ResolveTraced(string path)
     {
-        using var text = new StringWriter();
-        using var listener = new TextWriterTraceListener(text);
-        _ = Trace.Listeners.Add(listener);
-        string resolved;
-        try
-        {
-            resolved = PathResolver.Resolve(path);
-        }
-        finally
-        {
-            Trace.Listeners.Remove(listener);
-        }
-        listener.Flush();
-        return (resolved, text.ToString());
+        using var capture = new TraceCapture();
+        string resolved = PathResolver.Resolve(path);
+        return (resolved, capture.Text);
     }
 }
