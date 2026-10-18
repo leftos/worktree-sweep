@@ -10,7 +10,9 @@ public interface ISudoRunner
 
     /// <summary>Runs <c>sudo</c> with the console shared, so the elevated side's prompts reach the user, and waits for it.</summary>
     /// <param name="arguments">The arguments to give <c>sudo</c>, the program to elevate first.</param>
-    /// <returns>The exit code of <c>sudo</c>, which is the elevated program's.</returns>
+    /// <param name="resultFile">Where the elevated side writes its exit code; the wait is bounded once it holds one.</param>
+    /// <returns>The exit code of <c>sudo</c>, which is the elevated program's, or the code it reported when it did not exit in
+    /// time, and whether it is still running.</returns>
     /// <exception cref="UnlockException"><c>sudo</c> cannot be started.</exception>
-    int Run(IReadOnlyList<string> arguments);
+    AttachedExit Run(IReadOnlyList<string> arguments, string resultFile);
 }

@@ -4,9 +4,13 @@ using System.Text;
 
 namespace WorktreeSweep.Unlock;
 
-/// <summary>Runs a child process to completion, reading both of its streams and its exit code.</summary>
+/// <summary>Runs a child process to completion with both of its streams read, or attached to this console until it exits or
+/// reports its result.</summary>
 internal static class ChildProcess
 {
+    /// <summary>How often the wait looks for the program's result file.</summary>
+    private static readonly TimeSpan ResultPoll = TimeSpan.FromMilliseconds(250);
+
     /// <summary>Runs <paramref name="program"/> with <paramref name="arguments"/> and waits for it.</summary>
     /// <param name="program">The full path of the program.</param>
     /// <param name="arguments">The arguments, passed one by one so nothing is re-parsed.</param>
@@ -55,25 +59,59 @@ internal static class ChildProcess
 
     /// <summary>
     /// Runs <paramref name="program"/> in this console, its streams shared with this process so it can prompt the user, and waits
-    /// for it as long as it takes.
+    /// for it. Once the process writes its result to <paramref name="resultFile"/>, it is given <paramref name="afterResult"/>
+    /// more to exit; past that its result is used and the process is left running, never stopped. The result file is deleted
+    /// before this returns.
     /// </summary>
     /// <param name="program">The full path of the program.</param>
     /// <param name="arguments">The arguments, passed one by one so nothing is re-parsed.</param>
-    /// <returns>Its exit code.</returns>
+    /// <param name="resultFile">Where the program writes its result, one integer as text.</param>
+    /// <param name="afterResult">How long the process may still run once its result can be read.</param>
+    /// <returns>The exit code, or the reported result when the process did not exit in time, and whether it is still running.</returns>
     /// <exception cref="ProgramNotFoundException">The program does not exist.</exception>
     /// <exception cref="UnlockException">It cannot be started for any other reason.</exception>
-    internal static int RunAttached(string program, IReadOnlyList<string> arguments)
+    internal static AttachedExit RunAttached(string program, IReadOnlyList<string> arguments, string resultFile, TimeSpan afterResult)
     {
         ArgumentNullException.ThrowIfNull(program);
         ArgumentNullException.ThrowIfNull(arguments);
+        ArgumentNullException.ThrowIfNull(resultFile);
+        ArgumentOutOfRangeException.ThrowIfLessThan(afterResult, TimeSpan.Zero);
         var startInfo = new ProcessStartInfo(program) { UseShellExecute = false };
         foreach (string argument in arguments)
         {
             startInfo.ArgumentList.Add(argument);
         }
         using Process process = Start(program, startInfo);
-        process.WaitForExit();
-        return process.ExitCode;
+        try
+        {
+            return WaitAttached(process, resultFile, afterResult);
+        }
+        finally
+        {
+            UnlockResultFile.Delete(resultFile);
+        }
+    }
+
+    /// <summary>Waits for the process to exit, but for no more than <paramref name="afterResult"/> once its result is readable.</summary>
+    /// <param name="process">The running process.</param>
+    /// <param name="resultFile">Where the process writes its result.</param>
+    /// <param name="afterResult">How long it may still run once its result can be read.</param>
+    /// <returns>The exit code and whether the process was left running.</returns>
+    private static AttachedExit WaitAttached(Process process, string resultFile, TimeSpan afterResult)
+    {
+        while (!process.WaitForExit(ResultPoll))
+        {
+            if (UnlockResultFile.TryRead(resultFile) is not int code)
+            {
+                continue;
+            }
+            if (process.WaitForExit(afterResult))
+            {
+                return new AttachedExit(process.ExitCode, StillRunning: false);
+            }
+            return new AttachedExit(code, StillRunning: true);
+        }
+        return new AttachedExit(process.ExitCode, StillRunning: false);
     }
 
     /// <summary>
@@ -152,6 +190,11 @@ internal static class ChildProcess
 /// <param name="Output">Standard output, decoded.</param>
 /// <param name="Error">Standard error, decoded.</param>
 internal sealed record ChildResult(int ExitCode, string Output, string Error);
+
+/// <summary>What waiting for a program attached to this console produced.</summary>
+/// <param name="Code">Its exit code, or the result it reported when it could not exit in time.</param>
+/// <param name="StillRunning">Whether it was left running because it did not exit after reporting its result.</param>
+public readonly record struct AttachedExit(int Code, bool StillRunning);
 
 /// <summary>A program cannot be run because it does not exist.</summary>
 internal sealed class ProgramNotFoundException : UnlockException

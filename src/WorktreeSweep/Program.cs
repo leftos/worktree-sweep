@@ -96,8 +96,8 @@ internal static class Program
     }
 
     /// <summary>
-    /// The hidden <c>unlock PATHS... [--caller-pid PID] [--caller-started TIME] [--sweep-pid PID]</c> subcommand that <c>sudo</c>
-    /// runs elevated: finds what holds files under the paths and offers to stop it or close its handles.
+    /// The hidden <c>unlock PATHS... [--caller-pid PID] [--caller-started TIME] [--sweep-pid PID] [--result PATH]</c> subcommand
+    /// that <c>sudo</c> runs elevated: finds what holds files under the paths and offers to stop it or close its handles.
     /// </summary>
     private static Command UnlockCommand()
     {
@@ -109,34 +109,48 @@ internal static class Program
             Description = "That process's creation time, proving its PID still names it.",
         };
         Option<int?> sweepPid = new("--sweep-pid") { Hidden = true, Description = "The unelevated worktree-sweep, never offered." };
+        Option<string?> result = new("--result") { Hidden = true, Description = "Where to write the exit code once the session ends." };
         Command unlock = new("unlock", "Find and clear what holds files under PATHS (run elevated by the sweep).")
         {
             paths,
             callerPid,
             callerStarted,
             sweepPid,
+            result,
         };
         unlock.Hidden = true;
         unlock.SetAction(parsed =>
-            RunUnlock(parsed.GetRequiredValue(paths), parsed.GetValue(callerPid), parsed.GetValue(callerStarted), parsed.GetValue(sweepPid))
+            RunUnlock(
+                parsed.GetRequiredValue(paths),
+                parsed.GetValue(callerPid),
+                parsed.GetValue(callerStarted),
+                parsed.GetValue(sweepPid),
+                parsed.GetValue(result)
+            )
         );
         return unlock;
     }
 
-    private static int RunUnlock(string[] paths, int? callerPid, ulong? callerStarted, int? sweepPid)
+    private static int RunUnlock(string[] paths, int? callerPid, ulong? callerStarted, int? sweepPid, string? resultFile)
     {
+        int code;
         try
         {
             var session = new ElevatedSession(Console.In, Console.Out, LockerScan.Elevated(), new HandleExe(), new ProcessControl());
-            return session.Run(paths, callerPid, callerStarted, sweepPid);
+            code = session.Run(paths, callerPid, callerStarted, sweepPid);
         }
 #pragma warning disable CA1031 // Every failure of the elevated session ends it with exit 1 and its message.
         catch (Exception error)
 #pragma warning restore CA1031
         {
             Console.Error.WriteLine($"error: {error.Message}");
-            return Failure;
+            code = Failure;
         }
+        if (resultFile is not null)
+        {
+            UnlockResultFile.WriteTraced(resultFile, code);
+        }
+        return code;
     }
 
     /// <summary>
