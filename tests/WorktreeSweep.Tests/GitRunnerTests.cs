@@ -132,7 +132,7 @@ public sealed class GitRunnerTests
     /// output pipes. The alias first detaches a sleep that outlives the kill and holds the pipes, then opens a file and loops; the
     /// test waits for the file to be released, which is the kill, cancels, and waits for the call to end under a hang guard the
     /// detached sleep outlives. When the timeout fires before the alias has detached its sleep, the case cannot be exercised and is
-    /// skipped.
+    /// skipped; any other end before the alias starts fails the test.
     /// </summary>
     /// <returns>A task that completes when the test ends.</returns>
     [Fact]
@@ -159,7 +159,13 @@ public sealed class GitRunnerTests
         Fixture.WaitUntil(() => File.Exists(held) || run.IsCompleted, "the alias to start sleeping");
         if (run.IsCompleted)
         {
-            Assert.Skip("the timeout killed git before the alias had detached its sleep, so no cancel can arrive after the timeout");
+            if (run.Exception?.InnerException is GitTimeoutException)
+            {
+                Assert.Skip("the timeout killed git before the alias had detached its sleep, so no cancel can arrive after the timeout");
+            }
+            GitStatus? status = run.IsCompletedSuccessfully ? await run : null;
+            string outcome = status is not null ? $"exit code {status.Code}: {status.Stderr}" : $"{run.Exception}";
+            Assert.Fail($"the call ended before the alias started sleeping, with status {run.Status}: {outcome}");
         }
         Fixture.WaitUntil(() => Fixture.IsReleased(held) || run.IsCompleted, "the timeout to kill the alias");
         Assert.False(run.IsCompleted, "the call ended before it was cancelled");
