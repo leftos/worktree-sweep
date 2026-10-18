@@ -19,6 +19,9 @@ internal sealed record HandleFindings(IReadOnlyList<NamedHandle> Names, IReadOnl
     /// <summary>Gets the findings when handles are not looked at: nothing.</summary>
     public static HandleFindings None { get; } = new([], [], []);
 
+    /// <summary>Gets the roots whose users the file system could not list, so what uses them is not known; empty unless set.</summary>
+    public IReadOnlyList<string> RootsWithoutUsers { get; init; } = [];
+
     /// <summary>Gets every process the file system reports as using any root, each once.</summary>
     public IReadOnlyList<int> Using => [.. Users.Select(user => user.Pid).Distinct()];
 }

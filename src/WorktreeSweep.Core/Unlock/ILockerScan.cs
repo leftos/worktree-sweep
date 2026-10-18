@@ -1,37 +1,43 @@
 namespace WorktreeSweep.Unlock;
 
-/// <summary>Finds the processes holding files under the locked folders, and re-checks one handle before it is closed.</summary>
+/// <summary>Finds the processes holding files under the locked folders, and closes a locker's handles that a fresh look still finds
+/// holding them.</summary>
 public interface ILockerScan
 {
     /// <summary>
     /// Lists and names the file handles of <paramref name="pids"/> and keeps those under a locked folder, and asks the file system
     /// which processes use each folder. A locked folder that is gone from a drive that exists is clear: it is skipped, with a trace
-    /// line. A folder that cannot be opened for any other reason, a drive this process cannot see included, is unreachable.
+    /// line. A folder that cannot be opened for any other reason, a drive this process cannot see included, is unreachable, and so
+    /// is one whose users the file system cannot list.
     /// </summary>
     /// <param name="lockedPaths">The locked folders, as the user picked them.</param>
     /// <param name="pids">The processes to open; no other process is opened.</param>
     /// <returns>The lockers, the processes the file system reports using a folder whose handles there could not be read, and the
-    /// folders that could not be opened.</returns>
+    /// folders that could not be opened or whose users could not be listed.</returns>
     LockerFindings Find(IReadOnlyList<string> lockedPaths, IReadOnlyCollection<int> pids);
 
     /// <summary>
-    /// Whether the process still holds this handle on a file under a locked folder: the PID is opened afresh, its start time must
-    /// equal <paramref name="started"/>, and the handle is duplicated and named again. Nothing the earlier scan saw is trusted.
+    /// Closes the locker's handles that still name a file under a locked folder. The PID is opened once and its start time must
+    /// equal <see cref="Locker.Started"/>, and the folders are resolved once; then each handle in turn is duplicated and named
+    /// again, the duplicate is disposed, and <paramref name="close"/> is called only while the handle still names a file under a
+    /// locked folder. The process stays open until the last <paramref name="close"/> has returned, so its PID cannot pass to another
+    /// process meanwhile. Nothing the earlier scan saw is trusted: a re-check that fails or throws leaves that handle open.
     /// </summary>
-    /// <param name="pid">The process.</param>
-    /// <param name="started">Its creation time as the scan read it, as a <c>FILETIME</c> count; <see langword="null"/> is never
-    /// confirmed.</param>
-    /// <param name="handle">The handle value the scan saw in that process.</param>
+    /// <param name="locker">The process with the handles and the start time the scan saw; a <see langword="null"/> start time is
+    /// never confirmed.</param>
     /// <param name="lockedPaths">The locked folders, as the user picked them.</param>
-    /// <returns><see langword="true"/> only when the same process still holds the handle and it names a file under a locked folder.</returns>
-    bool StillHolds(int pid, ulong? started, nint handle, IReadOnlyList<string> lockedPaths);
+    /// <param name="close">Closes one handle and returns whether it closed.</param>
+    /// <returns>How many calls to <paramref name="close"/> returned <see langword="true"/>; 0 when the process cannot be opened or
+    /// is not the one the scan saw.</returns>
+    int CloseStillHeld(Locker locker, IReadOnlyList<string> lockedPaths, Func<HeldHandle, bool> close);
 }
 
 /// <summary>What a <see cref="ILockerScan"/> found.</summary>
 /// <param name="Lockers">The processes holding files under the locked folders, sorted by PID.</param>
 /// <param name="Unreadable">The processes the file system reports using a locked folder for which the scan named no handle there:
 /// the process could not be opened, or its handles had no name.</param>
-/// <param name="Unreachable">The locked folders, as the user picked them, that could not be opened, so what holds them is not known.</param>
+/// <param name="Unreachable">The locked folders, as the user picked them, that could not be opened or whose users could not be
+/// listed, so what holds them is not known.</param>
 public sealed record LockerFindings(IReadOnlyList<Locker> Lockers, IReadOnlyList<UnreadableUser> Unreadable, IReadOnlyList<string> Unreachable);
 
 /// <summary>A process the file system reports using a locked folder, whose handles there could not be read.</summary>

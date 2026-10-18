@@ -73,7 +73,7 @@ public sealed class ElevatedSession(TextReader input, TextWriter output, ILocker
             if (finished)
             {
                 Say($"{lockers.Count} process(es) still hold files under those folders.");
-                return UnlockExit.For(false, acted);
+                return unknown ? UnlockExit.SomeLeft : UnlockExit.For(false, acted);
             }
             Round round = OfferRound(lockers, callerPid, callerStarted, folders);
             acted |= round.Acted;
@@ -274,44 +274,34 @@ public sealed class ElevatedSession(TextReader input, TextWriter output, ILocker
         {
             return Skipped(label, state);
         }
-        int closed = 0;
-        foreach (HeldHandle held in locker.Handles)
-        {
-            closed += CloseOne(held, locker, label, paths);
-        }
+        // The scan re-checks each handle with the process held open, and calls CloseOne only for one that still names a locked
+        // file: a handle value can be reused between the scan and the answer.
+        int closed = scan.CloseStillHeld(locker, paths, held => CloseOne(held, locker, label));
         return new Outcome($"Closed {closed} of {locker.Handles.Count} handle(s) of {label}.", closed > 0);
     }
 
-    /// <summary>
-    /// Closes one handle once the scan confirms that the same process still holds it on a file under the locked folders: a handle
-    /// value can be reused between the scan and the answer, so one that now names something else is never closed. A failure is
-    /// traced as a warning.
-    /// </summary>
+    /// <summary>Closes one handle the scan has just confirmed through <c>handle.exe</c>. A failure is traced as a warning.</summary>
     /// <param name="held">The handle to close.</param>
-    /// <param name="locker">The process holding it, with the start time the scan read.</param>
+    /// <param name="locker">The process holding it.</param>
     /// <param name="label">The process, as <c>{name} (pid {pid})</c>.</param>
-    /// <param name="paths">The folders whose open handles are cleared.</param>
-    /// <returns>1 when the handle was closed, otherwise 0.</returns>
-    private int CloseOne(HeldHandle held, Locker locker, string label, IReadOnlyList<string> paths)
+    /// <returns><see langword="true"/> when the handle was closed.</returns>
+    private bool CloseOne(HeldHandle held, Locker locker, string label)
     {
-        if (!scan.StillHolds(locker.Pid, locker.Started, held.Handle, paths))
-        {
-            Trace.TraceWarning($"handle {held.Handle:X} of {label} no longer names a locked file; not closed");
-            return 0;
-        }
         try
         {
             if (handleExe.Close(held.Handle, locker.Pid, out string failure))
             {
-                return 1;
+                return true;
             }
             Trace.TraceWarning($"handle.exe could not close handle {held.Handle:X} ({held.Name}) of {label}: {failure.Trim()}");
         }
-        catch (UnlockException error)
+#pragma warning disable CA1031 // A close that fails in any way counts as not closed, and the locker's other handles are still closed.
+        catch (Exception error)
+#pragma warning restore CA1031
         {
             Trace.TraceWarning($"cannot close handle {held.Handle:X} of {label}: {error.Message}");
         }
-        return 0;
+        return false;
     }
 
     /// <summary>
