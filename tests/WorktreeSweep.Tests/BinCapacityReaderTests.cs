@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Text;
 using WorktreeSweep.Recycle;
 
 namespace WorktreeSweep.Tests;
@@ -103,25 +102,5 @@ public sealed class BinCapacityReaderTests
     {
         Dictionary<string, object> byName = values.ToDictionary(value => value.Name, value => value.Value);
         return name => byName.GetValueOrDefault(name);
-    }
-
-    /// <summary>Collects what is traced while it is alive.</summary>
-    private sealed class TraceCapture : TraceListener
-    {
-        private readonly StringBuilder text = new();
-
-        public TraceCapture() => Trace.Listeners.Add(this);
-
-        public string Text => text.ToString();
-
-        public override void Write(string? message) => text.Append(message);
-
-        public override void WriteLine(string? message) => text.AppendLine(message);
-
-        protected override void Dispose(bool disposing)
-        {
-            Trace.Listeners.Remove(this);
-            base.Dispose(disposing);
-        }
     }
 }
