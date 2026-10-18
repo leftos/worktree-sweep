@@ -48,7 +48,7 @@ Interview rulings:
      - `Folder` (bound to the root bar);
      - `ScanCommand` and `RescanCommand`, refused on Review and Removing;
      - `StopScanCommand`;
-     - `ScanningViewModel` (steps, counts, percent, a working-now list keyed by path and dropped on `CandidateRead`; no stalled-volume notice or discovery-error line, by owner ruling);
+     - `ScanningViewModel` (steps, counts, percent, a working-now list keyed by path and dropped on `CandidateRead`; no discovery-error line, by owner ruling; the stalled-volume notice is WTS-74's);
      - an explicit `BeginScan(root)` that sets `Screen = Scanning`.
    - `WindowWorkers`:
      - owns one scan at a time and its `CancellationTokenSource`; a new scan or a close cancels the old one;
