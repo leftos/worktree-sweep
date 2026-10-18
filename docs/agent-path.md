@@ -80,7 +80,7 @@ Answered:
 Answered in the decision round:
 
 7. **Exit codes:** 0 removed, 1 error, 2 usage, 5 released (locked, too big, or an unseen holder), 6 refused (`would_lose`, `caller_holds`, not a removable worktree). The JSON `status` carries the detail.
-8. **`would_lose`:** dirty, unmerged, unpushed, a detached HEAD not contained in the default branch, a git-locked worktree, or a signal that could not be read. `NoCommits` is not a loss. `--force` overrides it and runs `git worktree unlock` first. The text is the picker's loss sentence.
+8. **`would_lose`:** dirty, unmerged, unpushed, a detached HEAD not contained in the default branch, a git-locked worktree, or a signal that could not be read. `NoCommits` is not a loss. `--force` overrides it and runs `git worktree unlock` first. The text is the picker's loss sentence when work is lost, else the worktree's path and the sentence naming the signals that could not be read.
 9. **Branch:** deleted with `git branch -d` only when the merge state is `Ancestor` or `NoCommits`. A squash-merged branch (`PatchesApplied`, `ContentContained`) is kept, and the JSON notes it, even with `--force`.
 10. **Marker:** `<repo>/.git/worktrees/<id>/worktree-sweep-released.json` holds `{released_at, reason, holders}`. `git worktree prune` removes it with the admin dir. The scan only reads it.
 

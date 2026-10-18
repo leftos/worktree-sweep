@@ -437,7 +437,6 @@ public sealed class ListViewModelTests
     {
         ListViewModel list = ListFor(
             Worktree("safe", MergeState.Ancestor, 10),
-            WithSignals(Worktree("errored", MergeState.Ancestor, 10), signals => signals with { Errors = ["git status failed"] }),
             WithSignals(Worktree("no-merge", MergeState.Ancestor, 10), signals => signals with { MergeState = null }),
             WithSignals(Worktree("no-dirty", MergeState.Ancestor, 10), signals => signals with { Dirty = null }),
             WithSignals(Worktree("no-upstream", MergeState.Ancestor, 10), signals => signals with { Upstream = null })
@@ -447,9 +446,21 @@ public sealed class ListViewModelTests
 
         Assert.Equal([@"repo.wt\safe"], ShownPaths(list));
         Assert.Equal(1, list.NothingLostCount);
-        list.NothingLost = false;
-        list.Selected = list.Rows.Single(row => row.Path == @"repo.wt\errored");
-        Assert.False(list.SelectedLosesNothing);
+    }
+
+    /// <summary>An error with every signal read is not an unknown loss: the row loses nothing and is counted.</summary>
+    [Fact]
+    public void NothingLostCountsAWorktreeWhoseOnlyProblemIsAnError()
+    {
+        ListViewModel list = ListFor(
+            WithSignals(Worktree("errored", MergeState.Ancestor, 10), signals => signals with { Errors = ["git status failed"] }),
+            Worktree("risky", MergeState.Unmerged(1), 10)
+        );
+
+        list.NothingLost = true;
+
+        Assert.Equal([@"repo.wt\errored"], ShownPaths(list));
+        Assert.Equal(1, list.NothingLostCount);
     }
 
     /// <summary>The search matches the path or the branch, ignoring case.</summary>

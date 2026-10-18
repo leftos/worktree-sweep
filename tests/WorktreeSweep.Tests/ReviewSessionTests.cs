@@ -69,6 +69,25 @@ public sealed class ReviewSessionTests
         Assert.IsType<BranchChoice.NotOffered>(decision.Branch);
     }
 
+    /// <summary>A worktree whose only problem is an unreadable signal gets the Loss step, and declining keeps it.</summary>
+    [Fact]
+    public void UnknownOnlyWorktreeGetsALossStepAndIsKeptOnNo()
+    {
+        RegisteredCandidate unreadable = Worktree(MergeState.Ancestor, bytes: 10);
+        unreadable = unreadable with { Signals = unreadable.Signals with { Dirty = null } };
+        ReviewSession review = Session([unreadable], _ => Roomy);
+
+        Assert.Equal(
+            new ReviewStep(0, StepKind.Loss, "Its uncommitted changes could not be read.", "Remove anyway?", DefaultAnswer: false),
+            review.Current
+        );
+        review.Answer(false);
+        Assert.Null(review.Current);
+        Decision decision = OnlyDecision(review);
+        Assert.Equal(new Plan.Skip("not confirmed"), decision.Plan);
+        Assert.IsType<BranchChoice.NotOffered>(decision.Branch);
+    }
+
     /// <summary>A pick bigger than the bin asks for a permanent delete, defaulting to no; a no skips it and its branch.</summary>
     [Fact]
     public void ReviewOverCapacityAsksPermanentDefaultNo()
