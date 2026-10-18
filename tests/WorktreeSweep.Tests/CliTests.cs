@@ -185,7 +185,8 @@ public sealed class CliTests
         Assert.Equal("", run.Stdout);
     }
 
-    /// <summary><c>--help</c> does not list the hidden <c>unlock</c> subcommand.</summary>
+    /// <summary><c>--help</c> does not list the hidden <c>unlock</c> subcommand. The help text carries the program's path,
+    /// which may itself contain "unlock", so only a line that starts with the word counts.</summary>
     [Fact]
     public async Task HelpDoesNotListUnlock()
     {
@@ -193,7 +194,7 @@ public sealed class CliTests
 
         Assert.Equal(0, run.Code);
         Assert.Contains("--list", run.Stdout, StringComparison.Ordinal);
-        Assert.DoesNotContain("unlock", run.Stdout, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(run.Stdout.Split('\n'), line => line.TrimStart().StartsWith("unlock", StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>The hidden <c>unlock</c> subcommand accepts <c>--caller-started</c>: with no paths, only the missing paths are
