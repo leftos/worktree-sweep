@@ -34,6 +34,7 @@ public sealed partial class MainViewModel : ObservableObject
         Root = "";
         Message = "";
         ScanSummary = "";
+        EmptyDiscoveryErrors = [];
         Recent = [];
     }
 
@@ -63,6 +64,14 @@ public sealed partial class MainViewModel : ObservableObject
     /// <summary>Gets the root bar's account of the last completed scan: <c>Scanned just now · 14 repos · 9.8 s</c>; empty otherwise.</summary>
     [ObservableProperty]
     public partial string ScanSummary { get; private set; }
+
+    /// <summary>Gets the Empty screen's discovery errors as <c>{path}: {message}</c>, each on one line; empty when the scan had none.</summary>
+    [ObservableProperty]
+    public partial IReadOnlyList<string> EmptyDiscoveryErrors { get; private set; }
+
+    /// <summary>Gets the Empty screen's notice title, <c>{n} discovery error(s).</c>; <see langword="null"/> when the scan had none.</summary>
+    [ObservableProperty]
+    public partial string? EmptyDiscoveryErrorsTitle { get; private set; }
 
     /// <summary>Gets the recent folders, most recent first.</summary>
     [ObservableProperty]
@@ -151,6 +160,8 @@ public sealed partial class MainViewModel : ObservableObject
         if (report.Candidates.Count == 0)
         {
             Message = $"No worktrees or orphan folders found under {report.Root}.";
+            EmptyDiscoveryErrors = ReportTable.DiscoveryErrorLines(report);
+            EmptyDiscoveryErrorsTitle = DiscoveryErrorsText.Title(EmptyDiscoveryErrors.Count);
             Screen = Screen.Empty;
             return;
         }
@@ -261,6 +272,8 @@ public sealed partial class MainViewModel : ObservableObject
         report = null;
         ScanSummary = "";
         FolderError = "";
+        EmptyDiscoveryErrors = [];
+        EmptyDiscoveryErrorsTitle = null;
         Scanning = new ScanningViewModel(root);
         Root = root;
         Screen = Screen.Scanning;

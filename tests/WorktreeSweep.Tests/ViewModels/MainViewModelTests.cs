@@ -1,3 +1,4 @@
+using WorktreeSweep.Discovery;
 using WorktreeSweep.Removal;
 using WorktreeSweep.Report;
 using WorktreeSweep.Scan;
@@ -254,7 +255,7 @@ public sealed class MainViewModelTests
         Assert.Equal("worktree-sweep", main.Title);
     }
 
-    /// <summary>A scan that found nothing shows the Empty screen and says where it looked.</summary>
+    /// <summary>A scan that found nothing shows the Empty screen and says where it looked, with no discovery notice.</summary>
     [Fact]
     public void ScanCompletedWithNoCandidatesIsEmpty()
     {
@@ -266,6 +267,51 @@ public sealed class MainViewModelTests
         Assert.Equal(Screen.Empty, main.Screen);
         Assert.Equal(@"No worktrees or orphan folders found under D:\.", main.Message);
         Assert.Null(main.List);
+        Assert.Null(main.EmptyDiscoveryErrorsTitle);
+        Assert.Empty(main.EmptyDiscoveryErrors);
+    }
+
+    /// <summary>A scan that found nothing still shows its discovery errors, each relative to the root and on one line.</summary>
+    [Fact]
+    public void ScanCompletedWithNoCandidatesShowsTheDiscoveryErrors()
+    {
+        ScanReport report = ReportSamples.ReportOf() with
+        {
+            DiscoveryErrors =
+            [
+                new DiscoveryError(ReportSamples.Under("gate"), ReportSamples.Under("gate"), "git worktree list failed\nexit 128"),
+                new DiscoveryError(ReportSamples.Under("yaat"), ReportSamples.Under("yaat"), "cannot read worktrees"),
+            ],
+        };
+        var main = new MainViewModel(_ => TimeSpan.Zero);
+
+        main.ScanCompleted(report, ReportSamples.Now);
+
+        Assert.Equal(Screen.Empty, main.Screen);
+        Assert.Equal("2 discovery errors.", main.EmptyDiscoveryErrorsTitle);
+        Assert.Equal(ReportTable.DiscoveryErrorLines(report), main.EmptyDiscoveryErrors);
+    }
+
+    /// <summary>A scan begun from the Empty screen clears its discovery errors, even when the next scan finds candidates.</summary>
+    [Fact]
+    public void RescanFromEmptyClearsTheDiscoveryErrors()
+    {
+        ScanReport empty = ReportSamples.ReportOf() with
+        {
+            DiscoveryErrors = [new DiscoveryError(ReportSamples.Under("gate"), ReportSamples.Under("gate"), "git worktree list failed")],
+        };
+        var main = new MainViewModel(_ => TimeSpan.Zero) { Folder = Existing };
+        main.ScanCompleted(empty, ReportSamples.Now);
+        Assert.Equal("1 discovery error.", main.EmptyDiscoveryErrorsTitle);
+
+        main.ScanCommand.Execute(null);
+
+        Assert.Null(main.EmptyDiscoveryErrorsTitle);
+        Assert.Empty(main.EmptyDiscoveryErrors);
+        main.ScanCompleted(ReportSamples.ReportOf(ViewModelSamples.Worktree("a", MergeState.Ancestor, 10)), ReportSamples.Now);
+        Assert.Equal(Screen.List, main.Screen);
+        Assert.Null(main.EmptyDiscoveryErrorsTitle);
+        Assert.Empty(main.EmptyDiscoveryErrors);
     }
 
     /// <summary>A failed scan shows the Failed screen with the failure's message.</summary>

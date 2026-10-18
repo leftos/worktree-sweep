@@ -66,6 +66,15 @@
       </Style.Triggers>
     </Style>
 
+    <!-- The same notice on the Empty screen, whose notice bindings sit on the window's view model. -->
+    <Style x:Key="EmptyDiscoveryNotice" TargetType="Border">
+      <Style.Triggers>
+        <DataTrigger Binding="{Binding EmptyDiscoveryErrorsTitle}" Value="{x:Null}">
+          <Setter Property="Visibility" Value="Collapsed" />
+        </DataTrigger>
+      </Style.Triggers>
+    </Style>
+
     <Style x:Key="HiddenTickedPill" TargetType="Border">
       <Style.Triggers>
         <DataTrigger Binding="{Binding HiddenTickedText}" Value="{x:Null}">
@@ -376,6 +385,21 @@
       <!-- Empty -->
       <StackPanel Visibility="{Binding Screen, Converter={StaticResource ShownOn}, ConverterParameter=Empty}">
         <TextBlock Text="{Binding Message}" TextWrapping="Wrap" />
+        <!-- Discovery errors -->
+        <Border
+          Margin="0,10,0,0"
+          Padding="12,9"
+          Background="#FFF8E1"
+          BorderBrush="#F1D98A"
+          BorderThickness="1"
+          CornerRadius="6"
+          Style="{StaticResource EmptyDiscoveryNotice}"
+        >
+          <StackPanel TextElement.Foreground="#5A3E00">
+            <TextBlock FontWeight="SemiBold" Text="{Binding EmptyDiscoveryErrorsTitle}" />
+            <ItemsControl Margin="0,4,0,0" FontFamily="Cascadia Mono, Consolas" ItemsSource="{Binding EmptyDiscoveryErrors}" />
+          </StackPanel>
+        </Border>
         <StackPanel Style="{StaticResource ButtonRow}">
           <Button Content="Close" Click="OnCloseClick" />
         </StackPanel>

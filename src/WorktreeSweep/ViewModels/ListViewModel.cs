@@ -104,13 +104,7 @@ public sealed partial class ListViewModel : ObservableObject
     public bool NoMatch => Shown.Count == 0;
 
     /// <summary>Gets the notice's title, <c>{n} discovery error(s).</c>; <see langword="null"/> when the scan had none.</summary>
-    public string? DiscoveryErrorsTitle =>
-        DiscoveryErrors.Count switch
-        {
-            0 => null,
-            1 => "1 discovery error.",
-            int count => string.Create(CultureInfo.InvariantCulture, $"{count} discovery errors."),
-        };
+    public string? DiscoveryErrorsTitle => DiscoveryErrorsText.Title(DiscoveryErrors.Count);
 
     /// <summary>Gets the scan's discovery errors as <c>{path}: {message}</c>, the path relative to the root and each on one line.</summary>
     public IReadOnlyList<string> DiscoveryErrors { get; }
