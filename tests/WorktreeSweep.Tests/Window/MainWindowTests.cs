@@ -18,7 +18,7 @@ public sealed class MainWindowTests
     private static readonly TimeSpan LoadTimeout = TimeSpan.FromSeconds(30);
 
     /// <summary>
-    /// The window builds from its XAML on an STA thread, every converter and style resolving, and takes its title from the root;
+    /// The window builds from its XAML on an STA thread, every converter and style resolving, and binds its title to the view model's;
     /// it is closed without ever being shown.
     /// </summary>
     [Fact]
@@ -26,13 +26,16 @@ public sealed class MainWindowTests
     {
         ExceptionDispatchInfo? failure = null;
         string? title = null;
+        string? boundTitle = null;
         var thread = new Thread(() =>
         {
             try
             {
-                var main = new MainViewModel(_ => TimeSpan.Zero);
-                var window = new MainWindow(main, new WindowWorkers(main, IdleSeams()), @"C:\fixture");
+                MainViewModel main = ViewModelSamples.Listed(ViewModelSamples.Worktree("a", MergeState.Ancestor, 10));
+                var window = new MainWindow(main, new WindowWorkers(main, IdleSeams()));
+                Dispatcher.CurrentDispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
                 title = window.Title;
+                boundTitle = main.Title;
                 window.Close();
             }
 #pragma warning disable CA1031 // The failure is rethrown on the test's thread below.
@@ -52,7 +55,8 @@ public sealed class MainWindowTests
         Assert.True(thread.Join(LoadTimeout), $"the window did not load within {LoadTimeout}");
 
         failure?.Throw();
-        Assert.Equal(@"worktree-sweep — C:\fixture", title);
+        Assert.Equal(boundTitle, title);
+        Assert.Equal(@"worktree-sweep — D:\", title);
     }
 
     /// <summary>
@@ -71,7 +75,7 @@ public sealed class MainWindowTests
             {
                 var main = new MainViewModel(_ => TimeSpan.Zero);
                 var workers = new WindowWorkers(main, IdleSeams());
-                var window = new MainWindow(main, workers, @"C:\fixture");
+                var window = new MainWindow(main, workers);
                 handle = new WindowInteropHelper(window).EnsureHandle();
                 owner = workers.OwnerWindow;
                 window.Close();
@@ -114,7 +118,7 @@ public sealed class MainWindowTests
             try
             {
                 MainViewModel main = ViewModelSamples.Listed(ViewModelSamples.Worktree("a", MergeState.Ancestor, 10));
-                var window = new MainWindow(main, new WindowWorkers(main, IdleSeams()), @"C:\fixture");
+                var window = new MainWindow(main, new WindowWorkers(main, IdleSeams()));
 
                 ViewModelSamples.Reviewing(main, ViewModelSamples.Roomy).Answer(true);
                 main.Review?.ConfirmCommand.Execute(null);
@@ -145,12 +149,19 @@ public sealed class MainWindowTests
         Assert.Equal("Removing 0 of 1", heading);
     }
 
-    /// <summary>Seams that start no job and touch no disk: a scan that finds nothing, never run.</summary>
+    /// <summary>
+    /// Seams that start no job and touch no disk: a scan that finds nothing, never run, and a recent folders file that does not exist
+    /// and is never written, since no scan completes.
+    /// </summary>
     /// <returns>The seams.</returns>
     private static WindowSeams IdleSeams() =>
         new()
         {
-            Scan = _ => ReportSamples.ReportOf(),
+            Scan = (_, _, _) => ReportSamples.ReportOf(),
+            Clock = () => TimeSpan.Zero,
+            NowUnix = () => ReportSamples.Now,
+            StartTimer = (_, _) => () => { },
+            RecentFoldersPath = Path.Combine(Path.GetTempPath(), $"wts-no-recent-{Guid.NewGuid():N}.json"),
             ReadCapacity = _ => null,
             RemovePicks = (_, _, _, _, _) => [],
             OfferUnlock = _ => UnlockOutcome.Skipped,

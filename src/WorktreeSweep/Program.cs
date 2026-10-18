@@ -13,8 +13,8 @@ using WorktreeSweep.Unlock;
 namespace WorktreeSweep;
 
 /// <summary>
-/// The command line: <c>worktree-sweep [ROOT] [--list | --json]</c>, and <c>worktree-sweep remove PATH --json [--force]
-/// [--stop-build-servers]</c>, which removes one worktree for an agent.
+/// The command line: <c>worktree-sweep [ROOT] [--list | --json]</c>, where the window asks for a folder when ROOT is not given,
+/// and <c>worktree-sweep remove PATH --json [--force] [--stop-build-servers]</c>, which removes one worktree for an agent.
 /// </summary>
 internal static class Program
 {
@@ -37,7 +37,7 @@ internal static class Program
 
         Argument<string> root = new("ROOT")
         {
-            Description = "Folder to scan (default: the current directory).",
+            Description = "Folder to scan; without it the window asks, and --list and --json scan the current directory.",
             DefaultValueFactory = _ => Environment.CurrentDirectory,
         };
         Option<bool> json = new("--json") { Description = "Print the report as one JSON document and exit." };
@@ -50,7 +50,9 @@ internal static class Program
                 result.AddError("--json and --list cannot be used together.");
             }
         });
-        command.SetAction(parsed => Run(parsed.GetRequiredValue(root), parsed.GetValue(json), parsed.GetValue(list)));
+        command.SetAction(parsed =>
+            Run(parsed.GetRequiredValue(root), parsed.GetResult(root) is { Implicit: false }, parsed.GetValue(json), parsed.GetValue(list))
+        );
         command.Subcommands.Add(UnlockCommand());
         command.Subcommands.Add(RemoveCommand());
         // The help copies the root's ROOT argument into a subcommand's usage and Arguments section, so hide it while one runs.
@@ -69,11 +71,17 @@ internal static class Program
         return parsed.Invoke();
     }
 
-    private static int Run(string root, bool json, bool list)
+    /// <summary>Opens the window, or scans <paramref name="root"/> and prints the report.</summary>
+    /// <param name="root">The folder to scan: the one given, or the current directory.</param>
+    /// <param name="rootGiven">Whether the command line gave <paramref name="root"/>; the window asks for a folder when it did not.</param>
+    /// <param name="json">Whether to print the report as JSON.</param>
+    /// <param name="list">Whether to print the candidates as a table.</param>
+    /// <returns>The exit code.</returns>
+    private static int Run(string root, bool rootGiven, bool json, bool list)
     {
         if (!json && !list)
         {
-            return WindowMode.Run(root);
+            return WindowMode.Run(rootGiven ? root : null);
         }
         try
         {

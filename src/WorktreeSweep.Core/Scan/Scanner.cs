@@ -116,7 +116,7 @@ public static class Scanner
                 lock (counter)
                 {
                     done++;
-                    onProgress(new ScanProgress.CandidateRead(done, jobs.Count));
+                    onProgress(new ScanProgress.CandidateRead(job.Path, done, jobs.Count));
                 }
                 return candidate;
             },
@@ -257,9 +257,20 @@ public static class Scanner
     /// unknown.</param>
     internal sealed record RepoLookup(string Path, DefaultBranches Defaults, string? CommonDir);
 
-    private abstract record ScanJob;
+    /// <summary>One candidate to read.</summary>
+    private abstract record ScanJob
+    {
+        /// <summary>Gets the candidate's path, as its progress events name it.</summary>
+        public abstract string Path { get; }
+    }
 
-    private sealed record RegisteredJob(RepoLookup Lookup, WorktreeRecord Record) : ScanJob;
+    private sealed record RegisteredJob(RepoLookup Lookup, WorktreeRecord Record) : ScanJob
+    {
+        public override string Path => Record.Path;
+    }
 
-    private sealed record OrphanJob(Orphan Orphan) : ScanJob;
+    private sealed record OrphanJob(Orphan Orphan) : ScanJob
+    {
+        public override string Path => Orphan.Path;
+    }
 }

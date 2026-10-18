@@ -3,6 +3,9 @@ namespace WorktreeSweep.ViewModels;
 /// <summary>The screen the window shows.</summary>
 public enum Screen
 {
+    /// <summary>The folder to scan is chosen, typed or picked from the recent folders.</summary>
+    Choose,
+
     /// <summary>The scan is running.</summary>
     Scanning,
 

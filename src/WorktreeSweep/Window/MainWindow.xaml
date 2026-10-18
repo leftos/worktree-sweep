@@ -4,6 +4,7 @@
   xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
   xmlns:local="clr-namespace:WorktreeSweep.Window"
   xmlns:vm="clr-namespace:WorktreeSweep.ViewModels"
+  Title="{Binding Title}"
   Width="1100"
   Height="700"
   WindowStartupLocation="CenterScreen"
@@ -132,365 +133,597 @@
         </DataTrigger>
       </Style.Triggers>
     </Style>
+
+    <!-- The root bar offers Rescan, except while scanning, when it offers Stop scan. -->
+    <Style x:Key="HiddenWhileScanning" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+      <Style.Triggers>
+        <DataTrigger Binding="{Binding IsScanning}" Value="True">
+          <Setter Property="Visibility" Value="Collapsed" />
+        </DataTrigger>
+      </Style.Triggers>
+    </Style>
+
+    <!-- A recent folder is one flat row that scans it when pressed. -->
+    <Style x:Key="RecentRowButton" TargetType="Button">
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Row" MinHeight="52" Padding="16,8" Background="Transparent" BorderBrush="#F0F0F0" BorderThickness="0,0,0,1">
+              <ContentPresenter VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Row" Property="Background" Value="#F5F5F5" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <!-- One of the scan's three steps: a mark for its state, its title and how far it has got. -->
+    <DataTemplate x:Key="ScanStep" DataType="{x:Type vm:ScanStepRow}">
+      <Grid Margin="16,14,16,10">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="28" />
+          <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+        <TextBlock x:Name="Mark" FontSize="16" Foreground="#8A8A8A" Text="○" AutomationProperties.Name="Not started" />
+        <StackPanel Grid.Column="1">
+          <TextBlock FontWeight="SemiBold" Text="{Binding Title}" />
+          <TextBlock
+            Margin="0,2,0,0"
+            FontSize="13"
+            Foreground="#4A4A4A"
+            Style="{StaticResource HiddenWhenEmpty}"
+            Text="{Binding Detail}"
+            TextWrapping="Wrap"
+          />
+        </StackPanel>
+      </Grid>
+      <DataTemplate.Triggers>
+        <DataTrigger Binding="{Binding State}" Value="Running">
+          <Setter TargetName="Mark" Property="Text" Value="◔" />
+          <Setter TargetName="Mark" Property="Foreground" Value="#005FB8" />
+          <Setter TargetName="Mark" Property="AutomationProperties.Name" Value="In progress" />
+        </DataTrigger>
+        <DataTrigger Binding="{Binding State}" Value="Done">
+          <Setter TargetName="Mark" Property="Text" Value="✓" />
+          <Setter TargetName="Mark" Property="Foreground" Value="#0E7A0D" />
+          <Setter TargetName="Mark" Property="AutomationProperties.Name" Value="Done" />
+        </DataTrigger>
+      </DataTemplate.Triggers>
+    </DataTemplate>
+
+    <!-- The candidates' count and working list show while the third step runs. -->
+    <Style x:Key="ShownWhileReading" TargetType="StackPanel">
+      <Setter Property="Visibility" Value="Collapsed" />
+      <Style.Triggers>
+        <DataTrigger Binding="{Binding Read.State}" Value="Running">
+          <Setter Property="Visibility" Value="Visible" />
+        </DataTrigger>
+      </Style.Triggers>
+    </Style>
   </Window.Resources>
 
-  <Grid Margin="12">
-    <!-- Scanning -->
-    <StackPanel VerticalAlignment="Center" Visibility="{Binding Screen, Converter={StaticResource ShownOn}, ConverterParameter=Scanning}">
-      <TextBlock x:Name="ScanningText" HorizontalAlignment="Center" />
-      <ProgressBar Width="400" Height="16" Margin="0,10,0,0" IsIndeterminate="True" />
-    </StackPanel>
-
-    <!-- Empty -->
-    <StackPanel Visibility="{Binding Screen, Converter={StaticResource ShownOn}, ConverterParameter=Empty}">
-      <TextBlock Text="{Binding Message}" TextWrapping="Wrap" />
-      <StackPanel Style="{StaticResource ButtonRow}">
-        <Button Content="Close" Click="OnCloseClick" />
+  <DockPanel>
+    <!-- Root bar -->
+    <Border
+      DockPanel.Dock="Top"
+      Padding="16,10"
+      Background="#FAFAFA"
+      BorderBrush="#E5E5E5"
+      BorderThickness="0,0,0,1"
+      Visibility="{Binding ShowsRootBar, Converter={StaticResource ShownWhenTrue}}"
+    >
+      <StackPanel>
+        <DockPanel LastChildFill="False">
+          <TextBlock Margin="0,0,8,0" VerticalAlignment="Center" FontWeight="SemiBold" Foreground="#555555" Text="Folder" />
+          <TextBox
+            Width="460"
+            Margin="0,0,8,0"
+            Padding="4,3"
+            VerticalContentAlignment="Center"
+            FontFamily="Cascadia Mono, Consolas"
+            AutomationProperties.Name="Folder"
+            IsEnabled="{Binding CanEditFolder}"
+            KeyDown="OnFolderKeyDown"
+            Text="{Binding Folder, UpdateSourceTrigger=PropertyChanged}"
+          />
+          <Button Content="Browse…" Command="{Binding BrowseCommand}" />
+          <Button Content="Rescan" Command="{Binding ScanCommand}" Style="{StaticResource HiddenWhileScanning}" />
+          <Button
+            Content="Stop scan"
+            Command="{Binding StopScanCommand}"
+            Visibility="{Binding IsScanning, Converter={StaticResource ShownWhenTrue}}"
+          />
+          <TextBlock DockPanel.Dock="Right" VerticalAlignment="Center" Foreground="#5C5C5C" Text="{Binding ScanSummary}" />
+        </DockPanel>
+        <TextBlock Foreground="Firebrick" Style="{StaticResource HiddenWhenEmpty}" Text="{Binding FolderError}" />
       </StackPanel>
-    </StackPanel>
+    </Border>
 
-    <!-- Failed -->
-    <StackPanel Visibility="{Binding Screen, Converter={StaticResource ShownOn}, ConverterParameter=Failed}">
-      <TextBlock Text="{Binding Message}" TextWrapping="Wrap" />
-      <StackPanel Style="{StaticResource ButtonRow}">
-        <Button Content="Close" Click="OnCloseClick" />
-      </StackPanel>
-    </StackPanel>
-
-    <!-- List -->
-    <Grid Visibility="{Binding Screen, Converter={StaticResource ShownOn}, ConverterParameter=List}">
-      <DockPanel DataContext="{Binding List}">
-        <!-- Discovery errors -->
-        <Border
-          DockPanel.Dock="Top"
-          Margin="0,0,0,10"
-          Padding="12,9"
-          Background="#FFF8E1"
-          BorderBrush="#F1D98A"
-          BorderThickness="1"
-          CornerRadius="6"
-          Style="{StaticResource DiscoveryNotice}"
-        >
-          <StackPanel TextElement.Foreground="#5A3E00">
-            <TextBlock FontWeight="SemiBold" Text="{Binding DiscoveryErrorsTitle}" />
-            <ItemsControl Margin="0,4,0,0" FontFamily="Cascadia Mono, Consolas" ItemsSource="{Binding DiscoveryErrors}" />
-            <TextBlock Margin="0,4,0,0" Text="{Binding DiscoveryErrorsNote}" TextWrapping="Wrap" />
-          </StackPanel>
-        </Border>
-
-        <!-- Filters and tick buttons -->
-        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10" LastChildFill="False">
-          <Button DockPanel.Dock="Right" Margin="0" Content="Untick all" Command="{Binding UntickAllCommand}" />
-          <Button DockPanel.Dock="Right" Content="Tick shown" Command="{Binding TickShownCommand}" />
-          <Border Padding="2" Background="#E9E9E9" CornerRadius="6" AutomationProperties.Name="Kind">
-            <StackPanel Orientation="Horizontal">
-              <RadioButton
-                Style="{StaticResource KindButton}"
-                IsChecked="{Binding KindFilter, Converter={StaticResource Is}, ConverterParameter={x:Static vm:KindFilter.All}}"
-              >
-                <TextBlock>
-                  <Run Text="All" />
-                  <Run Foreground="#5C5C5C" Text="{Binding AllCount, Mode=OneWay}" />
-                </TextBlock>
-              </RadioButton>
-              <RadioButton
-                Style="{StaticResource KindButton}"
-                IsChecked="{Binding KindFilter, Converter={StaticResource Is}, ConverterParameter={x:Static vm:KindFilter.Worktree}}"
-              >
-                <TextBlock>
-                  <Run Text="Worktrees" />
-                  <Run Foreground="#5C5C5C" Text="{Binding WorktreeCount, Mode=OneWay}" />
-                </TextBlock>
-              </RadioButton>
-              <RadioButton
-                Style="{StaticResource KindButton}"
-                IsChecked="{Binding KindFilter, Converter={StaticResource Is}, ConverterParameter={x:Static vm:KindFilter.Orphan}}"
-              >
-                <TextBlock>
-                  <Run Text="Orphans" />
-                  <Run Foreground="#5C5C5C" Text="{Binding OrphanCount, Mode=OneWay}" />
-                </TextBlock>
-              </RadioButton>
-              <RadioButton
-                Style="{StaticResource KindButton}"
-                IsChecked="{Binding KindFilter, Converter={StaticResource Is}, ConverterParameter={x:Static vm:KindFilter.Link}}"
-              >
-                <TextBlock>
-                  <Run Text="Links" />
-                  <Run Foreground="#5C5C5C" Text="{Binding LinkCount, Mode=OneWay}" />
-                </TextBlock>
-              </RadioButton>
+    <Grid Margin="12">
+      <!-- Choose -->
+      <ScrollViewer VerticalScrollBarVisibility="Auto" Visibility="{Binding Screen, Converter={StaticResource ShownOn}, ConverterParameter=Choose}">
+        <StackPanel MaxWidth="640" Margin="0,60,0,24">
+          <TextBlock FontSize="28" FontWeight="SemiBold" Text="Choose a folder to sweep" />
+          <TextBlock Margin="0,8,0,0" Foreground="#4A4A4A" TextWrapping="Wrap">
+            <Run Text="worktree-sweep looks at the folder's top-level repos and at their worktree folders (" />
+            <Run FontFamily="Cascadia Mono, Consolas" Text="*.wt" />
+            <Run Text=", " />
+            <Run FontFamily="Cascadia Mono, Consolas" Text="*-wt" />
+            <Run Text=", " />
+            <Run FontFamily="Cascadia Mono, Consolas" Text="*worktrees" />
+            <Run Text=", " />
+            <Run FontFamily="Cascadia Mono, Consolas" Text=".claude\worktrees" />
+            <Run Text="). The scan only reads; nothing is removed until you review and confirm." />
+          </TextBlock>
+          <Border Margin="0,28,0,0" Padding="20" Background="White" BorderBrush="#E0E0E0" BorderThickness="1" CornerRadius="8">
+            <StackPanel>
+              <TextBlock FontWeight="SemiBold" Text="Folder" />
+              <DockPanel Margin="0,8,0,0">
+                <Button DockPanel.Dock="Right" Margin="0" FontWeight="SemiBold" Content="Scan" Command="{Binding ScanCommand}" />
+                <Button DockPanel.Dock="Right" Content="Browse…" Command="{Binding BrowseCommand}" />
+                <TextBox
+                  Margin="0,0,8,0"
+                  Padding="6,5"
+                  VerticalContentAlignment="Center"
+                  FontFamily="Cascadia Mono, Consolas"
+                  AutomationProperties.Name="Folder"
+                  KeyDown="OnFolderKeyDown"
+                  Text="{Binding Folder, UpdateSourceTrigger=PropertyChanged}"
+                />
+              </DockPanel>
+              <TextBlock Foreground="Firebrick" Style="{StaticResource HiddenWhenEmpty}" Text="{Binding FolderError}" />
+              <TextBlock Margin="0,6,0,0" FontSize="12.5" Foreground="#5C5C5C" TextWrapping="Wrap">
+                <Run Text="Starts in the folder you launched from. Passing a folder on the command line skips this step: " />
+                <Run FontFamily="Cascadia Mono, Consolas" Text="worktree-sweep X:\dev" />
+              </TextBlock>
             </StackPanel>
           </Border>
-          <ToggleButton Margin="10,0,0,0" Padding="12,4" IsChecked="{Binding NothingLost}">
-            <TextBlock>
-              <Run Text="✓ Nothing lost" />
-              <Run Foreground="#5C5C5C" Text="{Binding NothingLostCount, Mode=OneWay}" />
-            </TextBlock>
-          </ToggleButton>
-          <Grid Width="260" Margin="10,0,0,0">
-            <TextBox
-              Padding="4,3"
-              VerticalContentAlignment="Center"
-              AutomationProperties.Name="Filter by path or branch"
-              KeyDown="OnSearchKeyDown"
-              Text="{Binding Search, UpdateSourceTrigger=PropertyChanged}"
-            />
-            <TextBlock
-              Margin="8,0,0,0"
-              VerticalAlignment="Center"
-              Foreground="#767676"
-              IsHitTestVisible="False"
-              Style="{StaticResource SearchHint}"
-              Text="Filter by path or branch"
-            />
-          </Grid>
-        </DockPanel>
-
-        <!-- Summary and Review -->
-        <DockPanel DockPanel.Dock="Bottom" Margin="0,10,0,0">
-          <Button DockPanel.Dock="Right" Margin="0" Content="{Binding ReviewLabel}" Command="{Binding ReviewCommand}" IsDefault="True" />
-          <StackPanel VerticalAlignment="Center" Orientation="Horizontal">
-            <TextBlock VerticalAlignment="Center" Text="{Binding Header}" />
-            <Border Margin="12,0,0,0" Padding="10,3" Background="#FFF1C7" CornerRadius="10" Style="{StaticResource HiddenTickedPill}">
-              <TextBlock Foreground="#6B4400">
-                <Run Text="{Binding HiddenTickedText, Mode=OneWay}" />
-                <Hyperlink Command="{Binding ClearFiltersCommand}">Show them</Hyperlink>
-              </TextBlock>
-            </Border>
-          </StackPanel>
-        </DockPanel>
-        <TextBlock DockPanel.Dock="Bottom" Style="{StaticResource HiddenWhenEmpty}" Text="{Binding Message}" />
-
-        <!-- Selected row -->
-        <Border
-          DockPanel.Dock="Bottom"
-          Margin="0,10,0,0"
-          Padding="14,12"
-          Background="White"
-          BorderBrush="#E0E0E0"
-          BorderThickness="1"
-          CornerRadius="6"
-        >
-          <Grid>
-            <TextBlock
-              Foreground="#5C5C5C"
-              Style="{StaticResource ShownWithoutSelection}"
-              Text="Select a row to see what it is and what removing it loses."
-            />
-            <StackPanel Style="{StaticResource HiddenWithoutSelection}">
-              <StackPanel Margin="0,0,0,10" Orientation="Horizontal">
-                <TextBlock FontFamily="Cascadia Mono, Consolas" FontWeight="SemiBold" Text="{Binding Selected.Candidate.Path}" />
-                <Border Margin="12,0,0,0" Background="#E8F1FB" Style="{StaticResource Pill}">
-                  <TextBlock Foreground="#0F4C81" Text="{Binding Selected.Kind}" />
-                </Border>
-              </StackPanel>
-              <ItemsControl ItemsSource="{Binding Detail}">
+          <StackPanel Margin="0,28,0,0" Visibility="{Binding HasRecent, Converter={StaticResource ShownWhenTrue}}">
+            <TextBlock FontWeight="SemiBold" Foreground="#3B3B3B" Text="Recent folders" />
+            <Border Margin="0,8,0,0" Background="White" BorderBrush="#E0E0E0" BorderThickness="1" CornerRadius="8">
+              <ItemsControl ItemsSource="{Binding Recent}">
                 <ItemsControl.ItemTemplate>
                   <DataTemplate>
-                    <Grid Margin="0,0,0,6">
-                      <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="150" />
-                        <ColumnDefinition Width="*" />
-                      </Grid.ColumnDefinitions>
-                      <TextBlock Foreground="#5C5C5C" Text="{Binding Label}" />
-                      <TextBlock Grid.Column="1" Style="{StaticResource DetailValue}" Text="{Binding Text}" />
-                    </Grid>
+                    <Button
+                      Command="{Binding DataContext.ScanRecentCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                      CommandParameter="{Binding Folder}"
+                      Style="{StaticResource RecentRowButton}"
+                    >
+                      <DockPanel>
+                        <TextBlock
+                          DockPanel.Dock="Right"
+                          Margin="16,0,0,0"
+                          VerticalAlignment="Center"
+                          FontSize="12.5"
+                          Foreground="#5C5C5C"
+                          Text="{Binding Summary}"
+                        />
+                        <TextBlock
+                          VerticalAlignment="Center"
+                          FontFamily="Cascadia Mono, Consolas"
+                          Text="{Binding Folder}"
+                          TextTrimming="CharacterEllipsis"
+                        />
+                      </DockPanel>
+                    </Button>
                   </DataTemplate>
                 </ItemsControl.ItemTemplate>
               </ItemsControl>
-            </StackPanel>
-          </Grid>
-        </Border>
+            </Border>
+          </StackPanel>
+        </StackPanel>
+      </ScrollViewer>
 
-        <!-- Candidates -->
-        <Grid>
+      <!-- Scanning -->
+      <ScrollViewer VerticalScrollBarVisibility="Auto" Visibility="{Binding Screen, Converter={StaticResource ShownOn}, ConverterParameter=Scanning}">
+        <StackPanel MaxWidth="760" Margin="0,36,0,24" DataContext="{Binding Scanning}">
+          <DockPanel>
+            <TextBlock DockPanel.Dock="Right" Margin="8,0,0,0" VerticalAlignment="Bottom" Foreground="#4A4A4A" Text="{Binding StepText}" />
+            <TextBlock FontSize="24" FontWeight="SemiBold" TextTrimming="CharacterEllipsis">
+              <Run Text="Scanning " />
+              <Run FontFamily="Cascadia Mono, Consolas" FontSize="21" Text="{Binding Root, Mode=OneWay}" />
+            </TextBlock>
+          </DockPanel>
+          <ProgressBar Height="6" Margin="0,10,0,0" Maximum="100" Value="{Binding Percent, Mode=OneWay}" AutomationProperties.Name="Scan progress" />
+          <TextBlock Margin="0,10,0,0" FontSize="13" Foreground="#4A4A4A" Text="{Binding Status}" TextWrapping="Wrap" />
+          <Border Margin="0,20,0,0" Background="White" BorderBrush="#E0E0E0" BorderThickness="1" CornerRadius="8">
+            <StackPanel>
+              <ContentControl Content="{Binding Find}" ContentTemplate="{StaticResource ScanStep}" />
+              <ContentControl Content="{Binding LookUp}" ContentTemplate="{StaticResource ScanStep}" />
+              <ContentControl Content="{Binding Read}" ContentTemplate="{StaticResource ScanStep}" />
+              <StackPanel Margin="60,0,16,14" Style="{StaticResource ShownWhileReading}">
+                <DockPanel>
+                  <TextBlock DockPanel.Dock="Right" Margin="10,0,0,0" FontSize="12.5" Text="{Binding CandidatesText}" />
+                  <ProgressBar
+                    Height="4"
+                    VerticalAlignment="Center"
+                    Maximum="{Binding CandidatesTotal, Mode=OneWay}"
+                    Value="{Binding CandidatesDone, Mode=OneWay}"
+                    AutomationProperties.Name="Candidates read"
+                  />
+                </DockPanel>
+                <Border Margin="0,8,0,0" Background="White" BorderBrush="#E3ECF6" BorderThickness="1" CornerRadius="6">
+                  <StackPanel>
+                    <TextBlock Padding="10,6" FontSize="12" FontWeight="SemiBold" Foreground="#4A4A4A" Text="Working on now" />
+                    <ItemsControl Margin="10,0,10,6" FontSize="12.5" ItemsSource="{Binding Working}">
+                      <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                          <Grid Margin="0,2">
+                            <Grid.ColumnDefinitions>
+                              <ColumnDefinition Width="*" />
+                              <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock FontFamily="Cascadia Mono, Consolas" Text="{Binding Path}" TextTrimming="CharacterEllipsis" />
+                            <TextBlock Grid.Column="1" Margin="12,0,0,0" Foreground="#4A4A4A" Text="{Binding Action}" />
+                          </Grid>
+                        </DataTemplate>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                  </StackPanel>
+                </Border>
+              </StackPanel>
+            </StackPanel>
+          </Border>
+        </StackPanel>
+      </ScrollViewer>
+
+      <!-- Empty -->
+      <StackPanel Visibility="{Binding Screen, Converter={StaticResource ShownOn}, ConverterParameter=Empty}">
+        <TextBlock Text="{Binding Message}" TextWrapping="Wrap" />
+        <StackPanel Style="{StaticResource ButtonRow}">
+          <Button Content="Close" Click="OnCloseClick" />
+        </StackPanel>
+      </StackPanel>
+
+      <!-- Failed -->
+      <StackPanel Visibility="{Binding Screen, Converter={StaticResource ShownOn}, ConverterParameter=Failed}">
+        <TextBlock Text="{Binding Message}" TextWrapping="Wrap" />
+        <StackPanel Style="{StaticResource ButtonRow}">
+          <Button Content="Close" Click="OnCloseClick" />
+        </StackPanel>
+      </StackPanel>
+
+      <!-- List -->
+      <Grid Visibility="{Binding Screen, Converter={StaticResource ShownOn}, ConverterParameter=List}">
+        <DockPanel DataContext="{Binding List}">
+          <!-- Discovery errors -->
+          <Border
+            DockPanel.Dock="Top"
+            Margin="0,0,0,10"
+            Padding="12,9"
+            Background="#FFF8E1"
+            BorderBrush="#F1D98A"
+            BorderThickness="1"
+            CornerRadius="6"
+            Style="{StaticResource DiscoveryNotice}"
+          >
+            <StackPanel TextElement.Foreground="#5A3E00">
+              <TextBlock FontWeight="SemiBold" Text="{Binding DiscoveryErrorsTitle}" />
+              <ItemsControl Margin="0,4,0,0" FontFamily="Cascadia Mono, Consolas" ItemsSource="{Binding DiscoveryErrors}" />
+              <TextBlock Margin="0,4,0,0" Text="{Binding DiscoveryErrorsNote}" TextWrapping="Wrap" />
+            </StackPanel>
+          </Border>
+
+          <!-- Filters and tick buttons -->
+          <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10" LastChildFill="False">
+            <Button DockPanel.Dock="Right" Margin="0" Content="Untick all" Command="{Binding UntickAllCommand}" />
+            <Button DockPanel.Dock="Right" Content="Tick shown" Command="{Binding TickShownCommand}" />
+            <Border Padding="2" Background="#E9E9E9" CornerRadius="6" AutomationProperties.Name="Kind">
+              <StackPanel Orientation="Horizontal">
+                <RadioButton
+                  Style="{StaticResource KindButton}"
+                  IsChecked="{Binding KindFilter, Converter={StaticResource Is}, ConverterParameter={x:Static vm:KindFilter.All}}"
+                >
+                  <TextBlock>
+                    <Run Text="All" />
+                    <Run Foreground="#5C5C5C" Text="{Binding AllCount, Mode=OneWay}" />
+                  </TextBlock>
+                </RadioButton>
+                <RadioButton
+                  Style="{StaticResource KindButton}"
+                  IsChecked="{Binding KindFilter, Converter={StaticResource Is}, ConverterParameter={x:Static vm:KindFilter.Worktree}}"
+                >
+                  <TextBlock>
+                    <Run Text="Worktrees" />
+                    <Run Foreground="#5C5C5C" Text="{Binding WorktreeCount, Mode=OneWay}" />
+                  </TextBlock>
+                </RadioButton>
+                <RadioButton
+                  Style="{StaticResource KindButton}"
+                  IsChecked="{Binding KindFilter, Converter={StaticResource Is}, ConverterParameter={x:Static vm:KindFilter.Orphan}}"
+                >
+                  <TextBlock>
+                    <Run Text="Orphans" />
+                    <Run Foreground="#5C5C5C" Text="{Binding OrphanCount, Mode=OneWay}" />
+                  </TextBlock>
+                </RadioButton>
+                <RadioButton
+                  Style="{StaticResource KindButton}"
+                  IsChecked="{Binding KindFilter, Converter={StaticResource Is}, ConverterParameter={x:Static vm:KindFilter.Link}}"
+                >
+                  <TextBlock>
+                    <Run Text="Links" />
+                    <Run Foreground="#5C5C5C" Text="{Binding LinkCount, Mode=OneWay}" />
+                  </TextBlock>
+                </RadioButton>
+              </StackPanel>
+            </Border>
+            <ToggleButton Margin="10,0,0,0" Padding="12,4" IsChecked="{Binding NothingLost}">
+              <TextBlock>
+                <Run Text="✓ Nothing lost" />
+                <Run Foreground="#5C5C5C" Text="{Binding NothingLostCount, Mode=OneWay}" />
+              </TextBlock>
+            </ToggleButton>
+            <Grid Width="260" Margin="10,0,0,0">
+              <TextBox
+                Padding="4,3"
+                VerticalContentAlignment="Center"
+                AutomationProperties.Name="Filter by path or branch"
+                KeyDown="OnSearchKeyDown"
+                Text="{Binding Search, UpdateSourceTrigger=PropertyChanged}"
+              />
+              <TextBlock
+                Margin="8,0,0,0"
+                VerticalAlignment="Center"
+                Foreground="#767676"
+                IsHitTestVisible="False"
+                Style="{StaticResource SearchHint}"
+                Text="Filter by path or branch"
+              />
+            </Grid>
+          </DockPanel>
+
+          <!-- Summary and Review -->
+          <DockPanel DockPanel.Dock="Bottom" Margin="0,10,0,0">
+            <Button DockPanel.Dock="Right" Margin="0" Content="{Binding ReviewLabel}" Command="{Binding ReviewCommand}" IsDefault="True" />
+            <StackPanel VerticalAlignment="Center" Orientation="Horizontal">
+              <TextBlock VerticalAlignment="Center" Text="{Binding Header}" />
+              <Border Margin="12,0,0,0" Padding="10,3" Background="#FFF1C7" CornerRadius="10" Style="{StaticResource HiddenTickedPill}">
+                <TextBlock Foreground="#6B4400">
+                  <Run Text="{Binding HiddenTickedText, Mode=OneWay}" />
+                  <Hyperlink Command="{Binding ClearFiltersCommand}">Show them</Hyperlink>
+                </TextBlock>
+              </Border>
+            </StackPanel>
+          </DockPanel>
+          <TextBlock DockPanel.Dock="Bottom" Style="{StaticResource HiddenWhenEmpty}" Text="{Binding Message}" />
+
+          <!-- Selected row -->
+          <Border
+            DockPanel.Dock="Bottom"
+            Margin="0,10,0,0"
+            Padding="14,12"
+            Background="White"
+            BorderBrush="#E0E0E0"
+            BorderThickness="1"
+            CornerRadius="6"
+          >
+            <Grid>
+              <TextBlock
+                Foreground="#5C5C5C"
+                Style="{StaticResource ShownWithoutSelection}"
+                Text="Select a row to see what it is and what removing it loses."
+              />
+              <StackPanel Style="{StaticResource HiddenWithoutSelection}">
+                <StackPanel Margin="0,0,0,10" Orientation="Horizontal">
+                  <TextBlock FontFamily="Cascadia Mono, Consolas" FontWeight="SemiBold" Text="{Binding Selected.Candidate.Path}" />
+                  <Border Margin="12,0,0,0" Background="#E8F1FB" Style="{StaticResource Pill}">
+                    <TextBlock Foreground="#0F4C81" Text="{Binding Selected.Kind}" />
+                  </Border>
+                </StackPanel>
+                <ItemsControl ItemsSource="{Binding Detail}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                      <Grid Margin="0,0,0,6">
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="150" />
+                          <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Foreground="#5C5C5C" Text="{Binding Label}" />
+                        <TextBlock Grid.Column="1" Style="{StaticResource DetailValue}" Text="{Binding Text}" />
+                      </Grid>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </StackPanel>
+            </Grid>
+          </Border>
+
+          <!-- Candidates -->
+          <Grid>
+            <DataGrid
+              AutoGenerateColumns="False"
+              CanUserAddRows="False"
+              CanUserDeleteRows="False"
+              CanUserSortColumns="True"
+              HeadersVisibility="Column"
+              IsReadOnly="True"
+              ItemsSource="{Binding Shown, NotifyOnTargetUpdated=True}"
+              SelectedItem="{Binding Selected}"
+              SelectionMode="Single"
+              Sorting="OnListSorting"
+              TargetUpdated="OnListShownChanged"
+            >
+              <DataGrid.Columns>
+                <DataGridTemplateColumn CanUserSort="False">
+                  <DataGridTemplateColumn.Header>
+                    <CheckBox
+                      AutomationProperties.Name="Tick every shown row"
+                      IsChecked="{Binding DataContext.AllShownTicked, RelativeSource={RelativeSource AncestorType=DataGrid}, Mode=TwoWay}"
+                    />
+                  </DataGridTemplateColumn.Header>
+                  <DataGridTemplateColumn.CellTemplate>
+                    <DataTemplate>
+                      <CheckBox
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        IsChecked="{Binding IsTicked, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                      />
+                    </DataTemplate>
+                  </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTextColumn Header="Path" FontFamily="Cascadia Mono, Consolas" SortMemberPath="Path" Binding="{Binding Path, Mode=OneWay}" />
+                <DataGridTextColumn Header="Kind" SortMemberPath="Kind" Binding="{Binding Kind, Mode=OneWay}" />
+                <DataGridTextColumn Header="Branch" SortMemberPath="Branch" Binding="{Binding Branch, Mode=OneWay}" />
+                <DataGridTemplateColumn Header="Merge" SortMemberPath="Merge">
+                  <DataGridTemplateColumn.CellTemplate>
+                    <DataTemplate>
+                      <Border
+                        Background="{Binding MergeRisk, Converter={StaticResource RiskBrush}, ConverterParameter=Background}"
+                        Style="{StaticResource Pill}"
+                      >
+                        <TextBlock Foreground="{Binding MergeRisk, Converter={StaticResource RiskBrush}}" Text="{Binding Merge}" />
+                      </Border>
+                    </DataTemplate>
+                  </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTemplateColumn Header="Dirty" SortMemberPath="Dirty">
+                  <DataGridTemplateColumn.CellTemplate>
+                    <DataTemplate>
+                      <Border
+                        Background="{Binding DirtyRisk, Converter={StaticResource RiskBrush}, ConverterParameter=Background}"
+                        Style="{StaticResource Pill}"
+                      >
+                        <TextBlock Foreground="{Binding DirtyRisk, Converter={StaticResource RiskBrush}}" Text="{Binding Dirty}" />
+                      </Border>
+                    </DataTemplate>
+                  </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTemplateColumn Header="Upstream" SortMemberPath="Upstream">
+                  <DataGridTemplateColumn.CellTemplate>
+                    <DataTemplate>
+                      <Border
+                        Background="{Binding UpstreamRisk, Converter={StaticResource RiskBrush}, ConverterParameter=Background}"
+                        Style="{StaticResource Pill}"
+                      >
+                        <TextBlock Foreground="{Binding UpstreamRisk, Converter={StaticResource RiskBrush}}" Text="{Binding Upstream}" />
+                      </Border>
+                    </DataTemplate>
+                  </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTextColumn
+                  Header="Active"
+                  SortMemberPath="Active"
+                  Binding="{Binding Active, Mode=OneWay}"
+                  ElementStyle="{StaticResource RightCell}"
+                />
+                <DataGridTextColumn
+                  Header="Size"
+                  SortMemberPath="Size"
+                  Binding="{Binding Size, Mode=OneWay}"
+                  ElementStyle="{StaticResource RightCell}"
+                />
+                <DataGridTextColumn Header="Flags" SortMemberPath="Flags" Binding="{Binding Flags, Mode=OneWay}" />
+              </DataGrid.Columns>
+            </DataGrid>
+            <TextBlock
+              Margin="0,60,0,0"
+              HorizontalAlignment="Center"
+              VerticalAlignment="Top"
+              Foreground="#5C5C5C"
+              Visibility="{Binding NoMatch, Converter={StaticResource ShownWhenTrue}}"
+            >
+              No candidate matches this filter. <Hyperlink Command="{Binding ClearFiltersCommand}">Clear the filter</Hyperlink>
+            </TextBlock>
+          </Grid>
+        </DockPanel>
+      </Grid>
+
+      <!-- Review -->
+      <Grid Visibility="{Binding Screen, Converter={StaticResource ShownOn}, ConverterParameter=Review}">
+        <Grid DataContext="{Binding Review}">
+          <TextBlock
+            Text="Reading the Recycle Bin sizes…"
+            Visibility="{Binding State, Converter={StaticResource ShownOn}, ConverterParameter=Preparing}"
+          />
+
+          <StackPanel Visibility="{Binding State, Converter={StaticResource ShownOn}, ConverterParameter=Asking}">
+            <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding Title}" />
+            <TextBlock Margin="0,6,0,0" FontFamily="Consolas" Text="{Binding PickPath}" />
+            <TextBlock Margin="0,10,0,0" Text="{Binding Body}" TextWrapping="Wrap" />
+            <TextBlock Margin="0,10,0,0" Text="{Binding Question}" TextWrapping="Wrap" />
+            <StackPanel Style="{StaticResource ButtonRow}">
+              <Button Content="{Binding YesLabel}" Command="{Binding AnswerYesCommand}" Style="{StaticResource YesButton}" />
+              <Button Content="{Binding NoLabel}" Command="{Binding AnswerNoCommand}" Style="{StaticResource NoButton}" />
+              <Button Content="Back" Command="{Binding BackCommand}" />
+            </StackPanel>
+          </StackPanel>
+
+          <StackPanel Visibility="{Binding State, Converter={StaticResource ShownOn}, ConverterParameter=Confirming}">
+            <TextBlock Text="{Binding FinalSentence}" TextWrapping="Wrap" />
+            <StackPanel Style="{StaticResource ButtonRow}">
+              <Button Content="Remove" Command="{Binding ConfirmCommand}" />
+              <Button Content="Cancel" Command="{Binding CancelCommand}" IsCancel="True" IsDefault="True" />
+            </StackPanel>
+          </StackPanel>
+        </Grid>
+      </Grid>
+
+      <!-- Removing -->
+      <Grid Visibility="{Binding Screen, Converter={StaticResource ShownOn}, ConverterParameter=Removing}">
+        <DockPanel DataContext="{Binding Removing}">
+          <Grid DockPanel.Dock="Top" Margin="0,0,0,6">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" FontSize="16" Text="{Binding Heading}" />
+            <TextBlock
+              Grid.Column="1"
+              Margin="8,0,0,0"
+              VerticalAlignment="Bottom"
+              Style="{StaticResource HiddenWhenEmpty}"
+              Text="{Binding BytesLine}"
+            />
+          </Grid>
+          <ProgressBar DockPanel.Dock="Top" Height="6" Maximum="{Binding Total, Mode=OneWay}" Value="{Binding Done, Mode=OneWay}" />
+          <Grid DockPanel.Dock="Bottom" Margin="0,10,0,0">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="Stopping finishes the current item and skips the rest." />
+            <Button Grid.Column="1" Content="Stop after this item" Command="{Binding CancelCommand}" />
+          </Grid>
+          <TextBlock DockPanel.Dock="Bottom" Style="{StaticResource HiddenWhenEmpty}" Text="{Binding Banner}" />
+          <TextBlock DockPanel.Dock="Bottom" FontWeight="SemiBold" Style="{StaticResource HiddenWhenEmpty}" Text="{Binding Notice}" />
           <DataGrid
             AutoGenerateColumns="False"
             CanUserAddRows="False"
             CanUserDeleteRows="False"
-            CanUserSortColumns="True"
+            CanUserSortColumns="False"
             HeadersVisibility="Column"
             IsReadOnly="True"
-            ItemsSource="{Binding Shown, NotifyOnTargetUpdated=True}"
-            SelectedItem="{Binding Selected}"
-            SelectionMode="Single"
-            Sorting="OnListSorting"
-            TargetUpdated="OnListShownChanged"
+            ItemsSource="{Binding Rows}"
           >
             <DataGrid.Columns>
-              <DataGridTemplateColumn CanUserSort="False">
-                <DataGridTemplateColumn.Header>
-                  <CheckBox
-                    AutomationProperties.Name="Tick every shown row"
-                    IsChecked="{Binding DataContext.AllShownTicked, RelativeSource={RelativeSource AncestorType=DataGrid}, Mode=TwoWay}"
-                  />
-                </DataGridTemplateColumn.Header>
-                <DataGridTemplateColumn.CellTemplate>
-                  <DataTemplate>
-                    <CheckBox
-                      HorizontalAlignment="Center"
-                      VerticalAlignment="Center"
-                      IsChecked="{Binding IsTicked, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                    />
-                  </DataTemplate>
-                </DataGridTemplateColumn.CellTemplate>
-              </DataGridTemplateColumn>
-              <DataGridTextColumn Header="Path" FontFamily="Cascadia Mono, Consolas" SortMemberPath="Path" Binding="{Binding Path, Mode=OneWay}" />
-              <DataGridTextColumn Header="Kind" SortMemberPath="Kind" Binding="{Binding Kind, Mode=OneWay}" />
-              <DataGridTextColumn Header="Branch" SortMemberPath="Branch" Binding="{Binding Branch, Mode=OneWay}" />
-              <DataGridTemplateColumn Header="Merge" SortMemberPath="Merge">
-                <DataGridTemplateColumn.CellTemplate>
-                  <DataTemplate>
-                    <Border
-                      Background="{Binding MergeRisk, Converter={StaticResource RiskBrush}, ConverterParameter=Background}"
-                      Style="{StaticResource Pill}"
-                    >
-                      <TextBlock Foreground="{Binding MergeRisk, Converter={StaticResource RiskBrush}}" Text="{Binding Merge}" />
-                    </Border>
-                  </DataTemplate>
-                </DataGridTemplateColumn.CellTemplate>
-              </DataGridTemplateColumn>
-              <DataGridTemplateColumn Header="Dirty" SortMemberPath="Dirty">
-                <DataGridTemplateColumn.CellTemplate>
-                  <DataTemplate>
-                    <Border
-                      Background="{Binding DirtyRisk, Converter={StaticResource RiskBrush}, ConverterParameter=Background}"
-                      Style="{StaticResource Pill}"
-                    >
-                      <TextBlock Foreground="{Binding DirtyRisk, Converter={StaticResource RiskBrush}}" Text="{Binding Dirty}" />
-                    </Border>
-                  </DataTemplate>
-                </DataGridTemplateColumn.CellTemplate>
-              </DataGridTemplateColumn>
-              <DataGridTemplateColumn Header="Upstream" SortMemberPath="Upstream">
-                <DataGridTemplateColumn.CellTemplate>
-                  <DataTemplate>
-                    <Border
-                      Background="{Binding UpstreamRisk, Converter={StaticResource RiskBrush}, ConverterParameter=Background}"
-                      Style="{StaticResource Pill}"
-                    >
-                      <TextBlock Foreground="{Binding UpstreamRisk, Converter={StaticResource RiskBrush}}" Text="{Binding Upstream}" />
-                    </Border>
-                  </DataTemplate>
-                </DataGridTemplateColumn.CellTemplate>
-              </DataGridTemplateColumn>
-              <DataGridTextColumn
-                Header="Active"
-                SortMemberPath="Active"
-                Binding="{Binding Active, Mode=OneWay}"
-                ElementStyle="{StaticResource RightCell}"
-              />
-              <DataGridTextColumn
-                Header="Size"
-                SortMemberPath="Size"
-                Binding="{Binding Size, Mode=OneWay}"
-                ElementStyle="{StaticResource RightCell}"
-              />
-              <DataGridTextColumn Header="Flags" SortMemberPath="Flags" Binding="{Binding Flags, Mode=OneWay}" />
+              <DataGridTextColumn Header="Path" Binding="{Binding Path, Mode=OneWay}" />
+              <DataGridTextColumn Header="Status" Binding="{Binding ActionText, Mode=OneWay}" />
+              <DataGridTextColumn Header="Size" Binding="{Binding SizeText, Mode=OneWay}" />
             </DataGrid.Columns>
           </DataGrid>
-          <TextBlock
-            Margin="0,60,0,0"
-            HorizontalAlignment="Center"
-            VerticalAlignment="Top"
-            Foreground="#5C5C5C"
-            Visibility="{Binding NoMatch, Converter={StaticResource ShownWhenTrue}}"
-          >
-            No candidate matches this filter. <Hyperlink Command="{Binding ClearFiltersCommand}">Clear the filter</Hyperlink>
-          </TextBlock>
-        </Grid>
-      </DockPanel>
-    </Grid>
+        </DockPanel>
+      </Grid>
 
-    <!-- Review -->
-    <Grid Visibility="{Binding Screen, Converter={StaticResource ShownOn}, ConverterParameter=Review}">
-      <Grid DataContext="{Binding Review}">
-        <TextBlock
-          Text="Reading the Recycle Bin sizes…"
-          Visibility="{Binding State, Converter={StaticResource ShownOn}, ConverterParameter=Preparing}"
-        />
-
-        <StackPanel Visibility="{Binding State, Converter={StaticResource ShownOn}, ConverterParameter=Asking}">
-          <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding Title}" />
-          <TextBlock Margin="0,6,0,0" FontFamily="Consolas" Text="{Binding PickPath}" />
-          <TextBlock Margin="0,10,0,0" Text="{Binding Body}" TextWrapping="Wrap" />
-          <TextBlock Margin="0,10,0,0" Text="{Binding Question}" TextWrapping="Wrap" />
-          <StackPanel Style="{StaticResource ButtonRow}">
-            <Button Content="{Binding YesLabel}" Command="{Binding AnswerYesCommand}" Style="{StaticResource YesButton}" />
-            <Button Content="{Binding NoLabel}" Command="{Binding AnswerNoCommand}" Style="{StaticResource NoButton}" />
-            <Button Content="Back" Command="{Binding BackCommand}" />
+      <!-- Results -->
+      <Grid Visibility="{Binding Screen, Converter={StaticResource ShownOn}, ConverterParameter=Results}">
+        <DockPanel DataContext="{Binding Results}">
+          <TextBlock DockPanel.Dock="Top" Margin="0,0,0,6" Style="{StaticResource HiddenWhenEmpty}" Text="{Binding Banner}" />
+          <StackPanel DockPanel.Dock="Bottom" Style="{StaticResource ButtonRow}">
+            <Button Content="Close" Click="OnCloseClick" />
           </StackPanel>
-        </StackPanel>
-
-        <StackPanel Visibility="{Binding State, Converter={StaticResource ShownOn}, ConverterParameter=Confirming}">
-          <TextBlock Text="{Binding FinalSentence}" TextWrapping="Wrap" />
-          <StackPanel Style="{StaticResource ButtonRow}">
-            <Button Content="Remove" Command="{Binding ConfirmCommand}" />
-            <Button Content="Cancel" Command="{Binding CancelCommand}" IsCancel="True" IsDefault="True" />
-          </StackPanel>
-        </StackPanel>
+          <TextBlock DockPanel.Dock="Bottom" Margin="0,8,0,0" FontFamily="Consolas" FontWeight="SemiBold" Text="{Binding Total}" />
+          <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+            <ItemsControl FontFamily="Consolas" ItemsSource="{Binding Lines}" />
+          </ScrollViewer>
+        </DockPanel>
       </Grid>
     </Grid>
-
-    <!-- Removing -->
-    <Grid Visibility="{Binding Screen, Converter={StaticResource ShownOn}, ConverterParameter=Removing}">
-      <DockPanel DataContext="{Binding Removing}">
-        <Grid DockPanel.Dock="Top" Margin="0,0,0,6">
-          <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="*" />
-            <ColumnDefinition Width="Auto" />
-          </Grid.ColumnDefinitions>
-          <TextBlock Grid.Column="0" FontSize="16" Text="{Binding Heading}" />
-          <TextBlock
-            Grid.Column="1"
-            Margin="8,0,0,0"
-            VerticalAlignment="Bottom"
-            Style="{StaticResource HiddenWhenEmpty}"
-            Text="{Binding BytesLine}"
-          />
-        </Grid>
-        <ProgressBar DockPanel.Dock="Top" Height="6" Maximum="{Binding Total, Mode=OneWay}" Value="{Binding Done, Mode=OneWay}" />
-        <Grid DockPanel.Dock="Bottom" Margin="0,10,0,0">
-          <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="*" />
-            <ColumnDefinition Width="Auto" />
-          </Grid.ColumnDefinitions>
-          <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="Stopping finishes the current item and skips the rest." />
-          <Button Grid.Column="1" Content="Stop after this item" Command="{Binding CancelCommand}" />
-        </Grid>
-        <TextBlock DockPanel.Dock="Bottom" Style="{StaticResource HiddenWhenEmpty}" Text="{Binding Banner}" />
-        <TextBlock DockPanel.Dock="Bottom" FontWeight="SemiBold" Style="{StaticResource HiddenWhenEmpty}" Text="{Binding Notice}" />
-        <DataGrid
-          AutoGenerateColumns="False"
-          CanUserAddRows="False"
-          CanUserDeleteRows="False"
-          CanUserSortColumns="False"
-          HeadersVisibility="Column"
-          IsReadOnly="True"
-          ItemsSource="{Binding Rows}"
-        >
-          <DataGrid.Columns>
-            <DataGridTextColumn Header="Path" Binding="{Binding Path, Mode=OneWay}" />
-            <DataGridTextColumn Header="Status" Binding="{Binding ActionText, Mode=OneWay}" />
-            <DataGridTextColumn Header="Size" Binding="{Binding SizeText, Mode=OneWay}" />
-          </DataGrid.Columns>
-        </DataGrid>
-      </DockPanel>
-    </Grid>
-
-    <!-- Results -->
-    <Grid Visibility="{Binding Screen, Converter={StaticResource ShownOn}, ConverterParameter=Results}">
-      <DockPanel DataContext="{Binding Results}">
-        <TextBlock DockPanel.Dock="Top" Margin="0,0,0,6" Style="{StaticResource HiddenWhenEmpty}" Text="{Binding Banner}" />
-        <StackPanel DockPanel.Dock="Bottom" Style="{StaticResource ButtonRow}">
-          <Button Content="Close" Click="OnCloseClick" />
-        </StackPanel>
-        <TextBlock DockPanel.Dock="Bottom" Margin="0,8,0,0" FontFamily="Consolas" FontWeight="SemiBold" Text="{Binding Total}" />
-        <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
-          <ItemsControl FontFamily="Consolas" ItemsSource="{Binding Lines}" />
-        </ScrollViewer>
-      </DockPanel>
-    </Grid>
-  </Grid>
+  </DockPanel>
 </Window>
