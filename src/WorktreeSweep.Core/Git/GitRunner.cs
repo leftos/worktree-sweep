@@ -147,7 +147,7 @@ public static class GitRunner
         // Declared after the process, so disposed before it on every exit path; disposing waits for a running kill, so no kill
         // can reach the process after it is disposed.
         using CancellationTokenRegistration registration = token.Register(() => _ = call.Kill.Value);
-        bool exited = process.WaitForExit(timeout);
+        bool exited = WaitForExit(process, timeout, token);
         if (token.IsCancellationRequested)
         {
             throw Cancelled(call, token);
@@ -268,22 +268,25 @@ public static class GitRunner
     }
 
     /// <summary>
-    /// The error for a git child that outlived its limit, after its tree is killed and its exit and reads are each waited for up to
-    /// <paramref name="grace"/>. A cancel that arrives during those waits ends them, and the error becomes the cancel's.
+    /// The error for a git child that outlived its limit, after its tree is killed. When the kill fails, that is reported at once,
+    /// with no wait. When it succeeds, git's exit and reads are each waited for up to <paramref name="grace"/>; a cancel that
+    /// arrives during those waits ends them, and the error becomes the cancel's.
     /// </summary>
     private static Exception TimedOut(Call call, TimeSpan timeout, TimeSpan grace, CancellationToken token)
     {
+        string limit = $"{call.Command} did not exit within {Seconds(timeout)} s";
         Exception? failure = call.Kill.Value;
+        if (failure is not null)
+        {
+            return new GitTimeoutException($"{limit}; killing it failed: {failure.Message}", failure);
+        }
         _ = WaitForExit(call.Process, grace, token);
         _ = WaitForReads(call.Reads, grace, token);
         if (token.IsCancellationRequested)
         {
             return Cancelled(call, token);
         }
-        string limit = $"{call.Command} did not exit within {Seconds(timeout)} s";
-        return failure is not null
-            ? new GitTimeoutException($"{limit}; killing it failed: {failure.Message}", failure)
-            : new GitTimeoutException($"{limit} and was killed");
+        return new GitTimeoutException($"{limit} and was killed");
     }
 
     /// <summary>
