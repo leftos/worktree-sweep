@@ -5,15 +5,20 @@ namespace WorktreeSweep.Tests;
 /// <summary>The elevated <c>unlock</c> arguments, and the hint to run the command by hand.</summary>
 public sealed class SudoCommandTests
 {
-    /// <summary>The arguments name this program, then the caller and the sweep, with every path backslashed.</summary>
+    private const string Exe = @"C:\tools\worktree-sweep.exe";
+
+    private const string Result = @"C:\Temp\worktree-sweep-unlock.txt";
+
+    /// <summary>The arguments name this program, then the caller and the sweep, then the result file and every backslashed path.</summary>
     [Fact]
     public void ArgvPassesCallerPidAndBackslashPaths()
     {
         string[] paths = ["D:/a.wt/x", @"D:\b"];
+        var self = new SweepProcess(Exe, 4242, null, 5150);
 
         Assert.Equal<string[]>(
-            [@"C:\tools\worktree-sweep.exe", "unlock", "--caller-pid", "4242", "--sweep-pid", "5150", @"D:\a.wt\x", @"D:\b"],
-            [.. SudoCommand.Argv(@"C:\tools\worktree-sweep.exe", 4242, null, 5150, paths)]
+            [Exe, "unlock", "--caller-pid", "4242", "--sweep-pid", "5150", "--result", Result, @"D:\a.wt\x", @"D:\b"],
+            [.. SudoCommand.Argv(Exe, self, Result, paths)]
         );
     }
 
@@ -21,9 +26,11 @@ public sealed class SudoCommandTests
     [Fact]
     public void ArgvLeavesOutAnUnknownCaller()
     {
+        var self = new SweepProcess(Exe, null, null, 5150);
+
         Assert.Equal<string[]>(
-            [@"C:\tools\worktree-sweep.exe", "unlock", "--sweep-pid", "5150", @"D:\a"],
-            [.. SudoCommand.Argv(@"C:\tools\worktree-sweep.exe", null, null, 5150, [@"D:\a"])]
+            [Exe, "unlock", "--sweep-pid", "5150", "--result", Result, @"D:\a"],
+            [.. SudoCommand.Argv(Exe, self, Result, [@"D:\a"])]
         );
     }
 
@@ -31,19 +38,11 @@ public sealed class SudoCommandTests
     [Fact]
     public void ArgvPassesCallerStarted()
     {
+        var self = new SweepProcess(Exe, 4242, 133700000000000000UL, 5150);
+
         Assert.Equal<string[]>(
-            [
-                @"C:\tools\worktree-sweep.exe",
-                "unlock",
-                "--caller-pid",
-                "4242",
-                "--caller-started",
-                "133700000000000000",
-                "--sweep-pid",
-                "5150",
-                @"D:\a",
-            ],
-            [.. SudoCommand.Argv(@"C:\tools\worktree-sweep.exe", 4242, 133700000000000000UL, 5150, [@"D:\a"])]
+            [Exe, "unlock", "--caller-pid", "4242", "--caller-started", "133700000000000000", "--sweep-pid", "5150", "--result", Result, @"D:\a"],
+            [.. SudoCommand.Argv(Exe, self, Result, [@"D:\a"])]
         );
     }
 
@@ -51,9 +50,11 @@ public sealed class SudoCommandTests
     [Fact]
     public void ArgvLeavesOutAnUnknownCallerStarted()
     {
+        var self = new SweepProcess(Exe, 4242, null, 5150);
+
         Assert.Equal<string[]>(
-            [@"C:\tools\worktree-sweep.exe", "unlock", "--caller-pid", "4242", "--sweep-pid", "5150", @"D:\a"],
-            [.. SudoCommand.Argv(@"C:\tools\worktree-sweep.exe", 4242, null, 5150, [@"D:\a"])]
+            [Exe, "unlock", "--caller-pid", "4242", "--sweep-pid", "5150", "--result", Result, @"D:\a"],
+            [.. SudoCommand.Argv(Exe, self, Result, [@"D:\a"])]
         );
     }
 
@@ -61,9 +62,11 @@ public sealed class SudoCommandTests
     [Fact]
     public void ArgvLeavesOutCallerStartedWithoutACallerPid()
     {
+        var self = new SweepProcess(Exe, null, 133700000000000000UL, 5150);
+
         Assert.Equal<string[]>(
-            [@"C:\tools\worktree-sweep.exe", "unlock", "--sweep-pid", "5150", @"D:\a"],
-            [.. SudoCommand.Argv(@"C:\tools\worktree-sweep.exe", null, 133700000000000000UL, 5150, [@"D:\a"])]
+            [Exe, "unlock", "--sweep-pid", "5150", "--result", Result, @"D:\a"],
+            [.. SudoCommand.Argv(Exe, self, Result, [@"D:\a"])]
         );
     }
 

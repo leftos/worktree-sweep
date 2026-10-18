@@ -3,7 +3,9 @@ namespace WorktreeSweep.Unlock;
 /// <summary>
 /// The unelevated side of the unlock flow, offered once per run: prints the locked paths, checks that <c>sudo</c> is in Inline
 /// mode, asks (default yes), and runs this program's <c>unlock</c> subcommand through <c>sudo</c> with the console shared, so the
-/// elevated prompts reach the user. When <c>sudo</c> is missing or in another mode it prints the command to run by hand and skips.
+/// elevated prompts reach the user. The session reports its exit code to a result file, so a session whose process cannot finish
+/// exiting is left behind after a bounded wait. When <c>sudo</c> is missing or in another mode the offer prints the command to run
+/// by hand and skips.
 /// </summary>
 /// <param name="input">Where the answer comes from.</param>
 /// <param name="output">Where the paths, the question and the manual command go.</param>
@@ -11,6 +13,9 @@ namespace WorktreeSweep.Unlock;
 /// <param name="self">This program's path, its caller and its PID, which the elevated side is given.</param>
 public sealed class UnlockOffer(TextReader input, TextWriter output, ISudoRunner sudo, SweepProcess self)
 {
+    /// <summary>How long the elevated process is given to exit after it has reported its result.</summary>
+    internal static readonly TimeSpan ExitWait = TimeSpan.FromSeconds(10);
+
     /// <summary>The question the offer asks before elevating.</summary>
     private const string Question = "Run an elevated scan with sudo to find what holds them?";
 
@@ -54,13 +59,21 @@ public sealed class UnlockOffer(TextReader input, TextWriter output, ISudoRunner
         {
             return UnlockOutcome.Skipped;
         }
-        int code = sudo.Run(SudoCommand.Argv(exe, self.CallerPid, self.CallerStarted, self.Pid, paths));
-        if (UnlockOutcomes.ForExit(code) is UnlockOutcome outcome)
+        string resultFile = UnlockResultFile.NewPath();
+        AttachedExit exit = sudo.Run(SudoCommand.Argv(exe, self, resultFile, paths), resultFile);
+        if (exit.StillRunning)
+        {
+            output.WriteLine(
+                "The elevated session reported its result but has not exited after "
+                    + $"{(int)ExitWait.TotalSeconds} s; worktree-sweep goes on without waiting for it."
+            );
+        }
+        if (UnlockOutcomes.ForExit(exit.Code) is UnlockOutcome outcome)
         {
             return outcome;
         }
         output.WriteLine(
-            $"the elevated scan failed (exit code {code}); to retry, run in an administrator terminal: {SudoCommand.Manual(exe, paths)}"
+            $"the elevated scan failed (exit code {exit.Code}); to retry, run in an administrator terminal: {SudoCommand.Manual(exe, paths)}"
         );
         return Skip();
     }

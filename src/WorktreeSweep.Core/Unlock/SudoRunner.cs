@@ -7,5 +7,6 @@ public sealed class SudoRunner : ISudoRunner
     public SudoMode? Mode() => SudoConfig.Read();
 
     /// <inheritdoc/>
-    public int Run(IReadOnlyList<string> arguments) => ChildProcess.RunAttached(SudoConfig.Program, arguments);
+    public AttachedExit Run(IReadOnlyList<string> arguments, string resultFile) =>
+        ChildProcess.RunAttached(SudoConfig.Program, arguments, resultFile, UnlockOffer.ExitWait);
 }

@@ -17,7 +17,7 @@ public sealed class UnlockOfferTests
     [Fact]
     public void OfferListsThePaths()
     {
-        var sudo = new FakeSudo(SudoMode.Inline, 0);
+        var sudo = new FakeSudo(SudoMode.Inline, 0, stillRunning: false);
 
         (_, string output) = Offer(sudo, "n\n", Exe);
 
@@ -32,7 +32,7 @@ public sealed class UnlockOfferTests
     [InlineData(SudoMode.Unknown, "an unrecognised")]
     public void OtherModeWritesTheManualCommandAndSkips(SudoMode mode, string label)
     {
-        var sudo = new FakeSudo(mode, 0);
+        var sudo = new FakeSudo(mode, 0, stillRunning: false);
 
         (UnlockOutcome outcome, string output) = Offer(sudo, "y\n", Exe);
 
@@ -51,7 +51,7 @@ public sealed class UnlockOfferTests
     [Fact]
     public void MissingSudoWritesTheManualCommandAndSkips()
     {
-        var sudo = new FakeSudo(null, 0);
+        var sudo = new FakeSudo(null, 0, stillRunning: false);
 
         (UnlockOutcome outcome, string output) = Offer(sudo, "y\n", Exe);
 
@@ -65,7 +65,7 @@ public sealed class UnlockOfferTests
     [Fact]
     public void DecliningSkips()
     {
-        var sudo = new FakeSudo(SudoMode.Inline, 0);
+        var sudo = new FakeSudo(SudoMode.Inline, 0, stillRunning: false);
 
         (UnlockOutcome outcome, string output) = Offer(sudo, "n\n", Exe);
 
@@ -78,7 +78,7 @@ public sealed class UnlockOfferTests
     [Fact]
     public void EndOfInputDeclines()
     {
-        var sudo = new FakeSudo(SudoMode.Inline, 0);
+        var sudo = new FakeSudo(SudoMode.Inline, 0, stillRunning: false);
 
         (UnlockOutcome outcome, _) = Offer(sudo, "", Exe);
 
@@ -94,13 +94,49 @@ public sealed class UnlockOfferTests
     [InlineData("Y\n", 4, UnlockOutcome.StillLocked)]
     public void AcceptingRunsSudoAndMapsTheExit(string answer, int exitCode, UnlockOutcome expected)
     {
-        var sudo = new FakeSudo(SudoMode.Inline, exitCode);
+        var sudo = new FakeSudo(SudoMode.Inline, exitCode, stillRunning: false);
 
         (UnlockOutcome outcome, _) = Offer(sudo, answer, Exe);
 
         Assert.Equal(expected, outcome);
         IReadOnlyList<string> run = Assert.Single(sudo.Runs);
-        Assert.Equal<string>([Exe, "unlock", "--caller-pid", "100", "--sweep-pid", "200", @"D:\a.wt\x", @"D:\b.wt\y"], run);
+        Assert.Equal<string>(
+            [Exe, "unlock", "--caller-pid", "100", "--sweep-pid", "200", "--result", sudo.ResultFile!, @"D:\a.wt\x", @"D:\b.wt\y"],
+            run
+        );
+    }
+
+    /// <summary>The result path given to <c>sudo</c> is the one its arguments name.</summary>
+    [Fact]
+    public void OfferPassesTheResultPathToSudo()
+    {
+        var sudo = new FakeSudo(SudoMode.Inline, 0, stillRunning: false);
+
+        _ = Offer(sudo, "y\n", Exe);
+
+        List<string> run = [.. Assert.Single(sudo.Runs)];
+        int index = run.IndexOf("--result");
+        Assert.NotEqual(-1, index);
+        Assert.Equal(sudo.ResultFile, run[index + 1]);
+    }
+
+    /// <summary>
+    /// A session that reports its result but has not exited by the bound still gives its outcome, and the offer writes the line
+    /// that says the sweep goes on without it.
+    /// </summary>
+    [Fact]
+    public void OfferSaysWhenTheSessionHasNotExited()
+    {
+        var sudo = new FakeSudo(SudoMode.Inline, 0, stillRunning: true);
+
+        (UnlockOutcome outcome, string output) = Offer(sudo, "y\n", Exe);
+
+        Assert.Equal(UnlockOutcome.Unlocked, outcome);
+        Assert.Contains(
+            "The elevated session reported its result but has not exited after 10 s; worktree-sweep goes on without waiting for it.\n",
+            output,
+            StringComparison.Ordinal
+        );
     }
 
     /// <summary>
@@ -114,7 +150,7 @@ public sealed class UnlockOfferTests
     [InlineData(-1)]
     public void UnknownExitCodeSaysTheScanFailedAndSkips(int exitCode)
     {
-        var sudo = new FakeSudo(SudoMode.Inline, exitCode);
+        var sudo = new FakeSudo(SudoMode.Inline, exitCode, stillRunning: false);
 
         (UnlockOutcome outcome, string output) = Offer(sudo, "y\n", Exe);
 
@@ -137,7 +173,7 @@ public sealed class UnlockOfferTests
     [InlineData("/usr/share/dotnet/dotnet")]
     public void DotnetHostNamesTheApphostAndSkips(string processPath)
     {
-        var sudo = new FakeSudo(SudoMode.Inline, 0);
+        var sudo = new FakeSudo(SudoMode.Inline, 0, stillRunning: false);
 
         (UnlockOutcome outcome, string output) = Offer(sudo, "y\n", processPath);
 
@@ -156,7 +192,7 @@ public sealed class UnlockOfferTests
     public void DotnetHostWithSudoNotInlineWritesTheManualCommand()
     {
         const string dotnet = @"C:\Program Files\dotnet\dotnet.exe";
-        var sudo = new FakeSudo(SudoMode.ForceNewWindow, 0);
+        var sudo = new FakeSudo(SudoMode.ForceNewWindow, 0, stillRunning: false);
 
         (UnlockOutcome outcome, string output) = Offer(sudo, "y\n", dotnet);
 
@@ -170,7 +206,7 @@ public sealed class UnlockOfferTests
     [Fact]
     public void OfferPassesTheCallersCreationTime()
     {
-        var sudo = new FakeSudo(SudoMode.Inline, 0);
+        var sudo = new FakeSudo(SudoMode.Inline, 0, stillRunning: false);
         using var writer = new StringWriter { NewLine = "\n" };
         using var reader = new StringReader("y\n");
         var offer = new UnlockOffer(reader, writer, sudo, new SweepProcess(Exe, CallerPid, 133700000000000000, SweepPid));
@@ -180,7 +216,20 @@ public sealed class UnlockOfferTests
         Assert.Equal(UnlockOutcome.Unlocked, outcome);
         IReadOnlyList<string> run = Assert.Single(sudo.Runs);
         Assert.Equal<string>(
-            [Exe, "unlock", "--caller-pid", "100", "--caller-started", "133700000000000000", "--sweep-pid", "200", @"D:\a.wt\x", @"D:\b.wt\y"],
+            [
+                Exe,
+                "unlock",
+                "--caller-pid",
+                "100",
+                "--caller-started",
+                "133700000000000000",
+                "--sweep-pid",
+                "200",
+                "--result",
+                sudo.ResultFile!,
+                @"D:\a.wt\x",
+                @"D:\b.wt\y",
+            ],
             run
         );
     }
@@ -189,7 +238,7 @@ public sealed class UnlockOfferTests
     [Fact]
     public void OfferFitsTheCallback()
     {
-        var sudo = new FakeSudo(SudoMode.Inline, 3);
+        var sudo = new FakeSudo(SudoMode.Inline, 3, stillRunning: false);
         var offer = new UnlockOffer(
             new StringReader("y\n"),
             new StringWriter { NewLine = "\n" },
@@ -211,17 +260,21 @@ public sealed class UnlockOfferTests
         return (outcome, writer.ToString());
     }
 
-    /// <summary>A sudo that reports a fixed mode and records each run instead of starting anything.</summary>
-    private sealed class FakeSudo(SudoMode? mode, int exitCode) : ISudoRunner
+    /// <summary>A sudo that reports a fixed mode and result and records each run instead of starting anything.</summary>
+    private sealed class FakeSudo(SudoMode? mode, int exitCode, bool stillRunning) : ISudoRunner
     {
         public List<IReadOnlyList<string>> Runs { get; } = [];
 
+        /// <summary>The result path the last run was given.</summary>
+        public string? ResultFile { get; private set; }
+
         public SudoMode? Mode() => mode;
 
-        public int Run(IReadOnlyList<string> arguments)
+        public AttachedExit Run(IReadOnlyList<string> arguments, string resultFile)
         {
             Runs.Add(arguments);
-            return exitCode;
+            ResultFile = resultFile;
+            return new AttachedExit(exitCode, stillRunning);
         }
     }
 }
