@@ -593,6 +593,27 @@ public sealed class ElevatedSessionTests : IDisposable
         Assert.Contains("pwsh.exe (pid 642) is no longer the process the scan saw; skipped.\n", output.ToString(), StringComparison.Ordinal);
     }
 
+    /// <summary>A closing pass that cannot confirm the locker as the process the scan saw reports it skipped, not zero handles
+    /// closed, and counts as nothing acted on.</summary>
+    [Fact]
+    public void ClosePassThatCannotConfirmTheLockerIsSkipped()
+    {
+        StringWriter output = Writer();
+        var processes = new ScriptedProcessControl(Running(("pwsh.exe", 642)));
+        processes.StartedTimes[642] = 1000;
+        var scan = new FakeScan(Found(Pwsh(1000))) { UnconfirmedClose = true };
+        var handleExe = new FakeHandleExe();
+        ElevatedSession session = Session(new StringReader("2\ny\n"), output, scan, handleExe, processes);
+
+        int exit = session.Run([Locked], null, null, null);
+
+        string text = output.ToString();
+        Assert.Equal(UnlockExit.NothingDone, exit);
+        Assert.Empty(handleExe.Closed);
+        Assert.Contains("pwsh.exe (pid 642) could not be confirmed as the process the scan saw; skipped.\n", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("Closed 0 of", text, StringComparison.Ordinal);
+    }
+
     /// <summary>The start time the scan saw is passed to the stop, so it needs no second check of its own.</summary>
     [Fact]
     public void StopPassesTheScanStartTime()
@@ -895,19 +916,23 @@ public sealed class ElevatedSessionTests : IDisposable
         /// <summary>Gets the handle values whose re-check throws; the real scan traces the failure and leaves the handle open.</summary>
         public HashSet<nint> RecheckThrows { get; } = [];
 
+        /// <summary>Gets or sets a value indicating whether each closing pass reports that the locker could not be confirmed as the
+        /// process the scan saw, closing nothing.</summary>
+        public bool UnconfirmedClose { get; set; }
+
         public LockerFindings Find(IReadOnlyList<string> lockedPaths, IReadOnlyCollection<int> pids)
         {
             Scanned.Add([.. pids]);
             return pending.Count > 1 ? pending.Dequeue() : pending.Peek();
         }
 
-        public int CloseStillHeld(Locker locker, IReadOnlyList<string> lockedPaths, Func<HeldHandle, bool> close)
+        public int? CloseStillHeld(Locker locker, IReadOnlyList<string> lockedPaths, Func<HeldHandle, bool> close)
         {
             var call = new CloseCall(locker.Pid, locker.Started);
             CloseCalls.Add(call);
-            if (locker.Started is null)
+            if (UnconfirmedClose || locker.Started is null)
             {
-                return 0;
+                return null;
             }
             open = call;
             try
@@ -954,7 +979,7 @@ public sealed class ElevatedSessionTests : IDisposable
         public LockerFindings Find(IReadOnlyList<string> lockedPaths, IReadOnlyCollection<int> pids) =>
             new([], [.. lockedPaths.Select(path => new UnreadableUser("pwsh.exe", 642, path))], []);
 
-        public int CloseStillHeld(Locker locker, IReadOnlyList<string> lockedPaths, Func<HeldHandle, bool> close) => 0;
+        public int? CloseStillHeld(Locker locker, IReadOnlyList<string> lockedPaths, Func<HeldHandle, bool> close) => 0;
     }
 
     /// <summary>A handle.exe that records what it closed.</summary>

@@ -46,7 +46,8 @@ public sealed class LockerScanTests : IDisposable
 
     /// <summary>
     /// The closing pass hands the close a handle a same-user child still holds under the folder, and hands it nothing under another
-    /// start time, an unknown start time, a folder the handle is not under, or once the child has exited.
+    /// start time or an unknown start time, reporting the process unconfirmed; it hands it nothing either under a folder the handle
+    /// is not under, or once the child has exited, and reports 0 there because the process was confirmed.
     /// </summary>
     [Fact]
     public void CloseStillHeldClosesOnlyForTheSameProcessAndFolder()
@@ -72,13 +73,13 @@ public sealed class LockerScanTests : IDisposable
             Assert.Equal(1, scan.CloseStillHeld(locker, [folder], Close));
             Assert.Equal([held], handed);
             handed.Clear();
-            Assert.Equal(0, scan.CloseStillHeld(locker with { Started = locker.Started + 1 }, [folder], Close));
-            Assert.Equal(0, scan.CloseStillHeld(locker with { Started = null }, [folder], Close));
+            Assert.Null(scan.CloseStillHeld(locker with { Started = locker.Started + 1 }, [folder], Close));
+            Assert.Null(scan.CloseStillHeld(locker with { Started = null }, [folder], Close));
             Assert.Equal(0, scan.CloseStillHeld(locker, [other], Close));
             // Kills the child, waits for its exit and drops the test's own handle to it; a PID reused since has another start time.
             child.Dispose();
             stopped = true;
-            Assert.Equal(0, scan.CloseStillHeld(locker, [folder], Close));
+            Assert.Null(scan.CloseStillHeld(locker, [folder], Close));
             Assert.Empty(handed);
         }
         finally
@@ -102,7 +103,7 @@ public sealed class LockerScanTests : IDisposable
         Locker locker = Assert.Single(scan.Find([folder], [child.Id]).Lockers);
         var startedDuringClose = new List<ulong?>();
 
-        int closed = scan.CloseStillHeld(
+        int? closed = scan.CloseStillHeld(
             locker,
             [folder],
             _ =>
@@ -134,7 +135,7 @@ public sealed class LockerScanTests : IDisposable
         );
         Locker locker = Assert.Single(scan.Find([folder], [child.Id]).Lockers);
 
-        int closed = scan.CloseStillHeld(
+        int? closed = scan.CloseStillHeld(
             locker,
             [folder],
             held =>
@@ -164,7 +165,7 @@ public sealed class LockerScanTests : IDisposable
         Locker locker = Assert.Single(scan.Find([folder], [child.Id]).Lockers);
         var handed = new List<string>();
 
-        int closed = scan.CloseStillHeld(
+        int? closed = scan.CloseStillHeld(
             locker,
             [folder],
             held =>
