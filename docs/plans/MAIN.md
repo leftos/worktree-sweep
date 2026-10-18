@@ -8,17 +8,14 @@
 - [!] WTS-57 Choose and rescan a folder from the window, with scan progress
 - [!] WTS-58 Sort, filter and tick shown rows on the Pick screen
 - [!] WTS-59 Show removal progress on the Removing screen
-- [ ] WTS-60 Document the window redesign and ship feat/window-redesign
+- [!] WTS-60 Document the window redesign and ship feat/window-redesign
 - [!] WTS-61 Show discovery errors on the window's Empty screen
 - [ ] WTS-64 Merge feat/window-redesign (#124)
-
-## C# rewrite
-
-- [ ] WTS-70 Never let an abandoned handle lookup keep a locked folder held by the tool itself
-- [ ] WTS-72 Bound the wait for an elevated session whose process cannot exit
-- [ ] WTS-73 Correct three stale statements about handle naming
 
 ## Backlog
 
 - [ ] WTS-62 Say a worktree may lose work when its loss signals could not be read
 - [ ] WTS-63 Kill git calls through a job object so no child survives the kill
+- [ ] WTS-74 Show a stalled-volume notice on the Scanning screen
+- [ ] WTS-77 Make CloseStillHeldClosesOnlyForTheSameProcessAndFolder hold under parallel scans
+- [ ] WTS-78 Let git itself retry a held lock rename for every git call in the tests
