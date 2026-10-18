@@ -19,6 +19,15 @@ public sealed class Fixture : IDisposable
 {
     private static readonly Lazy<string> EmptyGitConfig = new(IsolateGitConfig);
 
+    /// <summary>How long a git call whose lock-file rename keeps meeting a held file may keep retrying.</summary>
+    private static readonly TimeSpan RetryLimit = TimeSpan.FromSeconds(60);
+
+    /// <summary>How long the first retry waits, doubled for each later one up to a second.</summary>
+    private static readonly TimeSpan FirstRetryWait = TimeSpan.FromMilliseconds(50);
+
+    /// <summary>The longest wait between two retries.</summary>
+    private static readonly TimeSpan MaxRetryWait = TimeSpan.FromSeconds(1);
+
     /// <summary>Initializes a new instance of the <see cref="Fixture"/> class with a new temporary root folder.</summary>
     public Fixture()
         : this(Directory.CreateTempSubdirectory("worktree-sweep-").FullName) { }
@@ -87,13 +96,59 @@ public sealed class Fixture : IDisposable
 
     /// <summary>
     /// Runs git in <paramref name="dir"/> through <see cref="GitRunner"/>, so without the repo-local variables a calling git hook
-    /// exports, with a fixed identity and no signing.
+    /// exports, with a fixed identity and no signing. A call whose lock-file rename meets a file another process holds without
+    /// delete sharing runs again once the holder lets go, instead of failing with "Permission denied"; a later attempt that fails
+    /// another way names the first such hold. Retries stop being started after <see cref="RetryLimit"/>; an attempt already
+    /// running can still take up to git's own call timeout.
     /// </summary>
     /// <param name="dir">The directory git runs in.</param>
     /// <param name="args">The git arguments.</param>
     /// <returns>Standard output, trimmed.</returns>
-    public static string Git(string dir, IReadOnlyList<string> args) =>
-        GitRunner.Run(dir, ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", .. args]);
+    public static string Git(string dir, IReadOnlyList<string> args)
+    {
+        string[] full = ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", .. args];
+        var stopwatch = Stopwatch.StartNew();
+        TimeSpan wait = FirstRetryWait;
+        string? firstHeld = null;
+        while (true)
+        {
+            GitStatus status = GitRunner.RunStatus(dir, full);
+            if (status.Success)
+            {
+                return status.Stdout.Trim();
+            }
+            if (!HeldByAnotherProcess(status))
+            {
+                GitException failure = GitRunner.Failure(dir, full, status);
+                throw firstHeld is null
+                    ? failure
+                    : new GitException($"{failure.Message} (an earlier attempt failed because another process held a file: {firstHeld.Trim()})");
+            }
+            if (stopwatch.Elapsed >= RetryLimit)
+            {
+                throw GitRunner.Failure(dir, full, status);
+            }
+            firstHeld ??= status.Stderr;
+            Thread.Sleep(wait);
+            wait = TimeSpan.FromMilliseconds(Math.Min(wait.TotalMilliseconds * 2, MaxRetryWait.TotalMilliseconds));
+        }
+    }
+
+    /// <summary>
+    /// Whether a git call failed because its lock-file rename met a file another process holds without delete sharing, as an
+    /// on-access scanner holds a freshly written <c>.git\config</c> in <c>%TEMP%</c>. Git for Windows retries the rename for about
+    /// 100 ms and then gives up, so the call is worth running again once the holder lets go. Only a permission failure on a lock
+    /// file or on the config git writes counts: an ACL denial on a folder, or a rejected SSH key, is a failure the hold cannot
+    /// explain.
+    /// </summary>
+    /// <param name="status">What git returned.</param>
+    /// <returns><see langword="true"/> when another process held a file git renames over.</returns>
+    internal static bool HeldByAnotherProcess(GitStatus status) =>
+        status.Stderr.Contains(": Permission denied", StringComparison.Ordinal)
+        && (
+            status.Stderr.Contains(".lock", StringComparison.Ordinal)
+            || status.Stderr.Contains("could not write config file", StringComparison.Ordinal)
+        );
 
     /// <summary>Writes <paramref name="file"/> in <paramref name="dir"/>, stages it and commits it.</summary>
     /// <param name="dir">The repo or worktree.</param>
