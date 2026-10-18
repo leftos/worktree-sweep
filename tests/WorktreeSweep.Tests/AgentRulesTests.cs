@@ -149,6 +149,21 @@ public sealed class AgentRulesTests
         Assert.Equal(Reason.Locked, LockedReason.For(new HolderReport([], [])));
     }
 
+    /// <summary>
+    /// A folder whose users could not be listed is <c>cannot_tell</c> only when nothing was found: a nominated holder or a may-hold
+    /// process still decides the reason.
+    /// </summary>
+    [Fact]
+    public void LockedReasonCannotTellOnlyWhenNothingWasFound()
+    {
+        var unknown = new HolderReport([], []) { UnknownFolders = [@"D:\x.wt\feat"] };
+
+        Assert.Equal(Reason.CannotTell, LockedReason.For(unknown));
+        Assert.Equal(Reason.MayHold, LockedReason.For(unknown with { MayHold = [May(30)] }));
+        Assert.Equal(Reason.Locked, LockedReason.For(unknown with { Holders = [Holder(10, CwdHold())] }));
+        Assert.Equal(Reason.Locked, LockedReason.For(new HolderReport([], [])));
+    }
+
     /// <summary>A clean worktree <c>D:\x.wt\feat</c> of <c>D:\x</c> on branch <c>feat</c>, with no upstream.</summary>
     private static RegisteredCandidate Clean(MergeState mergeState) =>
         new()

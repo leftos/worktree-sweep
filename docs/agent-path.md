@@ -70,7 +70,7 @@ Answered:
 
 1. **Allowlist:** `rust-analyzer*` and its proc-macro server, `cargo`, MSBuild nodes and `VBCSCompiler`, each stopped only when it actually holds something inside the worktree. Editors' other LSP and MCP servers are never stopped.
 2. **Detection:** cwd plus per-process disk handles, the recommended route above.
-3. **Unseen holders:** a handle whose name can't be read, or a process we can't open, is reported as `may_hold` with PID and exe (unopenable ones named through `FileProcessIdsUsingFile` on the root), never stopped, and the worktree is marked released.
+3. **Unseen holders:** a handle whose name can't be read, or a process we can't open, is reported as `may_hold` with PID and exe (unopenable ones named through `FileProcessIdsUsingFile` on the root), never stopped, and the worktree is marked released. A folder whose users the file system cannot list, with no holder found, releases as `cannot_tell` with a note naming the folder (`HolderReport.UnknownFolders`).
 4. **Caller's own shell:** before touching anything, if a process in `remove`'s own parent chain holds the worktree, it exits with `caller_holds` and the folder to `cd` to (the repo's main worktree).
 5. **Lost work:** a dirty, unmerged or unpushed worktree is refused with `would_lose` and the picker's loss sentence, unless `--force`; the branch is deleted only when merged or with no commits, `--force` or not.
 6. **Too big for the Recycle Bin:** `remove` deletes nothing, reports `too_big_for_recycle_bin`, and marks the worktree released, so the interactive sweep asks about the permanent delete.

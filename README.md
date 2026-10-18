@@ -127,7 +127,7 @@ The output is one JSON object, snake_case, indented, with `null` for an absent f
 | `status` | Exit code | `reason` |
 |---|---|---|
 | `removed` | 0 | `null` |
-| `released` | 5 | `locked`, `may_hold` (only processes whose handles could not be read may hold it), `too_big_for_recycle_bin`, `shell_timeout` |
+| `released` | 5 | `locked`, `may_hold` (only processes whose handles could not be read may hold it), `cannot_tell` (no holder was found, and the processes using the folder could not be listed; a `notes` line names the folder), `too_big_for_recycle_bin`, `shell_timeout` |
 | `refused` | 6 | `would_lose` (with `loss`), `caller_holds` (with `cd_to`), `main_worktree`, `bare_repo`, `subfolder`, `orphan`, `link`, `not_a_worktree`, `not_found` |
 
 A usage error exits 2. Any other failure, an unexpected exception included, exits 1 with an `error: <message>` line on standard error and nothing on standard output.

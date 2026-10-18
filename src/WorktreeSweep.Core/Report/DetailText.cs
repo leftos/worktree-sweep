@@ -270,6 +270,7 @@ public static class DetailText
         {
             ReasonKind.Locked => "locked",
             ReasonKind.MayHold => "may be held",
+            ReasonKind.CannotTell => "cannot tell what holds it",
             ReasonKind.TooBigForRecycleBin => "too big for the Recycle Bin",
             ReasonKind.ShellTimeout => "the Shell timed out",
             ReasonKind.WouldLose => "would lose work",

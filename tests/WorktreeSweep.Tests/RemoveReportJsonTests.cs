@@ -1,3 +1,4 @@
+using System.Text.Json;
 using WorktreeSweep.Agent;
 using WorktreeSweep.Holders;
 using WorktreeSweep.Report;
@@ -53,6 +54,35 @@ public sealed class RemoveReportJsonTests
         RemoveReportJson.Write(report, output);
 
         Assert.Equal(GoldenDocument.ReplaceLineEndings("\n") + "\n", output.ToString());
+    }
+
+    /// <summary>The cannot-tell reason is written as <c>cannot_tell</c> and read back as <see cref="Reason.CannotTell"/>.</summary>
+    [Fact]
+    public void CannotTellReasonSerialisesAndReadsBack()
+    {
+        var report = new RemoveReport
+        {
+            Status = RemoveStatus.Released,
+            Reason = Reason.CannotTell,
+            Path = @"D:\x.wt\feat",
+            Repo = @"D:\x",
+            Branch = "feat",
+            BranchDeleted = false,
+            Loss = null,
+            CdTo = null,
+            Holders = [],
+            MayHold = [],
+            Stopped = [],
+            Released = null,
+            Notes = [],
+        };
+        using var output = new StringWriter();
+
+        RemoveReportJson.Write(report, output);
+
+        using var document = JsonDocument.Parse(output.ToString());
+        Assert.Equal("cannot_tell", document.RootElement.GetProperty("reason").GetString());
+        Assert.Equal(Reason.CannotTell, JsonSerializer.Deserialize<Reason>("\"cannot_tell\""));
     }
 
     private const string GoldenDocument = """

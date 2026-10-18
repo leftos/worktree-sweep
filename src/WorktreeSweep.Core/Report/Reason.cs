@@ -18,6 +18,9 @@ public sealed record Reason
     /// <summary>Gets the reason for a worktree only processes that could not be fully inspected may hold.</summary>
     public static Reason MayHold { get; } = new() { Kind = ReasonKind.MayHold };
 
+    /// <summary>Gets the reason for a worktree whose holders cannot be told, because the folder's users could not be listed.</summary>
+    public static Reason CannotTell { get; } = new() { Kind = ReasonKind.CannotTell };
+
     /// <summary>Gets the reason for a worktree that cannot go to the Recycle Bin.</summary>
     public static Reason TooBigForRecycleBin { get; } = new() { Kind = ReasonKind.TooBigForRecycleBin };
 
@@ -52,6 +55,9 @@ public enum ReasonKind
 
     /// <summary>Only processes that could not be fully inspected may hold it.</summary>
     MayHold,
+
+    /// <summary>The folder's users could not be listed, so what holds it is not known.</summary>
+    CannotTell,
 
     /// <summary>It cannot go to the Recycle Bin.</summary>
     TooBigForRecycleBin,
@@ -132,6 +138,7 @@ internal sealed class ReasonJsonConverter : JsonConverter<Reason>
         [
             Reason.Locked,
             Reason.MayHold,
+            Reason.CannotTell,
             Reason.TooBigForRecycleBin,
             Reason.ShellTimeout,
             Reason.WouldLose,

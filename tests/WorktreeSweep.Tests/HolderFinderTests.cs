@@ -210,6 +210,37 @@ public sealed class HolderFinderTests : IDisposable
         Assert.Contains(new MayHold(child.Id, "pwsh.exe", MayHoldWhy.CannotOpen), report.MayHold);
     }
 
+    /// <summary>
+    /// A scanned root whose users the file system could not list is reported as the folder passed in, not as its resolved form.
+    /// </summary>
+    [Fact]
+    public void FolderWithoutUsersIsReportedAsTheFolderPassedIn()
+    {
+        IReadOnlyList<string> scanned = [];
+
+        HolderReport report = HolderFinder.Find(
+            Scanned,
+            [],
+            (_, roots) =>
+            {
+                scanned = roots;
+                return new HandleFindings([], [], []) { RootsWithoutUsers = roots };
+            }
+        );
+
+        Assert.Equal([Scanned], report.UnknownFolders);
+        Assert.NotEqual(Scanned, Assert.Single(scanned));
+    }
+
+    /// <summary>A scan that could list every root's users reports no unknown folder.</summary>
+    [Fact]
+    public void ScanWithEveryFolderReadableReportsNoUnknownFolder()
+    {
+        HolderReport report = HolderFinder.Find(Scanned, [], (_, _) => new HandleFindings([], [], []));
+
+        Assert.Empty(report.UnknownFolders);
+    }
+
     /// <summary>A holder that also uses the folder and could not be fully inspected is listed once, as a holder.</summary>
     [Fact]
     public void HolderUsingTheFolderIsNotAlsoAMayHold()
