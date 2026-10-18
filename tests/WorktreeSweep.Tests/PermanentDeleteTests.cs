@@ -179,11 +179,11 @@ public sealed class PermanentDeleteTests
         Directory.CreateDirectory(sub);
         File.WriteAllText(Path.Combine(sub, "file.txt"), "x");
         var info = new DirectoryInfo(sub);
-        DirectorySecurity open = info.GetAccessControl();
+        var deny = new FileSystemAccessRule(WindowsIdentity.GetCurrent().Name, FileSystemRights.ListDirectory, AccessControlType.Deny);
         try
         {
             DirectorySecurity denied = info.GetAccessControl();
-            denied.AddAccessRule(new FileSystemAccessRule(WindowsIdentity.GetCurrent().Name, FileSystemRights.ListDirectory, AccessControlType.Deny));
+            denied.AddAccessRule(deny);
             info.SetAccessControl(denied);
 
             LockedException locked = Assert.Throws<LockedException>(() => PermanentDelete.Delete(tree));
@@ -193,9 +193,12 @@ public sealed class PermanentDeleteTests
         }
         finally
         {
-            info.SetAccessControl(open);
+            DirectorySecurity restore = info.GetAccessControl();
+            restore.RemoveAccessRuleSpecific(deny);
+            info.SetAccessControl(restore);
         }
         Assert.True(Directory.Exists(sub), $"{sub} was deleted");
+        Assert.Equal(Path.Combine(sub, "file.txt"), Assert.Single(Directory.EnumerateFileSystemEntries(sub)));
     }
 
     /// <summary>
