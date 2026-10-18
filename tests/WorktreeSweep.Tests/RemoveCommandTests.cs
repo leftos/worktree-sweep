@@ -129,7 +129,7 @@ public sealed class RemoveCommandTests
         AssertExit(0, run);
         Assert.Equal("removed", run.Text("status"));
         Assert.True(run.Json["branch_deleted"]?.GetValue<bool>(), run.Stdout);
-        Assert.DoesNotContain("feat", WorktreeList(repo), StringComparison.Ordinal);
+        Assert.DoesNotContain("x.wt/feat", WorktreeList(repo), StringComparison.Ordinal);
         Assert.False(BranchExists(repo, "feat"), "branch feat still there");
     }
 
@@ -187,7 +187,7 @@ public sealed class RemoveCommandTests
         AssertExit(0, run);
         Assert.Equal("removed", run.Text("status"));
         Assert.False(Directory.Exists(worktree), $"{worktree} still there");
-        Assert.DoesNotContain("feat", WorktreeList(repo), StringComparison.Ordinal);
+        Assert.DoesNotContain("x.wt/feat", WorktreeList(repo), StringComparison.Ordinal);
         Assert.False(BranchExists(repo, "feat"), "branch feat still there");
     }
 

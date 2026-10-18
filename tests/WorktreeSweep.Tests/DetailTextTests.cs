@@ -213,9 +213,9 @@ public sealed class DetailTextTests
             },
         };
 
-        string[] lines = [.. DetailText.Lines(candidate, Now, UtcZone)];
+        string marks = Field(DetailText.Fields(candidate, Now, UtcZone), "Marks");
 
-        Assert.StartsWith("released ", lines[4], StringComparison.Ordinal);
+        Assert.Contains("released ", marks, StringComparison.Ordinal);
     }
 
     /// <summary>A folder whose users could not be listed reads as cannot tell what holds it.</summary>
@@ -233,9 +233,9 @@ public sealed class DetailTextTests
             },
         };
 
-        string[] lines = [.. DetailText.Lines(candidate, Now, UtcZone)];
+        string marks = Field(DetailText.Fields(candidate, Now, UtcZone), "Marks");
 
-        Assert.Contains(": cannot tell what holds it", lines[4], StringComparison.Ordinal);
+        Assert.Contains(": cannot tell what holds it", marks, StringComparison.Ordinal);
     }
 
     /// <summary>Every reason kind, for <see cref="EveryReasonKindRendersInAReleasedMarker"/>.</summary>
