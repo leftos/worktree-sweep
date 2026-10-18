@@ -19,15 +19,6 @@ public sealed class Fixture : IDisposable
 {
     private static readonly Lazy<string> EmptyGitConfig = new(IsolateGitConfig);
 
-    /// <summary>How long a git call whose lock-file rename keeps meeting a held file may keep retrying.</summary>
-    private static readonly TimeSpan RetryLimit = TimeSpan.FromSeconds(60);
-
-    /// <summary>How long the first retry waits, doubled for each later one up to a second.</summary>
-    private static readonly TimeSpan FirstRetryWait = TimeSpan.FromMilliseconds(50);
-
-    /// <summary>The longest wait between two retries.</summary>
-    private static readonly TimeSpan MaxRetryWait = TimeSpan.FromSeconds(1);
-
     /// <summary>Initializes a new instance of the <see cref="Fixture"/> class with a new temporary root folder.</summary>
     public Fixture()
         : this(Directory.CreateTempSubdirectory("worktree-sweep-").FullName) { }
@@ -96,59 +87,19 @@ public sealed class Fixture : IDisposable
 
     /// <summary>
     /// Runs git in <paramref name="dir"/> through <see cref="GitRunner"/>, so without the repo-local variables a calling git hook
-    /// exports, with a fixed identity and no signing. A call whose lock-file rename meets a file another process holds without
-    /// delete sharing runs again once the holder lets go, instead of failing with "Permission denied"; a later attempt that fails
-    /// another way names the first such hold. Retries stop being started after <see cref="RetryLimit"/>; an attempt already
-    /// running can still take up to git's own call timeout.
+    /// exports, with a fixed identity and no signing. Git retries a rename over or delete of a file another process holds by itself,
+    /// through the hook <see cref="IsolateGitConfig"/> names in <c>GIT_ASK_YESNO</c>, until the holder lets go or git's call timeout
+    /// kills it.
     /// </summary>
     /// <param name="dir">The directory git runs in.</param>
     /// <param name="args">The git arguments.</param>
     /// <returns>Standard output, trimmed.</returns>
     public static string Git(string dir, IReadOnlyList<string> args)
     {
+        _ = EmptyGitConfig.Value;
         string[] full = ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", .. args];
-        var stopwatch = Stopwatch.StartNew();
-        TimeSpan wait = FirstRetryWait;
-        string? firstHeld = null;
-        while (true)
-        {
-            GitStatus status = GitRunner.RunStatus(dir, full, CancellationToken.None);
-            if (status.Success)
-            {
-                return status.Stdout.Trim();
-            }
-            if (!HeldByAnotherProcess(status))
-            {
-                GitException failure = GitRunner.Failure(dir, full, status);
-                throw firstHeld is null
-                    ? failure
-                    : new GitException($"{failure.Message} (an earlier attempt failed because another process held a file: {firstHeld.Trim()})");
-            }
-            if (stopwatch.Elapsed >= RetryLimit)
-            {
-                throw GitRunner.Failure(dir, full, status);
-            }
-            firstHeld ??= status.Stderr;
-            Thread.Sleep(wait);
-            wait = TimeSpan.FromMilliseconds(Math.Min(wait.TotalMilliseconds * 2, MaxRetryWait.TotalMilliseconds));
-        }
+        return GitRunner.Run(dir, full, CancellationToken.None);
     }
-
-    /// <summary>
-    /// Whether a git call failed because its lock-file rename met a file another process holds without delete sharing, as an
-    /// on-access scanner holds a freshly written <c>.git\config</c> in <c>%TEMP%</c>. Git for Windows retries the rename for about
-    /// 100 ms and then gives up, so the call is worth running again once the holder lets go. Only a permission failure on a lock
-    /// file or on the config git writes counts: an ACL denial on a folder, or a rejected SSH key, is a failure the hold cannot
-    /// explain.
-    /// </summary>
-    /// <param name="status">What git returned.</param>
-    /// <returns><see langword="true"/> when another process held a file git renames over.</returns>
-    internal static bool HeldByAnotherProcess(GitStatus status) =>
-        status.Stderr.Contains(": Permission denied", StringComparison.Ordinal)
-        && (
-            status.Stderr.Contains(".lock", StringComparison.Ordinal)
-            || status.Stderr.Contains("could not write config file", StringComparison.Ordinal)
-        );
 
     /// <summary>Writes <paramref name="file"/> in <paramref name="dir"/>, stages it and commits it.</summary>
     /// <param name="dir">The repo or worktree.</param>
@@ -351,16 +302,53 @@ public sealed class Fixture : IDisposable
         }
     }
 
+    /// <summary>The log the hook appends each question git asks to, in this process's own hook folder.</summary>
+    internal static string GitAsksLog
+    {
+        get
+        {
+            _ = EmptyGitConfig.Value;
+            return Path.Combine(GitHookFolder, "git-asks.log");
+        }
+    }
+
+    /// <summary>
+    /// This process's own folder for the <c>GIT_ASK_YESNO</c> hook and its log, so two test runs sharing one output folder never
+    /// rewrite or delete a file the other run's hook has open.
+    /// </summary>
+    private static string GitHookFolder =>
+        Path.Combine(AppContext.BaseDirectory, "git-hook", Environment.ProcessId.ToString(CultureInfo.InvariantCulture));
+
     /// <summary>
     /// Makes every git process this test assembly starts, the code under test's included, ignore the system and global config:
-    /// sets <c>GIT_CONFIG_NOSYSTEM</c> and points <c>GIT_CONFIG_GLOBAL</c> at an empty file. <see cref="Lazy{T}"/> runs it once.
+    /// sets <c>GIT_CONFIG_NOSYSTEM</c> and points <c>GIT_CONFIG_GLOBAL</c> at an empty file. It also names a hook in
+    /// <c>GIT_ASK_YESNO</c>, which git runs when it cannot rename over or delete a file another process holds, with the question as
+    /// its one argument and a yes meaning try again; the hook logs the question beside itself and says yes slowly enough that git
+    /// does not spin. <see cref="Lazy{T}"/> runs it once.
     /// </summary>
     private static string IsolateGitConfig()
     {
         string empty = Path.Combine(AppContext.BaseDirectory, "empty-gitconfig");
         File.WriteAllText(empty, "");
+        string folder = GitHookFolder;
+        if (Directory.Exists(folder))
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+        Directory.CreateDirectory(folder);
+        string hook = Path.Combine(folder, "git-ask-yesno.sh");
+        string[] lines =
+        [
+            "#!/bin/sh",
+            "# Git for Windows runs this when it cannot rename over or delete a file another process holds; a yes makes it try again.",
+            "printf '%s\\n' \"$1\" >> \"$(dirname \"$0\")/git-asks.log\"",
+            "sleep 0.25",
+            "exit 0",
+        ];
+        File.WriteAllText(hook, string.Join("\n", lines) + "\n");
         Environment.SetEnvironmentVariable("GIT_CONFIG_NOSYSTEM", "1");
         Environment.SetEnvironmentVariable("GIT_CONFIG_GLOBAL", empty);
+        Environment.SetEnvironmentVariable("GIT_ASK_YESNO", hook);
         return empty;
     }
 
